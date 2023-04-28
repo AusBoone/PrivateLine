@@ -1,4 +1,5 @@
 # PrivateLine
+This project aims to create a privacy-focused, end-to-end encrypted messaging platform.
 
 # Goal
 The goal of this project is to build a secure messaging application that allows users to send and receive encrypted messages. The application utilizes a combination of asymmetric and symmetric encryption techniques to ensure message confidentiality.
