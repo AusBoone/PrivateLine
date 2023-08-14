@@ -35,22 +35,29 @@ message_parser.add_argument('content', required=True, help="Content is required.
 # Token serializer
 s = Serializer(app.config['SECRET_KEY'], expires_in=3600)
 
-# Authentication decorator
+# Authentication decorator to require a valid token for accessing a resource
 def token_required(f):
-    @wraps(f)
+    @wraps(f)  # Preserve the original function's signature and attributes
     def decorated(*args, **kwargs):
-        token = request.headers.get('Authorization')
+        token = request.headers.get('Authorization')  # Retrieve the token from the 'Authorization' header
+
+        # Check if the token is missing in the request
         if not token:
-            return {'message': 'Token is missing.'}, 403
+            return {'message': 'Token is missing.'}, 403  # Return a 403 Forbidden response if the token is missing
 
         try:
-            data = s.loads(token)
+            data = s.loads(token)  # Attempt to deserialize the token using a serializer (e.g., itsdangerous)
         except:
+            # If deserialization fails (e.g., token is tampered with or expired), return a 403 Forbidden response
             return {'message': 'Invalid token.'}, 403
 
+        # Query the user from the database using the user ID obtained from the deserialized token
         g.current_user = User.query.get(data['id'])
+
+        # Call the original function with its arguments and return its result
         return f(*args, **kwargs)
-    return decorated
+
+    return decorated  # Return the decorated function
 
 """
 The private key is encrypted using AES-256 in CBC mode, 
@@ -75,38 +82,49 @@ class Register(Resource):
         private_key, public_key_pem = User.generate_key_pair()
 
         # Encrypt the private key with the user's password
-        password = data['password'].encode()
-        salt = os.urandom(16)
+        password = data['password'].encode()  # Encode the user's password as bytes
+        salt = os.urandom(16)                 # Generate a random salt (16 bytes)
+        
+        # Key Derivation Function (KDF) to derive a cryptographic key from the password using PBKDF2 with HMAC and SHA-256
         kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=salt,
-            iterations=100000,
-            backend=default_backend()
+            algorithm=hashes.SHA256(),  # Use SHA-256 hash algorithm
+            length=32,                  # Length of derived key (32 bytes)
+            salt=salt,                  # Salt for the KDF
+            iterations=100000,          # Number of iterations for the KDF
+            backend=default_backend()   # Cryptographic backend
         )
-        key = kdf.derive(password)
-        iv = os.urandom(16)
+        key = kdf.derive(password)  # Derive the key using the user's password
+        
+        iv = os.urandom(16)  # Generate a random initialization vector (IV) for AES encryption (16 bytes)
+        
+        # Create a cipher object using AES encryption in CBC mode
         cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-        encryptor = cipher.encryptor()
+        encryptor = cipher.encryptor()  # Create an encryptor object from the cipher
+        
+        # Create a padder object for PKCS7 padding
         padder = PKCS7(128).padder()
+        
+        # Pad the private key and convert it to bytes in PEM format
         padded_private_key = padder.update(private_key.private_bytes(
             encoding=Encoding.PEM,
             format=PrivateFormat.PKCS8,
             encryption_algorithm=NoEncryption()
         )) + padder.finalize()
+        
+        # Encrypt the padded private key
         encrypted_private_key = encryptor.update(padded_private_key) + encryptor.finalize()
-
+        
         # Create a new user and add it to the database
         new_user = User(username=data['username'], email=data['email'], password_hash=hashed_password, public_key_pem=public_key_pem)
-        db.session.add(new_user)
-        db.session.commit()
-
+        db.session.add(new_user)  # Add the new user to the database session
+        db.session.commit()       # Commit the database transaction
+        
         # Send encrypted private key and encryption details to the user
         return {
-            "message": "User registered successfully.",
-            "encrypted_private_key": b64encode(encrypted_private_key).decode(),
-            "salt": b64encode(salt).decode(),
-            "iv": b64encode(iv).decode()
+            "message": "User registered successfully.",                            # Confirmation message
+            "encrypted_private_key": b64encode(encrypted_private_key).decode(),     # Base64-encoded encrypted private key
+            "salt": b64encode(salt).decode(),                                      # Base64-encoded salt
+            "iv": b64encode(iv).decode()                                           # Base64-encoded IV
         }, 201
 
 class Login(Resource):
@@ -121,7 +139,6 @@ class Login(Resource):
             return {'access_token': access_token}, 200
         else:
             return {'message': 'Invalid username or password'}, 401
-
 
 class Messages(Resource):
     # Apply the authentication decorator
