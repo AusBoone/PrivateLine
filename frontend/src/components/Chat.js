@@ -13,8 +13,16 @@ import './Chat.css';
  * @returns {Promise<string>} The encrypted message in base64 encoding.
  */
 async function encryptMessage(publicKeyPem, message) {
-    // Convert the public key from PEM (base64) to Uint8Array buffer
-    const publicKeyBuffer = new Uint8Array(Buffer.from(publicKeyPem, 'base64'));
+    // Extract the base64-encoded portion of the PEM key
+    const pemHeader = '-----BEGIN PUBLIC KEY-----';
+    const pemFooter = '-----END PUBLIC KEY-----';
+    const b64 = publicKeyPem
+      .replace(pemHeader, '')
+      .replace(pemFooter, '')
+      .replace(/\s/g, '');
+
+    // Convert the base64 string into a Uint8Array buffer
+    const publicKeyBuffer = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 
     // Import the public key to be used with the RSA-OAEP algorithm, specifying SHA-256 as the hash function
     const publicKey = await window.crypto.subtle.importKey(
