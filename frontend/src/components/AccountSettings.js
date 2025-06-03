@@ -1,6 +1,6 @@
 // A part of the user account management interface, focusing on updating account information.
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../api';
 
 /*
 Adds a form to update the email and password. 
@@ -18,7 +18,7 @@ function AccountSettings() {
     event.preventDefault();
 
     try {
-      const response = await axios.put('https://your-api-url/account-settings', {
+      const response = await api.put('/api/account-settings', {
         email,
         currentPassword,
         newPassword,

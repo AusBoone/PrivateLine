@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../api';
 
 /**
  * LoginForm Component
@@ -31,15 +31,15 @@ function LoginForm() {
 
     try {
       // Send a POST request to the login endpoint with the username and password
-      const response = await axios.post('https://your-api-url/login', {
+      const response = await api.post('/api/login', {
         username,
         password,
       });
 
       // Check if the login was successful (response status 200)
       if (response.status === 200) {
-        // Handle successful login, e.g., store user session or access token
-        // Implement a secure storage mechanism for storing sensitive data like tokens
+        // Store the received JWT so it can be attached to future requests
+        localStorage.setItem('access_token', response.data.access_token);
 
         // Redirect to the chat page or another appropriate page
       } else {
