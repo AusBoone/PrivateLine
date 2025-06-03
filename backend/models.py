@@ -4,6 +4,7 @@ from sqlalchemy.ext.hybrid import hybrid_property
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption, PublicFormat
+from cryptography.hazmat.backends import default_backend
 
 """
 When a new user is registered, a public-private key pair is generated.

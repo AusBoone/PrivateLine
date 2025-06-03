@@ -4,7 +4,6 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_cors import CORS
 from flask_limiter import Limiter
-from resources import Register, Login, Messages
 from flask_jwt_extended import JWTManager
 
 # Initialize Flask app
@@ -28,6 +27,9 @@ api = Api(app)
 
 # Initialize JWTManager for handling JWT authentication
 jwt = JWTManager(app)
+
+# Import resources after initializing app components to avoid circular imports
+from resources import Register, Login, Messages
 
 # Apply rate limiting on the messages resource
 limiter.limit("50/minute")(Messages)

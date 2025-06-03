@@ -159,5 +159,3 @@ class Messages(Resource):
         db.session.commit()
 
         return {"message": "Message sent successfully."}, 201
-
-api.add_resource(Login, '/login')
