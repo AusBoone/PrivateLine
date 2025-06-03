@@ -133,11 +133,12 @@ function Chat() {
 
       // Send the encrypted message to the server
       try {
-        const response = await api.post('/api/messages', {
-          content: encryptedMessage,
-        });
+        const formData = new URLSearchParams();
+        formData.append('content', encryptedMessage);
 
-        if (response.status === 200) {
+        const response = await api.post('/api/messages', formData);
+
+        if (response.status === 201) {
           // Append the sent message locally
           setMessages([...messages, { id: Date.now(), text: message, type: 'sent' }]);
           setMessage('');
