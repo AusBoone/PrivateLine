@@ -76,6 +76,8 @@ function Chat() {
       { id: 1, text: 'Welcome to PrivateLine!', type: 'received' }
     ]);
     const [socket, setSocket] = useState(null);
+    const [privateKey, setPrivateKey] = useState(null);
+    const privateKeyRef = React.useRef(null);
 
     // Cache for recipient public keys.  In a real app this might live in a
     // Redux store or other global cache.
@@ -86,12 +88,57 @@ function Chat() {
       const s = io(process.env.REACT_APP_API_URL || 'http://localhost:5000');
       setSocket(s);
 
+      // Load the stored private key for decrypting messages and then fetch messages
+      (async () => {
+        const stored = localStorage.getItem('private_key');
+        if (stored) {
+          const keyBuffer = new Uint8Array(Buffer.from(stored, 'base64'));
+          const key = await window.crypto.subtle.importKey(
+            'pkcs8',
+            keyBuffer,
+            { name: 'RSA-OAEP', hash: 'SHA-256' },
+            true,
+            ['decrypt']
+          );
+          setPrivateKey(key);
+          privateKeyRef.current = key;
+        }
+
+        try {
+          const resp = await api.get('/api/messages');
+          if (resp.status === 200) {
+            const loaded = await Promise.all(
+              resp.data.messages.map(async (m) => {
+                if (privateKeyRef.current) {
+                  const plain = await decryptMessage(privateKeyRef.current, m.content);
+                  return { id: m.id, text: plain, type: 'received' };
+                }
+                return { id: m.id, text: m.content, type: 'received' };
+              })
+            );
+            setMessages((prev) => [...prev, ...loaded]);
+          }
+        } catch (err) {
+          // Ignore errors for initial fetch
+        }
+      })();
+
       // Append new messages received from the server
       s.on('new_message', (payload) => {
-        setMessages((prev) => [
-          ...prev,
-          { id: Date.now(), text: payload.content, type: 'received' },
-        ]);
+        const key = privateKeyRef.current;
+        if (key) {
+          decryptMessage(key, payload.content).then((plain) => {
+            setMessages((prev) => [
+              ...prev,
+              { id: Date.now(), text: plain, type: 'received' },
+            ]);
+          });
+        } else {
+          setMessages((prev) => [
+            ...prev,
+            { id: Date.now(), text: payload.content, type: 'received' },
+          ]);
+        }
       });
 
       return () => s.disconnect();
@@ -120,7 +167,7 @@ function Chat() {
           content: encryptedMessage,
         });
 
-        if (response.status === 200) {
+        if (response.status === 201) {
           // Append the sent message locally
           setMessages([...messages, { id: Date.now(), text: message, type: 'sent' }]);
           setMessage('');

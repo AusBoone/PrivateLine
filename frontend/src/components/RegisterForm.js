@@ -2,6 +2,7 @@
 // The public key is sent to the server, and the private key should be securely stored on the user's device. 
 // The form itself includes input fields for the username, email, and password, as well as a submit button
 import React, { useState } from 'react';
+import { useHistory } from 'react-router-dom';
 import api from '../api';
 
 async function generateKeyPair() {
@@ -23,6 +24,7 @@ function RegisterForm() {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const history = useHistory();
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -46,11 +48,16 @@ function RegisterForm() {
         publicKey: publicKeyPem,
       });
 
-      if (response.status === 200) {
-        // Save the private key securely on the user's device
-        // Implement a secure storage mechanism, e.g., IndexedDB
-
-        // Redirect to the login page or another appropriate page
+      if (response.status === 201) {
+        // Export the private key and store it for later message decryption
+        const exportedPrivateKey = await window.crypto.subtle.exportKey(
+          'pkcs8',
+          keyPair.privateKey
+        );
+        const privateKeyPem = Buffer.from(exportedPrivateKey).toString('base64');
+        localStorage.setItem('private_key', privateKeyPem);
+        // Redirect the user to the login page after successful registration
+        history.push('/login');
       } else {
         // Handle registration errors
       }

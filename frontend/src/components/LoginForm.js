@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useHistory } from 'react-router-dom';
 import api from '../api';
 
 /**
@@ -14,6 +15,7 @@ function LoginForm() {
   // State variables to hold the user's input for username and password
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const history = useHistory();
 
   /**
    * handleSubmit Function
@@ -41,7 +43,8 @@ function LoginForm() {
         // Store the received JWT so it can be attached to future requests
         localStorage.setItem('access_token', response.data.access_token);
 
-        // Redirect to the chat page or another appropriate page
+        // Redirect to the chat page after successful login
+        history.push('/chat');
       } else {
         // Handle login errors
         // You may want to update the component state or show a notification to the user
