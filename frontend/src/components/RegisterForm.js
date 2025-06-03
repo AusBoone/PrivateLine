@@ -1,25 +1,8 @@
-// Generates a key pair for each user during registration. 
-// The public key is sent to the server, and the private key should be securely stored on the user's device. 
-// The form itself includes input fields for the username, email, and password, as well as a submit button
+// Registration form for creating a new account.
+// Sends username, email and password to the backend API.
 import React, { useState } from 'react';
 import { Box, Button, TextField, Typography } from '@mui/material';
 import api from '../api';
-import { arrayBufferToBase64 } from '../utils/encoding';
-
-async function generateKeyPair() {
-  const keyPair = await window.crypto.subtle.generateKey(
-    {
-      name: 'RSA-OAEP',
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: 'SHA-256',
-    },
-    true,
-    ['encrypt', 'decrypt']
-  );
-
-  return keyPair;
-}
 
 function RegisterForm() {
   const [username, setUsername] = useState('');
@@ -29,23 +12,12 @@ function RegisterForm() {
   const handleSubmit = async (event) => {
     event.preventDefault();
 
-    // Generate key pair for the user
-    const keyPair = await generateKeyPair();
-
-    // Export the public key to PEM format
-    const exportedPublicKey = await window.crypto.subtle.exportKey(
-      'spki',
-      keyPair.publicKey
-    );
-    const publicKeyPem = arrayBufferToBase64(exportedPublicKey);
-
     // Send the registration data to the server
     try {
       const response = await api.post('/api/register', {
         username,
         email,
         password,
-        publicKey: publicKeyPem,
       });
 
       if (response.status === 200) {
