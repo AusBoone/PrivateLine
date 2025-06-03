@@ -7,14 +7,16 @@ import AccountSettings from './AccountSettings';
 // UserAccount component function
 function UserAccount() {
   return (
-    // Wrapping the content inside a <div> container
+    {/* Wrapping the content inside a <div> container */}
     <div>
-      <h2>User Account</h2>              // Header for the user account section
-      <AccountSettings />                // Rendering the AccountSettings component, responsible for updating account details
+      {/* Header for the user account section */}
+      <h2>User Account</h2>
+      {/* Rendering the AccountSettings component, responsible for updating account details */}
+      <AccountSettings />
       {/* Implement other user account management features here */}
-    
-      // Additional components related to user account management can be added here
-    
+
+      {/* Additional components related to user account management can be added here */}
+
     </div>
   );
 }
