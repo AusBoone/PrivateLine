@@ -133,7 +133,8 @@ class Messages(Resource):
     @jwt_required()
     def get(self):
         """Return decrypted messages for the authenticated user."""
-        messages = Message.query.all()
+        current_user_id = get_jwt_identity()
+        messages = Message.query.filter_by(user_id=current_user_id).all()
         message_list = []
         for msg in messages:
             nonce = b64decode(msg.nonce)

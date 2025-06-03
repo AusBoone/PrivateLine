@@ -79,3 +79,31 @@ def test_message_flow(client):
     data = resp.get_json()
     assert resp.status_code == 200
     assert len(data['messages']) == 1
+
+
+def test_messages_are_user_specific(client):
+    # Alice registers and posts a message
+    register_user(client, 'alice')
+    token_alice = login_user(client, 'alice').get_json()['access_token']
+    headers_alice = {'Authorization': f'Bearer {token_alice}'}
+    client.post('/api/messages', data={'content': 'hi from alice'}, headers=headers_alice)
+
+    # Bob registers and posts a different message
+    register_user(client, 'bob')
+    token_bob = login_user(client, 'bob').get_json()['access_token']
+    headers_bob = {'Authorization': f'Bearer {token_bob}'}
+    client.post('/api/messages', data={'content': 'hi from bob'}, headers=headers_bob)
+
+    # Alice should only see her message
+    resp_alice = client.get('/api/messages', headers=headers_alice)
+    data_alice = resp_alice.get_json()
+    assert resp_alice.status_code == 200
+    assert len(data_alice['messages']) == 1
+    assert data_alice['messages'][0]['content'] == 'hi from alice'
+
+    # Bob should only see his message
+    resp_bob = client.get('/api/messages', headers=headers_bob)
+    data_bob = resp_bob.get_json()
+    assert resp_bob.status_code == 200
+    assert len(data_bob['messages']) == 1
+    assert data_bob['messages'][0]['content'] == 'hi from bob'
