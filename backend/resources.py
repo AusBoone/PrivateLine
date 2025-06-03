@@ -1,4 +1,4 @@
-from flask_restful import Resource, reqparse
+from flask_restful import Resource
 from flask import request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from cryptography.hazmat.primitives import hashes
@@ -8,8 +8,8 @@ from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat
 from cryptography.hazmat.backends import default_backend
 from base64 import b64encode, b64decode
 import os
-from models import User, Message
-from app import db, app, socketio
+from .models import User, Message
+from .app import db, app, socketio
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 
 # AES-GCM key for encrypting stored messages
@@ -20,15 +20,6 @@ else:
     AES_KEY = AESGCM.generate_key(bit_length=256)
 aesgcm = AESGCM(AES_KEY)
 
-# Request parser for user registration
-user_parser = reqparse.RequestParser()
-user_parser.add_argument('username', required=True, help="Username is required.")
-user_parser.add_argument('email', required=True, help="Email is required.")
-user_parser.add_argument('password', required=True, help="Password is required.")
-
-# Request parser for messages
-message_parser = reqparse.RequestParser()
-message_parser.add_argument('content', required=True, help="Content is required.")
 
 # Token serializer (legacy).  JWT is now used instead of this custom mechanism.
 # s = Serializer(app.config['SECRET_KEY'], expires_in=3600)
@@ -47,8 +38,15 @@ class Register(Resource):
     """Create a new user and return the encrypted private key."""
 
     def post(self):
-        # Parse the request data
-        data = user_parser.parse_args()
+        # Accept either JSON or form data for registration
+        if request.is_json:
+            data = request.get_json()
+        else:
+            data = request.form.to_dict()
+
+        required_fields = {'username', 'email', 'password'}
+        if not required_fields <= data.keys():
+            return {"message": "Missing required parameter"}, 400
 
         # Check if the user already exists
         user = User.query.filter_by(username=data['username']).first()
@@ -109,7 +107,7 @@ class Login(Resource):
         user = User.query.filter_by(username=data['username']).first()
 
         if user and check_password_hash(user.password_hash, data['password']):
-            access_token = create_access_token(identity=user.id)
+            access_token = create_access_token(identity=str(user.id))
             return {'access_token': access_token}, 200
         else:
             return {'message': 'Invalid username or password'}, 401
@@ -142,7 +140,7 @@ class Messages(Resource):
             message_list.append({
                 "id": msg.id,
                 "content": plaintext,
-                "timestamp": msg.timestamp,
+                "timestamp": msg.timestamp.isoformat(),
                 "user_id": msg.user_id,
             })
         return {"messages": message_list}
@@ -151,7 +149,13 @@ class Messages(Resource):
     @jwt_required()
     def post(self):
         """Store an encrypted message and broadcast it to clients."""
-        data = message_parser.parse_args()
+        if request.is_json:
+            data = request.get_json()
+        else:
+            data = request.form.to_dict()
+
+        if 'content' not in data:
+            return {"message": "Missing required parameter"}, 400
 
         nonce = os.urandom(12)
         ciphertext = aesgcm.encrypt(nonce, data["content"].encode(), None)

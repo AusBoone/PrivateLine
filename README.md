@@ -21,7 +21,7 @@ This secure messaging application consists of a frontend built with React and a 
 # Frontend
 The frontend is built using React and consists of the following components:
 1. **LoginForm**: Handles user login by sending a request to the backend for authentication.
-2. **RegisterForm**: Handles user registration by sending user information to the backend, generating an RSA key pair, and storing the encrypted private key on the client-side.
+2. **RegisterForm**: Handles user registration by sending user information to the backend and storing the encrypted private key returned by the server.
 3. **Chat**: Provides an interface for users to send and receive encrypted messages. The component also handles message encryption and decryption.
 4. **UserAccount**: Displays the user account management interface.
 5. **App**: Sets up the application's routing, theme provider and navigation bar.
