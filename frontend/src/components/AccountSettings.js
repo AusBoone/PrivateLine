@@ -1,5 +1,6 @@
 // A part of the user account management interface, focusing on updating account information.
 import React, { useState } from 'react';
+import { Box, Button, TextField, Typography } from '@mui/material';
 import api from '../api';
 
 /*
@@ -37,28 +38,39 @@ function AccountSettings() {
   };
 
   return (
-    <form onSubmit={handleSubmit}>
-      <h3>Account Settings</h3>
-      <input
+    <Box
+      component="form"
+      onSubmit={handleSubmit}
+      sx={{ display: 'flex', flexDirection: 'column', maxWidth: 320 }}
+    >
+      <Typography variant="h6" sx={{ mb: 2 }}>
+        Account Settings
+      </Typography>
+      <TextField
+        label="New email"
         type="email"
-        placeholder="New email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
+        margin="normal"
       />
-      <input
+      <TextField
+        label="Current password"
         type="password"
-        placeholder="Current password"
         value={currentPassword}
         onChange={(e) => setCurrentPassword(e.target.value)}
+        margin="normal"
       />
-      <input
+      <TextField
+        label="New password"
         type="password"
-        placeholder="New password"
         value={newPassword}
         onChange={(e) => setNewPassword(e.target.value)}
+        margin="normal"
       />
-      <button type="submit">Update</button>
-    </form>
+      <Button type="submit" variant="contained" sx={{ mt: 2 }}>
+        Update
+      </Button>
+    </Box>
   );
 }
 

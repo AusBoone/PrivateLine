@@ -24,7 +24,9 @@ The frontend is built using React and consists of the following components:
 2. **RegisterForm**: Handles user registration by sending user information to the backend, generating an RSA key pair, and storing the encrypted private key on the client-side.
 3. **Chat**: Provides an interface for users to send and receive encrypted messages. The component also handles message encryption and decryption.
 4. **UserAccount**: Displays the user account management interface.
-5. **App**: Sets up the application's routing and includes the navigation bar.
+5. **App**: Sets up the application's routing, theme provider and navigation bar.
+
+The interface uses the Material-UI component library. It supports a responsive layout with a permanent sidebar for conversations and a dark mode toggle.
 
 # Backend
 The backend is built using Flask and consists of the following resources:
@@ -38,7 +40,7 @@ To run the application, follow these steps:
 1. Clone the repository.
 2. Copy `.env.example` to `.env` and provide values for `JWT_SECRET_KEY` and optional `DATABASE_URI`.
 3. Install backend dependencies with `pip install -r backend/requirements.txt`.
-4. (Optional) install frontend dependencies in `frontend` if using Node.
+4. Install frontend dependencies with `npm install` inside the `frontend` directory.
 5. Start the backend with `python backend/app.py` and the frontend with your preferred React tooling.
 6. Open a browser and navigate to the frontend's URL to use the application.
 

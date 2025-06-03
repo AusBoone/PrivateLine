@@ -3,6 +3,15 @@
 import React, { useState, useEffect } from 'react';
 import io from 'socket.io-client';
 import api from '../api';
+import {
+  Box,
+  Drawer,
+  List,
+  ListItem,
+  ListItemText,
+  TextField,
+  Button,
+} from '@mui/material';
 import './Chat.css';
 
 /**
@@ -135,24 +144,46 @@ function Chat() {
     // ... (add other Chat component logic, like fetching and displaying messages)
 
     return (
-      <div className="chat-container">
-        <div className="message-list">
-          {messages.map((msg) => (
-            <div key={msg.id} className={`message ${msg.type}`}>
-              {msg.text}
-            </div>
-          ))}
-        </div>
-        <form className="message-input" onSubmit={handleSubmit}>
-          <input
-            type="text"
-            placeholder="Type your message"
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-          />
-          <button type="submit">Send</button>
-        </form>
-      </div>
+      <Box sx={{ display: 'flex', height: 'calc(100vh - 64px)' }}>
+        <Drawer variant="permanent" sx={{ width: 240, flexShrink: 0 }}>
+          <List sx={{ width: 240 }}>
+            <ListItem>
+              <ListItemText primary="Conversations" />
+            </ListItem>
+            {/* Future conversation items here */}
+          </List>
+        </Drawer>
+        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+          <Box className="message-list" sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
+            {messages.map((msg) => (
+              <Box
+                key={msg.id}
+                className={`message ${msg.type}`}
+                sx={{ mb: 1 }}
+              >
+                {msg.text}
+              </Box>
+            ))}
+          </Box>
+          <Box
+            component="form"
+            onSubmit={handleSubmit}
+            className="message-input"
+            sx={{ p: 1, display: 'flex', borderTop: 1, borderColor: 'divider' }}
+          >
+            <TextField
+              fullWidth
+              placeholder="Type your message"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              size="small"
+            />
+            <Button type="submit" variant="contained" sx={{ ml: 1 }}>
+              Send
+            </Button>
+          </Box>
+        </Box>
+      </Box>
     );
 }
 
