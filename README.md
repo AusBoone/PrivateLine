@@ -38,10 +38,13 @@ The backend also includes rate limiting on message sending, JWT-based user authe
 # Setup
 To run the application, follow these steps:
 1. Clone the repository.
-2. Copy `.env.example` to `.env` and provide values for `JWT_SECRET_KEY` and optional `DATABASE_URI`.
+2. Copy `.env.example` to `.env` and provide values for the following variables:
+   * `JWT_SECRET_KEY` – key used for JWT signatures.
+   * `AES_KEY` – base64 encoded 32 byte key used to encrypt persisted messages. A convenient way to generate one is `openssl rand -base64 32`.
+   * Optional `DATABASE_URI` if you want to use a database other than the default SQLite file.
 3. Install backend dependencies with `pip install -r backend/requirements.txt`.
 4. Install frontend dependencies with `npm install` inside the `frontend` directory.
-5. Start the backend with `python backend/app.py` and the frontend with your preferred React tooling.
+5. Start the backend with `python backend/app.py` and the frontend with `npm start`.
 6. Open a browser and navigate to the frontend's URL to use the application.
 
 ## Running Tests
