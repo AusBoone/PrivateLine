@@ -8,8 +8,8 @@ from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat
 from cryptography.hazmat.backends import default_backend
 from base64 import b64encode, b64decode
 import os
-from models import User, Message
-from app import db, app, socketio
+from .models import User, Message
+from .app import db, app, socketio
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 
 # AES-GCM key for encrypting stored messages
@@ -20,15 +20,12 @@ else:
     AES_KEY = AESGCM.generate_key(bit_length=256)
 aesgcm = AESGCM(AES_KEY)
 
-# Request parser for user registration
-user_parser = reqparse.RequestParser()
-user_parser.add_argument('username', required=True, help="Username is required.")
-user_parser.add_argument('email', required=True, help="Email is required.")
-user_parser.add_argument('password', required=True, help="Password is required.")
 
 # Request parser for messages
 message_parser = reqparse.RequestParser()
-message_parser.add_argument('content', required=True, help="Content is required.")
+message_parser.add_argument(
+    'content', required=True, location='form', help="Content is required."
+)
 
 # Token serializer (legacy).  JWT is now used instead of this custom mechanism.
 # s = Serializer(app.config['SECRET_KEY'], expires_in=3600)
@@ -47,8 +44,14 @@ class Register(Resource):
     """Create a new user and return the encrypted private key."""
 
     def post(self):
-        # Parse the request data
-        data = user_parser.parse_args()
+        # Accept both JSON and form-encoded input
+        data = request.get_json(silent=True)
+        if not data:
+            data = request.form.to_dict()
+
+        required = {'username', 'email', 'password'}
+        if not data or not required <= data.keys():
+            return {"message": "Username, email and password are required."}, 400
 
         # Check if the user already exists
         user = User.query.filter_by(username=data['username']).first()
@@ -109,7 +112,7 @@ class Login(Resource):
         user = User.query.filter_by(username=data['username']).first()
 
         if user and check_password_hash(user.password_hash, data['password']):
-            access_token = create_access_token(identity=user.id)
+            access_token = create_access_token(identity=str(user.id))
             return {'access_token': access_token}, 200
         else:
             return {'message': 'Invalid username or password'}, 401
@@ -142,7 +145,7 @@ class Messages(Resource):
             message_list.append({
                 "id": msg.id,
                 "content": plaintext,
-                "timestamp": msg.timestamp,
+                "timestamp": msg.timestamp.isoformat(),
                 "user_id": msg.user_id,
             })
         return {"messages": message_list}
@@ -158,7 +161,7 @@ class Messages(Resource):
         encrypted_content = b64encode(ciphertext).decode()
         nonce_b64 = b64encode(nonce).decode()
 
-        current_user_id = get_jwt_identity()
+        current_user_id = int(get_jwt_identity())
         new_message = Message(content=encrypted_content, nonce=nonce_b64, user_id=current_user_id)
         db.session.add(new_message)
         db.session.commit()
@@ -170,3 +173,37 @@ class Messages(Resource):
         )
 
         return {"message": "Message sent successfully."}, 201
+
+
+class AccountSettings(Resource):
+    """Update the authenticated user's account information."""
+
+    @jwt_required()
+    def put(self):
+        data = request.get_json() or {}
+        user_id = int(get_jwt_identity())
+        user = User.query.get(user_id)
+        if not user:
+            return {"message": "User not found"}, 404
+
+        updated = False
+
+        new_email = data.get("email")
+        if new_email:
+            user.email = new_email
+            updated = True
+
+        current_pw = data.get("currentPassword")
+        new_pw = data.get("newPassword")
+        if current_pw and new_pw:
+            if check_password_hash(user.password_hash, current_pw):
+                user.password_hash = generate_password_hash(new_pw, method="sha256")
+                updated = True
+            else:
+                return {"message": "Current password is incorrect."}, 400
+
+        if not updated:
+            return {"message": "No account changes provided."}, 400
+
+        db.session.commit()
+        return {"message": "Account updated."}, 200
