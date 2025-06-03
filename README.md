@@ -9,8 +9,8 @@ This secure messaging application consists of a frontend built with React and a 
 
 # Features
 - User registration and login
-- Asymmetric encryption using **RSA-OAEP** for message exchange
-- Symmetric encryption using **AES-256** in CBC mode for private key storage
+- Asymmetric encryption using **RSA-OAEP** (4096-bit keys) for message exchange
+- Symmetric encryption using **AES-256** in GCM mode for private key storage and message persistence
 - Key derivation using **PBKDF2**
 - Encrypted message storage
 - Rate limiting on message sending

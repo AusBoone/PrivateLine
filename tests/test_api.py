@@ -1,5 +1,10 @@
 import json
 import pytest
+from base64 import b64decode
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.backends import default_backend
 
 # These imports will fail if Flask and related dependencies are not installed.
 from backend.app import app, db
@@ -37,7 +42,24 @@ def test_register_and_login(client):
     resp = register_user(client)
     assert resp.status_code == 201
     payload = resp.get_json()
-    assert 'encrypted_private_key' in payload
+    assert {'encrypted_private_key', 'salt', 'nonce'} <= payload.keys()
+
+    # Attempt to decrypt the private key using the returned parameters
+    password = 'secret'.encode()
+    salt = b64decode(payload['salt'])
+    nonce = b64decode(payload['nonce'])
+    ciphertext = b64decode(payload['encrypted_private_key'])
+
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=200000,
+        backend=default_backend()
+    )
+    key = kdf.derive(password)
+    plaintext = AESGCM(key).decrypt(nonce, ciphertext, None)
+    assert plaintext.startswith(b"-----BEGIN PRIVATE KEY-----")
 
     resp = login_user(client)
     assert resp.status_code == 200

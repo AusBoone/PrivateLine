@@ -28,7 +28,7 @@ class User(db.Model):
         """Return a new RSA private key and the corresponding public key PEM."""
         private_key = rsa.generate_private_key(
             public_exponent=65537,
-            key_size=2048,
+            key_size=4096,
             backend=default_backend()
         )
         public_key = private_key.public_key()
@@ -43,6 +43,7 @@ class User(db.Model):
 
 class Message(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    content = db.Column(db.String(500), nullable=False)
+    content = db.Column(db.String(1000), nullable=False)
+    nonce = db.Column(db.String(24), nullable=False)
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
