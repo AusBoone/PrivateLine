@@ -46,11 +46,16 @@ function RegisterForm() {
         publicKey: publicKeyPem,
       });
 
-      if (response.status === 200) {
-        // Save the private key securely on the user's device
-        // Implement a secure storage mechanism, e.g., IndexedDB
+      if (response.status === 201) {
+        // Export the private key and store it for later message decryption
+        const exportedPrivateKey = await window.crypto.subtle.exportKey(
+          'pkcs8',
+          keyPair.privateKey
+        );
+        const privateKeyPem = Buffer.from(exportedPrivateKey).toString('base64');
+        localStorage.setItem('private_key', privateKeyPem);
 
-        // Redirect to the login page or another appropriate page
+        // TODO: redirect to login or chat page
       } else {
         // Handle registration errors
       }
