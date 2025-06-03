@@ -59,7 +59,8 @@ class Register(Resource):
             return {"message": "A user with that username already exists."}, 400
 
         # Hash the password
-        hashed_password = generate_password_hash(data['password'], method='sha256')
+        # Use PBKDF2 with SHA-256 for password hashing
+        hashed_password = generate_password_hash(data['password'], method='pbkdf2:sha256')
 
         # Generate key pair
         private_key, public_key_pem = User.generate_key_pair()
@@ -197,7 +198,8 @@ class AccountSettings(Resource):
         new_pw = data.get("newPassword")
         if current_pw and new_pw:
             if check_password_hash(user.password_hash, current_pw):
-                user.password_hash = generate_password_hash(new_pw, method="sha256")
+                # Rehash the new password using PBKDF2 with SHA-256
+                user.password_hash = generate_password_hash(new_pw, method="pbkdf2:sha256")
                 updated = True
             else:
                 return {"message": "Current password is incorrect."}, 400

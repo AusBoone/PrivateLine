@@ -13,6 +13,7 @@ import {
   Button,
 } from '@mui/material';
 import './Chat.css';
+import { arrayBufferToBase64, base64ToArrayBuffer } from '../utils/encoding';
 
 /**
  * Encrypts a given message using the recipient's public key.
@@ -58,7 +59,7 @@ async function encryptMessage(publicKeyPem, message) {
     );
 
     // Return the encrypted message as a base64 encoded string
-    return Buffer.from(encryptedMessageBuffer).toString('base64');
+    return arrayBufferToBase64(encryptedMessageBuffer);
 }
 
 /**
@@ -70,7 +71,7 @@ async function encryptMessage(publicKeyPem, message) {
  */
 async function decryptMessage(privateKey, encryptedMessage) {
     // Convert the encrypted message from base64 to a Uint8Array buffer
-    const encryptedMessageBuffer = new Uint8Array(Buffer.from(encryptedMessage, 'base64'));
+    const encryptedMessageBuffer = base64ToArrayBuffer(encryptedMessage);
 
     // Decrypt the message buffer using the private key and RSA-OAEP algorithm
     const decryptedMessageBuffer = await window.crypto.subtle.decrypt(
