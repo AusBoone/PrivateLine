@@ -1,7 +1,8 @@
 // Includes the utility functions for encrypting and decrypting messages using RSA-OAEP,
 // as well as the logic for sending encrypted messages and decrypting received messages.
-import React, { useState } from 'react';
-import axios from 'axios';
+import React, { useState, useEffect } from 'react';
+import io from 'socket.io-client';
+import api from '../api';
 import './Chat.css';
 
 /**
@@ -74,27 +75,49 @@ function Chat() {
     const [messages, setMessages] = useState([
       { id: 1, text: 'Welcome to PrivateLine!', type: 'received' }
     ]);
+    const [socket, setSocket] = useState(null);
+
+    // Cache for recipient public keys.  In a real app this might live in a
+    // Redux store or other global cache.
+    const publicKeyCache = React.useRef(new Map());
+
+    useEffect(() => {
+      // Connect to the Socket.IO backend when the component mounts
+      const s = io(process.env.REACT_APP_API_URL || 'http://localhost:5000');
+      setSocket(s);
+
+      // Append new messages received from the server
+      s.on('new_message', (payload) => {
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now(), text: payload.content, type: 'received' },
+        ]);
+      });
+
+      return () => s.disconnect();
+    }, []);
 
     // Takes care of encrypting the message using the recipient's public key before sending it to the server
     const handleSubmit = async (event) => {
       event.preventDefault();
 
-      // Load the recipient's public key from the server or local storage
-      const recipientPublicKeyPem = '...';
-      /*
-      Just a quick note, in this example, the recipient's public key is hardcoded as '...'. 
-      In a real-world implementation, you would fetch the 
-      recipient's public key from the server or local storage based on the selected recipient.
-      */
+      const recipient = 'alice'; // Placeholder - would be selected in the UI
+
+      // Attempt to load the recipient's public key from the cache; otherwise fetch from API
+      let recipientPublicKeyPem = publicKeyCache.current.get(recipient);
+      if (!recipientPublicKeyPem) {
+        const response = await api.get(`/api/public_key/${recipient}`);
+        recipientPublicKeyPem = response.data.public_key;
+        publicKeyCache.current.set(recipient, recipientPublicKeyPem);
+      }
 
       // Encrypt the message using the recipient's public key
       const encryptedMessage = await encryptMessage(recipientPublicKeyPem, message);
 
       // Send the encrypted message to the server
       try {
-        const response = await axios.post('https://your-api-url/send-message', {
-          // ... (add other required data)
-          message: encryptedMessage,
+        const response = await api.post('/api/messages', {
+          content: encryptedMessage,
         });
 
         if (response.status === 200) {

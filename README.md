@@ -15,6 +15,7 @@ This secure messaging application consists of a frontend built with React and a 
 - Encrypted message storage
 - Rate limiting on message sending
 - JWT-based user authentication
+- Real-time message delivery over WebSockets
 - User account management interface
 
 # Frontend
@@ -35,5 +36,8 @@ The backend also includes rate limiting on message sending, JWT-based user authe
 # Setup
 To run the application, follow these steps:
 1. Clone the repository.
-2. Set up the frontend and backend by installing dependencies and starting the development servers.
-3. Open a browser and navigate to the frontend's URL to use the application.
+2. Copy `.env.example` to `.env` and provide values for `JWT_SECRET_KEY` and optional `DATABASE_URI`.
+3. Install backend dependencies with `pip install -r backend/requirements.txt`.
+4. (Optional) install frontend dependencies in `frontend` if using Node.
+5. Start the backend with `python backend/app.py` and the frontend with your preferred React tooling.
+6. Open a browser and navigate to the frontend's URL to use the application.

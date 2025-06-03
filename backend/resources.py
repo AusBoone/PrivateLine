@@ -1,20 +1,17 @@
 from flask_restful import Resource, reqparse
-from flask import request, jsonify, g
+from flask import request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
-from itsdangerous import TimedJSONWebSignatureSerializer as Serializer
-from functools import wraps
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.padding import PKCS7
-from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
 from cryptography.hazmat.backends import default_backend
 from base64 import b64encode
 import os
 from models import User, Message
-from app import db, app
+from app import db, app, socketio
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 import json
 
@@ -32,32 +29,12 @@ user_parser.add_argument('password', required=True, help="Password is required."
 message_parser = reqparse.RequestParser()
 message_parser.add_argument('content', required=True, help="Content is required.")
 
-# Token serializer
-s = Serializer(app.config['SECRET_KEY'], expires_in=3600)
+# Token serializer (legacy).  JWT is now used instead of this custom mechanism.
+# s = Serializer(app.config['SECRET_KEY'], expires_in=3600)
 
-# Authentication decorator to require a valid token for accessing a resource
-def token_required(f):
-    @wraps(f)  # Preserve the original function's signature and attributes
-    def decorated(*args, **kwargs):
-        token = request.headers.get('Authorization')  # Retrieve the token from the 'Authorization' header
-
-        # Check if the token is missing in the request
-        if not token:
-            return {'message': 'Token is missing.'}, 403  # Return a 403 Forbidden response if the token is missing
-
-        try:
-            data = s.loads(token)  # Attempt to deserialize the token using a serializer (e.g., itsdangerous)
-        except:
-            # If deserialization fails (e.g., token is tampered with or expired), return a 403 Forbidden response
-            return {'message': 'Invalid token.'}, 403
-
-        # Query the user from the database using the user ID obtained from the deserialized token
-        g.current_user = User.query.get(data['id'])
-
-        # Call the original function with its arguments and return its result
-        return f(*args, **kwargs)
-
-    return decorated  # Return the decorated function
+# The previous implementation relied on a custom token_required decorator that
+# used itsdangerous for token verification.  The project now leverages
+# Flask-JWT-Extended, so authentication decorators below use @jwt_required.
 
 """
 The private key is encrypted using AES-256 in CBC mode, 
@@ -140,22 +117,49 @@ class Login(Resource):
         else:
             return {'message': 'Invalid username or password'}, 401
 
+
+class PublicKey(Resource):
+    """Return the public key for the given username."""
+
+    @jwt_required()
+    def get(self, username):
+        user = User.query.filter_by(username=username).first()
+        if not user:
+            return {"message": "User not found"}, 404
+        return {"public_key": user.public_key_pem}
+
 class Messages(Resource):
-    # Apply the authentication decorator
-    @token_required
+    # Retrieve all messages. Requires a valid JWT token.
+    @jwt_required()
     def get(self):
         messages = Message.query.all()
-        message_list = [{"id": msg.id, "content": cipher_suite.decrypt(msg.content.encode()).decode(), "timestamp": msg.timestamp, "user_id": msg.user_id} for msg in messages]
+        message_list = [
+            {
+                "id": msg.id,
+                "content": cipher_suite.decrypt(msg.content.encode()).decode(),
+                "timestamp": msg.timestamp,
+                "user_id": msg.user_id,
+            }
+            for msg in messages
+        ]
         return {"messages": message_list}
 
-    # Apply the authentication decorator and rate limiting
-    @token_required
+    # Send a new message. Rate limited via the limiter in app.py
+    @jwt_required()
     def post(self):
         data = message_parser.parse_args()
-        encrypted_content = cipher_suite.encrypt(data['content'].encode()).decode()
 
-        new_message = Message(content=encrypted_content, user_id=g.current_user.id)
+        encrypted_content = cipher_suite.encrypt(data["content"].encode()).decode()
+
+        current_user_id = get_jwt_identity()
+        new_message = Message(content=encrypted_content, user_id=current_user_id)
         db.session.add(new_message)
         db.session.commit()
+
+        # Broadcast the encrypted message to connected clients via WebSockets
+        socketio.emit(
+            "new_message",
+            {"content": encrypted_content, "user_id": current_user_id},
+        )
 
         return {"message": "Message sent successfully."}, 201

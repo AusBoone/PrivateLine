@@ -2,7 +2,7 @@
 // The public key is sent to the server, and the private key should be securely stored on the user's device. 
 // The form itself includes input fields for the username, email, and password, as well as a submit button
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../api';
 
 async function generateKeyPair() {
   const keyPair = await window.crypto.subtle.generateKey(
@@ -39,7 +39,7 @@ function RegisterForm() {
 
     // Send the registration data to the server
     try {
-      const response = await axios.post('https://your-api-url/register', {
+      const response = await api.post('/api/register', {
         username,
         email,
         password,
