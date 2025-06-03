@@ -7,8 +7,8 @@ import AccountSettings from './AccountSettings';
 // UserAccount component function
 function UserAccount() {
   return (
-    {/* Wrapping the content inside a <div> container */}
     <div>
+      {/* Wrapping the content inside a <div> container */}
       {/* Header for the user account section */}
       <h2>User Account</h2>
       {/* Rendering the AccountSettings component, responsible for updating account details */}

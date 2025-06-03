@@ -4,6 +4,7 @@
 import React, { useState } from 'react';
 import { Box, Button, TextField, Typography } from '@mui/material';
 import api from '../api';
+import { arrayBufferToBase64 } from '../utils/encoding';
 
 async function generateKeyPair() {
   const keyPair = await window.crypto.subtle.generateKey(
@@ -36,7 +37,7 @@ function RegisterForm() {
       'spki',
       keyPair.publicKey
     );
-    const publicKeyPem = Buffer.from(exportedPublicKey).toString('base64');
+    const publicKeyPem = arrayBufferToBase64(exportedPublicKey);
 
     // Send the registration data to the server
     try {
