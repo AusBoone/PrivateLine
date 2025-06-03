@@ -41,3 +41,14 @@ To run the application, follow these steps:
 4. (Optional) install frontend dependencies in `frontend` if using Node.
 5. Start the backend with `python backend/app.py` and the frontend with your preferred React tooling.
 6. Open a browser and navigate to the frontend's URL to use the application.
+
+## Running Tests
+Backend unit tests use **pytest**. Once the dependencies are installed you can
+run all tests from the repository root:
+
+```bash
+pytest
+```
+
+The tests exercise the Flask API endpoints such as registration, login and
+message handling.
