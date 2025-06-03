@@ -2,6 +2,7 @@
 // as well as the logic for sending encrypted messages and decrypting received messages.
 import React, { useState } from 'react';
 import axios from 'axios';
+import './Chat.css';
 
 /**
  * Encrypts a given message using the recipient's public key.
@@ -70,6 +71,9 @@ async function decryptMessage(privateKey, encryptedMessage) {
 function Chat() {
     // State variable to manage the message input field
     const [message, setMessage] = useState('');
+    const [messages, setMessages] = useState([
+      { id: 1, text: 'Welcome to PrivateLine!', type: 'received' }
+    ]);
 
     // Takes care of encrypting the message using the recipient's public key before sending it to the server
     const handleSubmit = async (event) => {
@@ -94,7 +98,9 @@ function Chat() {
         });
 
         if (response.status === 200) {
-          // Handle successful message sending
+          // Append the sent message locally
+          setMessages([...messages, { id: Date.now(), text: message, type: 'sent' }]);
+          setMessage('');
         } else {
           // Handle errors
         }
@@ -106,9 +112,15 @@ function Chat() {
     // ... (add other Chat component logic, like fetching and displaying messages)
 
     return (
-      <div>
-        <h2>Chat</h2>
-        <form onSubmit={handleSubmit}>
+      <div className="chat-container">
+        <div className="message-list">
+          {messages.map((msg) => (
+            <div key={msg.id} className={`message ${msg.type}`}>
+              {msg.text}
+            </div>
+          ))}
+        </div>
+        <form className="message-input" onSubmit={handleSubmit}>
           <input
             type="text"
             placeholder="Type your message"
@@ -117,7 +129,6 @@ function Chat() {
           />
           <button type="submit">Send</button>
         </form>
-        {/* Add logic to display messages here */}
       </div>
     );
 }

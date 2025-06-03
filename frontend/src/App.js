@@ -1,5 +1,6 @@
 // Importing necessary dependencies and components
 import React from 'react';
+import './App.css';
 import { BrowserRouter as Router, Route, Switch } from 'react-router-dom'; // Importing React Router components
 import LoginForm from './components/LoginForm';      // Importing LoginForm component
 import RegisterForm from './components/RegisterForm';// Importing RegisterForm component
