@@ -25,6 +25,7 @@ class User(db.Model):
 
     @staticmethod
     def generate_key_pair():
+        """Return a new RSA private key and the corresponding public key PEM."""
         private_key = rsa.generate_private_key(
             public_exponent=65537,
             key_size=2048,

@@ -56,7 +56,7 @@ api.add_resource(Login, '/api/login')
 api.add_resource(Messages, '/api/messages')
 api.add_resource(PublicKey, '/api/public_key/<string:username>')
 
-# Run the app
+# Run the development server only when executed directly.
 if __name__ == '__main__':
     # socketio.run enables WebSocket support alongside the Flask app
     socketio.run(app, debug=True)

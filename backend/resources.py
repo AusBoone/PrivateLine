@@ -43,6 +43,8 @@ The encrypted private key, salt, and IV are then
 sent to the user encoded in base64.
 """
 class Register(Resource):
+    """Create a new user and return the encrypted private key."""
+
     def post(self):
         # Parse the request data
         data = user_parser.parse_args()
@@ -105,6 +107,8 @@ class Register(Resource):
         }, 201
 
 class Login(Resource):
+    """Authenticate a user and return a JWT access token."""
+
     def post(self):
         data = request.get_json()
 
@@ -123,15 +127,19 @@ class PublicKey(Resource):
 
     @jwt_required()
     def get(self, username):
+        """Fetch the PEM encoded public key for ``username``."""
         user = User.query.filter_by(username=username).first()
         if not user:
             return {"message": "User not found"}, 404
         return {"public_key": user.public_key_pem}
 
 class Messages(Resource):
+    """Retrieve or create encrypted chat messages."""
+
     # Retrieve all messages. Requires a valid JWT token.
     @jwt_required()
     def get(self):
+        """Return decrypted messages for the authenticated user."""
         messages = Message.query.all()
         message_list = [
             {
@@ -147,6 +155,7 @@ class Messages(Resource):
     # Send a new message. Rate limited via the limiter in app.py
     @jwt_required()
     def post(self):
+        """Store an encrypted message and broadcast it to clients."""
         data = message_parser.parse_args()
 
         encrypted_content = cipher_suite.encrypt(data["content"].encode()).decode()
