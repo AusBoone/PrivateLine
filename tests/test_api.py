@@ -79,3 +79,24 @@ def test_message_flow(client):
     data = resp.get_json()
     assert resp.status_code == 200
     assert len(data['messages']) == 1
+
+
+def test_account_settings_update(client):
+    register_user(client, 'carol')
+    login = login_user(client, 'carol')
+    token = login.get_json()['access_token']
+    headers = {'Authorization': f'Bearer {token}'}
+
+    resp = client.put('/api/account-settings', json={'email': 'carol2@example.com'}, headers=headers)
+    assert resp.status_code == 200
+
+    resp = client.put(
+        '/api/account-settings',
+        json={'currentPassword': 'secret', 'newPassword': 'newsecret'},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+
+    # Login with new password should succeed
+    resp = client.post('/api/login', json={'username': 'carol', 'password': 'newsecret'})
+    assert resp.status_code == 200

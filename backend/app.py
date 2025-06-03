@@ -45,7 +45,7 @@ api = Api(app)
 jwt = JWTManager(app)
 
 # Import resources after initializing app components to avoid circular imports
-from resources import Register, Login, Messages, PublicKey
+from .resources import Register, Login, Messages, PublicKey, AccountSettings
 
 # Apply rate limiting on the messages resource
 limiter.limit("50/minute")(Messages)
@@ -55,6 +55,7 @@ api.add_resource(Register, '/api/register')
 api.add_resource(Login, '/api/login')
 api.add_resource(Messages, '/api/messages')
 api.add_resource(PublicKey, '/api/public_key/<string:username>')
+api.add_resource(AccountSettings, '/api/account-settings')
 
 # Run the development server only when executed directly.
 if __name__ == '__main__':
