@@ -1,27 +1,49 @@
 // Importing necessary dependencies and components
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import './App.css';
-import { BrowserRouter as Router, Route, Switch } from 'react-router-dom'; // Importing React Router components
-import LoginForm from './components/LoginForm';      // Importing LoginForm component
-import RegisterForm from './components/RegisterForm';// Importing RegisterForm component
-import Chat from './components/Chat';                // Importing Chat component
-import UserAccount from './components/UserAccount';  // Importing UserAccount component
-import NavigationBar from './components/NavigationBar'; // Importing NavigationBar component
+import { BrowserRouter as Router, Route, Switch } from 'react-router-dom';
+import { createTheme, CssBaseline, ThemeProvider } from '@mui/material';
+import LoginForm from './components/LoginForm';
+import RegisterForm from './components/RegisterForm';
+import Chat from './components/Chat';
+import UserAccount from './components/UserAccount';
+import NavigationBar from './components/NavigationBar';
 
 // Main App component
 function App() {
+  const [mode, setMode] = useState('light');
+
+  const theme = useMemo(
+    () =>
+      createTheme({
+        palette: {
+          mode,
+        },
+      }),
+    [mode]
+  );
+
+  const toggleTheme = () => {
+    setMode((prev) => (prev === 'light' ? 'dark' : 'light'));
+  };
+
+  useEffect(() => {
+    document.body.dataset.theme = mode;
+  }, [mode]);
+
   return (
-    // Wrapping the application inside a Router component to enable routing
-    <Router>
-      <NavigationBar /> // NavigationBar component for handling navigation links
-      <Switch> // Switch component to render the first matching route exclusively
-        <Route path="/login" component={LoginForm} />      // Route for the login page
-        <Route path="/register" component={RegisterForm} />// Route for the registration page
-        <Route path="/chat" component={Chat} />            // Route for the chat page
-        <Route path="/account" component={UserAccount} />  // Route for the user account page
-        {/* Add other routes as needed */}
-      </Switch>
-    </Router>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <Router>
+        <NavigationBar onToggleTheme={toggleTheme} currentTheme={mode} />
+        <Switch>
+          <Route path="/login" component={LoginForm} />
+          <Route path="/register" component={RegisterForm} />
+          <Route path="/chat" component={Chat} />
+          <Route path="/account" component={UserAccount} />
+        </Switch>
+      </Router>
+    </ThemeProvider>
   );
 }
 

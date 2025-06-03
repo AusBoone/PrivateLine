@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Box, Button, TextField, Typography } from '@mui/material';
 import api from '../api';
 
 /**
@@ -53,24 +54,33 @@ function LoginForm() {
   };
 
   return (
-    <form onSubmit={handleSubmit}>
-      <h2>Login</h2>
-      <input
-        type="text"
-        placeholder="Username"
+    <Box
+      component="form"
+      onSubmit={handleSubmit}
+      sx={{ display: 'flex', flexDirection: 'column', maxWidth: 320, m: 'auto' }}
+    >
+      <Typography variant="h5" sx={{ mb: 2 }}>
+        Login
+      </Typography>
+      <TextField
+        label="Username"
         value={username}
         onChange={(e) => setUsername(e.target.value)}
-        required // Make this field required to prevent empty submission
+        required
+        margin="normal"
       />
-      <input
+      <TextField
+        label="Password"
         type="password"
-        placeholder="Password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
-        required // Make this field required to prevent empty submission
+        required
+        margin="normal"
       />
-      <button type="submit">Login</button>
-    </form>
+      <Button variant="contained" type="submit" sx={{ mt: 2 }}>
+        Login
+      </Button>
+    </Box>
   );
 }
 

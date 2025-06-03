@@ -2,6 +2,7 @@
 // The public key is sent to the server, and the private key should be securely stored on the user's device. 
 // The form itself includes input fields for the username, email, and password, as well as a submit button
 import React, { useState } from 'react';
+import { Box, Button, TextField, Typography } from '@mui/material';
 import api from '../api';
 
 async function generateKeyPair() {
@@ -60,28 +61,41 @@ function RegisterForm() {
   };
 
   return (
-    <form onSubmit={handleSubmit}>
-      <h2>Register</h2>
-      <input
-        type="text"
-        placeholder="Username"
+    <Box
+      component="form"
+      onSubmit={handleSubmit}
+      sx={{ display: 'flex', flexDirection: 'column', maxWidth: 320, m: 'auto' }}
+    >
+      <Typography variant="h5" sx={{ mb: 2 }}>
+        Register
+      </Typography>
+      <TextField
+        label="Username"
         value={username}
         onChange={(e) => setUsername(e.target.value)}
+        required
+        margin="normal"
       />
-      <input
+      <TextField
+        label="Email"
         type="email"
-        placeholder="Email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
+        required
+        margin="normal"
       />
-      <input
+      <TextField
+        label="Password"
         type="password"
-        placeholder="Password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
+        required
+        margin="normal"
       />
-      <button type="submit">Register</button>
-    </form>
+      <Button variant="contained" type="submit" sx={{ mt: 2 }}>
+        Register
+      </Button>
+    </Box>
   );
 }
 
