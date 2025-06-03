@@ -1,23 +1,24 @@
 from flask_restful import Resource, reqparse
 from flask import request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
-from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives.padding import PKCS7
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
 from cryptography.hazmat.backends import default_backend
-from base64 import b64encode
+from base64 import b64encode, b64decode
 import os
 from models import User, Message
 from app import db, app, socketio
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
-import json
 
-# Fernet key for encryption
-FERNET_KEY = os.environ.get('FERNET_KEY') or Fernet.generate_key()
-cipher_suite = Fernet(FERNET_KEY)
+# AES-GCM key for encrypting stored messages
+_aes_key_env = os.environ.get('AES_KEY')
+if _aes_key_env:
+    AES_KEY = b64decode(_aes_key_env)
+else:
+    AES_KEY = AESGCM.generate_key(bit_length=256)
+aesgcm = AESGCM(AES_KEY)
 
 # Request parser for user registration
 user_parser = reqparse.RequestParser()
@@ -37,9 +38,9 @@ message_parser.add_argument('content', required=True, help="Content is required.
 # Flask-JWT-Extended, so authentication decorators below use @jwt_required.
 
 """
-The private key is encrypted using AES-256 in CBC mode, 
-with a key derived from the user's password using PBKDF2. 
-The encrypted private key, salt, and IV are then 
+The private key is encrypted using AES-256 in GCM mode,
+with a key derived from the user's password using PBKDF2.
+The encrypted private key, salt, and nonce are then
 sent to the user encoded in base64.
 """
 class Register(Resource):
@@ -60,38 +61,30 @@ class Register(Resource):
         # Generate key pair
         private_key, public_key_pem = User.generate_key_pair()
 
-        # Encrypt the private key with the user's password
+        # Encrypt the private key with the user's password using AES-GCM
         password = data['password'].encode()  # Encode the user's password as bytes
         salt = os.urandom(16)                 # Generate a random salt (16 bytes)
-        
+
         # Key Derivation Function (KDF) to derive a cryptographic key from the password using PBKDF2 with HMAC and SHA-256
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),  # Use SHA-256 hash algorithm
             length=32,                  # Length of derived key (32 bytes)
             salt=salt,                  # Salt for the KDF
-            iterations=100000,          # Number of iterations for the KDF
+            iterations=200000,          # Number of iterations for the KDF
             backend=default_backend()   # Cryptographic backend
         )
         key = kdf.derive(password)  # Derive the key using the user's password
-        
-        iv = os.urandom(16)  # Generate a random initialization vector (IV) for AES encryption (16 bytes)
-        
-        # Create a cipher object using AES encryption in CBC mode
-        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-        encryptor = cipher.encryptor()  # Create an encryptor object from the cipher
-        
-        # Create a padder object for PKCS7 padding
-        padder = PKCS7(128).padder()
-        
-        # Pad the private key and convert it to bytes in PEM format
-        padded_private_key = padder.update(private_key.private_bytes(
+
+        nonce = os.urandom(12)  # 96-bit nonce for AES-GCM
+        aes = AESGCM(key)
+
+        private_bytes = private_key.private_bytes(
             encoding=Encoding.PEM,
             format=PrivateFormat.PKCS8,
             encryption_algorithm=NoEncryption()
-        )) + padder.finalize()
-        
-        # Encrypt the padded private key
-        encrypted_private_key = encryptor.update(padded_private_key) + encryptor.finalize()
+        )
+
+        encrypted_private_key = aes.encrypt(nonce, private_bytes, None)
         
         # Create a new user and add it to the database
         new_user = User(username=data['username'], email=data['email'], password_hash=hashed_password, public_key_pem=public_key_pem)
@@ -103,7 +96,7 @@ class Register(Resource):
             "message": "User registered successfully.",                            # Confirmation message
             "encrypted_private_key": b64encode(encrypted_private_key).decode(),     # Base64-encoded encrypted private key
             "salt": b64encode(salt).decode(),                                      # Base64-encoded salt
-            "iv": b64encode(iv).decode()                                           # Base64-encoded IV
+            "nonce": b64encode(nonce).decode()                                           # Base64-encoded nonce
         }, 201
 
 class Login(Resource):
@@ -141,15 +134,17 @@ class Messages(Resource):
     def get(self):
         """Return decrypted messages for the authenticated user."""
         messages = Message.query.all()
-        message_list = [
-            {
+        message_list = []
+        for msg in messages:
+            nonce = b64decode(msg.nonce)
+            ciphertext = b64decode(msg.content)
+            plaintext = aesgcm.decrypt(nonce, ciphertext, None).decode()
+            message_list.append({
                 "id": msg.id,
-                "content": cipher_suite.decrypt(msg.content.encode()).decode(),
+                "content": plaintext,
                 "timestamp": msg.timestamp,
                 "user_id": msg.user_id,
-            }
-            for msg in messages
-        ]
+            })
         return {"messages": message_list}
 
     # Send a new message. Rate limited via the limiter in app.py
@@ -158,10 +153,13 @@ class Messages(Resource):
         """Store an encrypted message and broadcast it to clients."""
         data = message_parser.parse_args()
 
-        encrypted_content = cipher_suite.encrypt(data["content"].encode()).decode()
+        nonce = os.urandom(12)
+        ciphertext = aesgcm.encrypt(nonce, data["content"].encode(), None)
+        encrypted_content = b64encode(ciphertext).decode()
+        nonce_b64 = b64encode(nonce).decode()
 
         current_user_id = get_jwt_identity()
-        new_message = Message(content=encrypted_content, user_id=current_user_id)
+        new_message = Message(content=encrypted_content, nonce=nonce_b64, user_id=current_user_id)
         db.session.add(new_message)
         db.session.commit()
 
