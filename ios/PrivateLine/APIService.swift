@@ -111,8 +111,10 @@ class APIService: ObservableObject {
         var request = URLRequest(url: baseURL.appendingPathComponent("messages"))
         request.httpMethod = "POST"
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        // Encrypt locally and send Base64 ciphertext to the backend
         let encrypted = try CryptoManager.encryptMessage(content)
-        request.httpBody = "content=\(String(decoding: encrypted, as: UTF8.self))".data(using: .utf8)
+        let b64 = encrypted.base64EncodedString()
+        request.httpBody = "content=\(b64)".data(using: .utf8)
         let (data, _) = try await session.data(for: request)
         return try JSONDecoder().decode(Message.self, from: data)
     }
