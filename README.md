@@ -1,5 +1,5 @@
 # PrivateLine
-This project aims to create a privacy-focused, end-to-end encrypted messaging platform.
+This project aims to create a privacy-focused messaging platform. End-to-end encryption is planned but not yet implemented, so messages are currently sent in plaintext.
 
 # Goal
 The goal of this project is to build a secure messaging application that allows users to send and receive encrypted messages. The application utilizes a combination of asymmetric and symmetric encryption techniques to ensure message confidentiality.
@@ -9,7 +9,7 @@ This secure messaging application consists of a frontend built with React and a 
 
 # Features
 - User registration and login
-- Asymmetric encryption using **RSA-OAEP** (4096-bit keys) for message exchange
+- Planned: Asymmetric encryption using **RSA-OAEP** (4096-bit keys) for message exchange (not yet implemented)
 - Symmetric encryption using **AES-256** in GCM mode for private key storage and message persistence
 - Key derivation using **PBKDF2**
 - Encrypted message storage
@@ -22,7 +22,7 @@ This secure messaging application consists of a frontend built with React and a 
 The frontend is built using React and consists of the following components:
 1. **LoginForm**: Handles user login by sending a request to the backend for authentication.
 2. **RegisterForm**: Handles user registration by sending user information to the backend, generating an RSA key pair, and storing the encrypted private key on the client-side.
-3. **Chat**: Provides an interface for users to send and receive encrypted messages. The component also handles message encryption and decryption.
+3. **Chat**: Provides an interface for users to send and receive messages. End-to-end encryption is a future goal and is not yet implemented.
 4. **UserAccount**: Displays the user account management interface.
 5. **App**: Sets up the application's routing, theme provider and navigation bar.
 
