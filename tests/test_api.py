@@ -168,3 +168,49 @@ def test_token_revocation(client):
     new_token = login_user(client, 'gina').get_json()['access_token']
     resp = client.get('/api/messages', headers={'Authorization': f'Bearer {new_token}'})
     assert resp.status_code == 200
+
+def test_public_key_endpoint(client):
+    register_user(client, 'alice')
+    token = login_user(client, 'alice').get_json()['access_token']
+    headers = {'Authorization': f'Bearer {token}'}
+
+    # Query stored PEM directly
+    user = User.query.filter_by(username='alice').first()
+    resp = client.get('/api/public_key/alice', headers=headers)
+    assert resp.status_code == 200
+    assert resp.get_json()['public_key'] == user.public_key_pem
+
+
+def test_rsa_message_roundtrip(client):
+    register_user(client, 'alice')
+    register_user(client, 'bob')
+    token = login_user(client, 'bob').get_json()['access_token']
+    headers = {'Authorization': f'Bearer {token}'}
+
+    # fetch alice's public key
+    resp = client.get('/api/public_key/alice', headers=headers)
+    pem = resp.get_json()['public_key']
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    public_key = serialization.load_pem_public_key(pem.encode())
+    plaintext = b'hello rsa'
+    ciphertext = public_key.encrypt(
+        plaintext,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None,
+        ),
+    )
+    b64 = base64.b64encode(ciphertext).decode()
+
+    resp = client.post('/api/messages', data={'content': b64}, headers=headers)
+    assert resp.status_code == 201
+
+    resp = client.get('/api/messages', headers=headers)
+    data = resp.get_json()
+    assert resp.status_code == 200
+    assert len(data['messages']) == 1
+    assert data['messages'][0]['content'] == b64
