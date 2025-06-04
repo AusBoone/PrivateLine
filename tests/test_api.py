@@ -132,3 +132,36 @@ def test_account_settings_update(client):
     # Login with new password should succeed
     resp = client.post('/api/login', json={'username': 'carol', 'password': 'newsecret'})
     assert resp.status_code == 200
+
+
+def test_token_refresh(client):
+    register_user(client, 'frank')
+    token = login_user(client, 'frank').get_json()['access_token']
+    headers = {'Authorization': f'Bearer {token}'}
+
+    resp = client.post('/api/refresh', headers=headers)
+    assert resp.status_code == 200
+    new_token = resp.get_json()['access_token']
+    assert new_token != token
+
+    resp = client.get('/api/messages', headers={'Authorization': f'Bearer {new_token}'})
+    assert resp.status_code == 200
+
+
+def test_token_revocation(client):
+    register_user(client, 'gina')
+    token = login_user(client, 'gina').get_json()['access_token']
+    headers = {'Authorization': f'Bearer {token}'}
+
+    # revoke the token
+    resp = client.post('/api/revoke', headers=headers)
+    assert resp.status_code == 200
+
+    # token should no longer authorize requests
+    resp = client.get('/api/messages', headers=headers)
+    assert resp.status_code == 401
+
+    # a new login should issue a working token
+    new_token = login_user(client, 'gina').get_json()['access_token']
+    resp = client.get('/api/messages', headers={'Authorization': f'Bearer {new_token}'})
+    assert resp.status_code == 200
