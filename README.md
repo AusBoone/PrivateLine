@@ -57,3 +57,6 @@ pytest
 
 The tests exercise the Flask API endpoints such as registration, login and
 message handling.
+
+## iOS Client
+A minimal SwiftUI client is located in the `ios/` directory. Open it with Xcode and run the app while the backend is running locally.
