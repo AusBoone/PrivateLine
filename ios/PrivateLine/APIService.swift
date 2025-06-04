@@ -1,79 +1,95 @@
 import Foundation
 
-/// Simple wrapper around the Flask REST API used by the app.
-/// It handles user authentication and basic message operations.
+/// Wrapper around the Flask REST API used by the app.
+/// It handles user authentication and message operations.
 class APIService: ObservableObject {
-    /// Base URL of the backend API. Adjust this if the server runs elsewhere.
-    private let baseURL = URL(string: "http://localhost:5000/api")!
+    /// Base URL of the backend API, loaded from Info.plist.
+    private let baseURL: URL
 
     /// Indicates whether the user is currently authenticated.
     @Published var isAuthenticated = false
 
     /// JWT token returned after a successful login.
-    private var token: String?
+    private var token: String? {
+        didSet {
+            if let token = token {
+                KeychainService.saveToken(token)
+            } else {
+                KeychainService.removeToken()
+            }
+        }
+    }
+
+    init() {
+        if let urlString = Bundle.main.object(forInfoDictionaryKey: "BackendBaseURL") as? String,
+           let url = URL(string: urlString) {
+            baseURL = url
+        } else {
+            baseURL = URL(string: "http://localhost:5000/api")!
+        }
+        if let stored = KeychainService.loadToken() {
+            token = stored
+            isAuthenticated = true
+        }
+    }
 
     /// Attempt to log in with the provided credentials.
-    /// - Parameters:
-    ///   - username: Account username
-    ///   - password: Account password
-    ///   - completion: Called with `true` on success
-    func login(username: String, password: String, completion: @escaping (Bool) -> Void) {
+    func login(username: String, password: String) async throws {
         let url = baseURL.appendingPathComponent("login")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONEncoder().encode(["username": username, "password": password])
+        request.httpBody = try JSONEncoder().encode(["username": username, "password": password])
+        let (data, _) = try await URLSession.shared.data(for: request)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let token = json["access_token"] as? String else {
+            throw URLError(.badServerResponse)
+        }
+        DispatchQueue.main.async {
+            self.token = token
+            self.isAuthenticated = true
+        }
+    }
 
-        URLSession.shared.dataTask(with: request) { data, response, _ in
-            guard
-                let data = data,
-                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                let token = json["access_token"] as? String
-            else {
-                DispatchQueue.main.async { completion(false) }
-                return
-            }
-            DispatchQueue.main.async {
-                self.token = token
-                self.isAuthenticated = true
-                completion(true)
-            }
-        }.resume()
+    /// Register a new user.
+    func register(username: String, email: String, password: String) async throws {
+        let url = baseURL.appendingPathComponent("register")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        let body = ["username": username, "email": email, "password": password]
+        request.httpBody = body.map { "\($0)=\($1)" }.joined(separator: "&").data(using: .utf8)
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 201 else {
+            throw URLError(.badServerResponse)
+        }
     }
 
     /// Fetch all messages for the authenticated user.
-    func fetchMessages(completion: @escaping ([Message]) -> Void) {
-        // Ensure we have a token before making the request
-        guard let token = token else { return }
+    func fetchMessages() async throws -> [Message] {
+        guard let token = token else { return [] }
         var request = URLRequest(url: baseURL.appendingPathComponent("messages"))
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        URLSession.shared.dataTask(with: request) { data, _, _ in
-            guard let data = data,
-                  let json = try? JSONDecoder().decode([String: [Message]].self, from: data),
-                  let messages = json["messages"]
-            else {
-                DispatchQueue.main.async { completion([]) }
-                return
-            }
-            DispatchQueue.main.async { completion(messages) }
-        }.resume()
+        let (data, _) = try await URLSession.shared.data(for: request)
+        let json = try JSONDecoder().decode([String: [Message]].self, from: data)
+        return json["messages"] ?? []
     }
 
     /// Send a single message to the server.
-    func sendMessage(_ content: String, completion: @escaping (Message?) -> Void) {
-        guard let token = token else { return }
+    func sendMessage(_ content: String) async throws -> Message {
+        guard let token = token else { throw URLError(.userAuthenticationRequired) }
         var request = URLRequest(url: baseURL.appendingPathComponent("messages"))
         request.httpMethod = "POST"
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.httpBody = "content=\(content)".data(using: .utf8)
-        URLSession.shared.dataTask(with: request) { data, _, _ in
-            guard let data = data,
-                  let message = try? JSONDecoder().decode(Message.self, from: data)
-            else {
-                DispatchQueue.main.async { completion(nil) }
-                return
-            }
-            DispatchQueue.main.async { completion(message) }
-        }.resume()
+        let encrypted = try CryptoManager.encryptMessage(content)
+        request.httpBody = "content=\(String(decoding: encrypted, as: UTF8.self))".data(using: .utf8)
+        let (data, _) = try await URLSession.shared.data(for: request)
+        return try JSONDecoder().decode(Message.self, from: data)
     }
+
+    func logout() {
+        token = nil
+        isAuthenticated = false
+    }
+
+    var authToken: String? { token }
 }
