@@ -107,9 +107,7 @@ async function decryptMessage(privateKey, encryptedMessage) {
 function Chat() {
     // State variable to manage the message input field
     const [message, setMessage] = useState('');
-    const [messages, setMessages] = useState([
-      { id: 1, text: 'Welcome to PrivateLine!', type: 'received' }
-    ]);
+  const [messages, setMessages] = useState([]);
     const [socket, setSocket] = useState(null);
     const [privateKey, setPrivateKey] = useState(null);
 
@@ -118,7 +116,24 @@ function Chat() {
     const publicKeyCache = React.useRef(new Map());
 
     useEffect(() => {
+      let s;
+
       async function init() {
+        try {
+          const resp = await api.get('/api/messages');
+          if (resp.status === 200 && Array.isArray(resp.data.messages)) {
+            setMessages(
+              resp.data.messages.map((m) => ({
+                id: m.id,
+                text: m.content,
+                type: 'received',
+              }))
+            );
+          }
+        } catch (err) {
+          console.error('Failed to fetch messages', err);
+        }
+
         const pem = sessionStorage.getItem('private_key_pem');
         if (pem) {
           try {
@@ -132,7 +147,7 @@ function Chat() {
           await loadKeyMaterial();
         }
 
-        const s = io(process.env.REACT_APP_API_URL || 'http://localhost:5000');
+        s = io(process.env.REACT_APP_API_URL || 'http://localhost:5000');
         setSocket(s);
 
         s.on('new_message', (payload) => {
@@ -142,11 +157,13 @@ function Chat() {
             { id: Date.now(), text: payload.content, type: 'received' },
           ]);
         });
-
-        return () => s.disconnect();
       }
 
       init();
+
+      return () => {
+        if (s) s.disconnect();
+      };
     }, []);
 
     // Send the plaintext message to the server. End-to-end encryption will be added in the future.
