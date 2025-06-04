@@ -14,7 +14,7 @@ from flask_jwt_extended import (
     verify_jwt_in_request,
     get_jwt,
 )
-from flask_socketio import SocketIO, disconnect
+from flask_socketio import SocketIO, disconnect, join_room
 from dotenv import load_dotenv
 
 # Load environment variables from a .env file if present.  This keeps
@@ -89,6 +89,8 @@ from .resources import (
 def socket_connect():
     try:
         verify_jwt_in_request()
+        user_id = get_jwt_identity()
+        join_room(str(user_id))
     except Exception:
         app.logger.warning("WebSocket connection rejected due to missing or invalid token")
         disconnect()

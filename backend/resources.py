@@ -31,6 +31,9 @@ message_parser = reqparse.RequestParser()
 message_parser.add_argument(
     'content', required=True, location='form', help="Content is required."
 )
+message_parser.add_argument(
+    'recipient', required=True, location='form', help="Recipient username is required."
+)
 
 # Token serializer (legacy).  JWT is now used instead of this custom mechanism.
 # s = Serializer(app.config['SECRET_KEY'], expires_in=3600)
@@ -162,8 +165,15 @@ class Messages(Resource):
     @jwt_required()
     def get(self):
         """Return base64-encoded ciphertext for the authenticated user."""
+        from sqlalchemy import or_
+
         current_user_id = int(get_jwt_identity())
-        messages = Message.query.filter_by(user_id=current_user_id).all()
+        messages = Message.query.filter(
+            or_(
+                Message.sender_id == current_user_id,
+                Message.recipient_id == current_user_id,
+            )
+        ).all()
         message_list = []
         for msg in messages:
             nonce = b64decode(msg.nonce)
@@ -176,7 +186,8 @@ class Messages(Resource):
                 "id": msg.id,
                 "content": plaintext_b64,
                 "timestamp": msg.timestamp.isoformat(),
-                "user_id": msg.user_id,
+                "sender_id": msg.sender_id,
+                "recipient_id": msg.recipient_id,
             })
         return {"messages": message_list}
 
@@ -188,6 +199,10 @@ class Messages(Resource):
 
         if len(data['content']) > 2000:
             return {"message": "Message too long."}, 400
+
+        recipient = User.query.filter_by(username=data['recipient']).first()
+        if not recipient:
+            return {"message": "Recipient not found."}, 404
 
         # The client sends base64 encoded ciphertext. Decode it before applying
         # server-side encryption for storage.
@@ -202,7 +217,13 @@ class Messages(Resource):
         nonce_b64 = b64encode(nonce).decode()
 
         current_user_id = int(get_jwt_identity())
-        new_message = Message(content=encrypted_content, nonce=nonce_b64, user_id=current_user_id)
+        new_message = Message(
+            content=encrypted_content,
+            nonce=nonce_b64,
+            user_id=current_user_id,
+            sender_id=current_user_id,
+            recipient_id=recipient.id,
+        )
         try:
             db.session.add(new_message)
             db.session.commit()
@@ -214,7 +235,12 @@ class Messages(Resource):
         # Broadcast the encrypted message to connected clients via WebSockets
         socketio.emit(
             "new_message",
-            {"content": data["content"], "user_id": current_user_id},
+            {
+                "content": data["content"],
+                "sender_id": current_user_id,
+                "recipient_id": recipient.id,
+            },
+            to=str(recipient.id),
         )
 
         return {"message": "Message sent successfully."}, 201
