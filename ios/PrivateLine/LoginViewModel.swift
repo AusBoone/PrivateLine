@@ -16,19 +16,27 @@ final class LoginViewModel: ObservableObject {
     }
 
     func login() async {
+        guard !username.isEmpty, password.count >= 4 else {
+            errorMessage = "Please enter a username and password"
+            return
+        }
         do {
             try await api.login(username: username, password: password)
         } catch {
-            errorMessage = "Login failed"
+            errorMessage = "Login failed: \(error.localizedDescription)"
         }
     }
 
     func register() async {
+        guard email.contains("@"), password.count >= 8 else {
+            errorMessage = "Enter a valid email and a strong password"
+            return
+        }
         do {
             try await api.register(username: username, email: email, password: password)
             isRegistering = false
         } catch {
-            errorMessage = "Registration failed"
+            errorMessage = "Registration failed: \(error.localizedDescription)"
         }
     }
 }

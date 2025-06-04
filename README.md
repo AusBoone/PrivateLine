@@ -1,5 +1,5 @@
 # PrivateLine
-This project aims to create a privacy-focused messaging platform. End-to-end encryption is planned but not yet implemented, so messages are currently sent in plaintext.
+This project aims to create a privacy-focused messaging platform. End-to-end encryption is now partially implemented on the iOS client where messages are encrypted locally before being transmitted.
 
 # Goal
 The goal of this project is to build a secure messaging application that allows users to send and receive encrypted messages. The application utilizes a combination of asymmetric and symmetric encryption techniques to ensure message confidentiality.
@@ -9,7 +9,7 @@ This secure messaging application consists of a frontend built with React and a 
 
 # Features
 - User registration and login
-- Planned: Asymmetric encryption using **RSA-OAEP** (4096-bit keys) for message exchange (not yet implemented)
+- Asymmetric encryption using **RSA-OAEP** (4096-bit keys) for message exchange (iOS client only)
 - Symmetric encryption using **AES-256** in GCM mode for private key storage and message persistence
 - Key derivation using **PBKDF2**
 - Encrypted message storage
@@ -17,6 +17,8 @@ This secure messaging application consists of a frontend built with React and a 
 - JWT-based user authentication
 - Real-time message delivery over WebSockets
 - User account management interface
+- Offline caching of messages on the iOS client
+- Optional dark mode and push notification support on iOS
 
 # Frontend
 The frontend is built using React and consists of the following components:

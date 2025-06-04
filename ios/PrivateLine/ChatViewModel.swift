@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 @MainActor
 final class ChatViewModel: ObservableObject {
@@ -7,18 +8,26 @@ final class ChatViewModel: ObservableObject {
 
     private let api: APIService
     private let socket = WebSocketService()
+    private var cancellables = Set<AnyCancellable>()
 
     init(api: APIService) {
         self.api = api
     }
 
     func load() async {
+        // Load cached messages first for offline support
+        messages = MessageStore.load()
         do {
-            messages = try await api.fetchMessages()
+            let fetched = try await api.fetchMessages()
+            messages = fetched
+            MessageStore.save(fetched)
             if let token = api.authToken {
                 socket.connect(token: token)
             }
-            socket.$messages.assign(to: &$messages)
+            socket.$messages.sink { [weak self] msgs in
+                self?.messages = msgs
+                MessageStore.save(msgs)
+            }.store(in: &cancellables)
         } catch {
             messages = []
         }
@@ -28,6 +37,7 @@ final class ChatViewModel: ObservableObject {
         do {
             let msg = try await api.sendMessage(input)
             messages.append(msg)
+            MessageStore.save(messages)
             input = ""
         } catch {
             // ignore for now
@@ -36,5 +46,6 @@ final class ChatViewModel: ObservableObject {
 
     func disconnect() {
         socket.disconnect()
+        MessageStore.save(messages)
     }
 }
