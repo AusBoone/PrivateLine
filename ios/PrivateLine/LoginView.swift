@@ -4,7 +4,7 @@ struct LoginView: View {
     @StateObject var viewModel: LoginViewModel
 
     var body: some View {
-        VStack {
+        VStack(spacing: 12) {
             if viewModel.isRegistering {
                 TextField("Username", text: $viewModel.username)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -21,11 +21,14 @@ struct LoginView: View {
                     .textFieldStyle(RoundedBorderTextFieldStyle())
                 SecureField("Password", text: $viewModel.password)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
-                Button("Login") { Task { await viewModel.login() } }
+                Button(action: { Task { await viewModel.login() } }) {
+                    Label("Login", systemImage: "lock.open")
+                }
                 Button("Create Account") { viewModel.isRegistering = true }
             }
             if let error = viewModel.errorMessage {
                 Text(error).foregroundColor(.red)
+                    .accessibilityLabel("Error: \(error)")
             }
         }
         .padding()
