@@ -46,4 +46,11 @@ class Message(db.Model):
     content = db.Column(db.String(1000), nullable=False)
     nonce = db.Column(db.String(24), nullable=False)
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
+    # ``user_id`` historically referenced the owner of the message.  To support
+    # private messaging between two users while maintaining backward
+    # compatibility, the original column remains but new ``sender_id`` and
+    # ``recipient_id`` fields explicitly store both parties.  ``user_id`` is set
+    # to the sender for new messages but is otherwise unused.
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    sender_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    recipient_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)

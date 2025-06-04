@@ -84,16 +84,32 @@ def test_register_and_login(client):
 
 
 def test_message_flow(client):
+    register_user(client, 'alice')
     register_user(client, 'bob')
-    login = login_user(client, 'bob')
-    token = login.get_json()['access_token']
-    headers = {'Authorization': f'Bearer {token}'}
+
+    token_bob = login_user(client, 'bob').get_json()['access_token']
+    headers_bob = {'Authorization': f'Bearer {token_bob}'}
 
     b64 = base64.b64encode(b'hello').decode()
-    resp = client.post('/api/messages', data={'content': b64}, headers=headers)
+    resp = client.post(
+        '/api/messages',
+        data={'content': b64, 'recipient': 'alice'},
+        headers=headers_bob,
+    )
     assert resp.status_code == 201
 
-    resp = client.get('/api/messages', headers=headers)
+    # Sender should see the message
+    resp = client.get('/api/messages', headers=headers_bob)
+    data = resp.get_json()
+    assert resp.status_code == 200
+    assert len(data['messages']) == 1
+    assert data['messages'][0]['content'] == b64
+    assert data['messages'][0]['recipient_id'] == User.query.filter_by(username='alice').first().id
+
+    # Recipient should also see the message
+    token_alice = login_user(client, 'alice').get_json()['access_token']
+    headers_alice = {'Authorization': f'Bearer {token_alice}'}
+    resp = client.get('/api/messages', headers=headers_alice)
     data = resp.get_json()
     assert resp.status_code == 200
     assert len(data['messages']) == 1
@@ -102,16 +118,30 @@ def test_message_flow(client):
 
 def test_message_privacy(client):
     register_user(client, 'eve')
+    register_user(client, 'mallory')
+    register_user(client, 'carol')
+
     token_eve = login_user(client, 'eve').get_json()['access_token']
     headers_eve = {'Authorization': f'Bearer {token_eve}'}
     encoded = base64.b64encode(b'secret').decode()
-    client.post('/api/messages', data={'content': encoded}, headers=headers_eve)
+    client.post(
+        '/api/messages',
+        data={'content': encoded, 'recipient': 'mallory'},
+        headers=headers_eve,
+    )
 
-    register_user(client, 'mallory')
     token_mallory = login_user(client, 'mallory').get_json()['access_token']
     headers_mallory = {'Authorization': f'Bearer {token_mallory}'}
 
+    # Recipient should see the message
     resp = client.get('/api/messages', headers=headers_mallory)
+    assert resp.status_code == 200
+    assert len(resp.get_json()['messages']) == 1
+
+    # Third party should not see it
+    token_carol = login_user(client, 'carol').get_json()['access_token']
+    headers_carol = {'Authorization': f'Bearer {token_carol}'}
+    resp = client.get('/api/messages', headers=headers_carol)
     assert resp.status_code == 200
     assert len(resp.get_json()['messages']) == 0
 
@@ -206,7 +236,11 @@ def test_rsa_message_roundtrip(client):
     )
     b64 = base64.b64encode(ciphertext).decode()
 
-    resp = client.post('/api/messages', data={'content': b64}, headers=headers)
+    resp = client.post(
+        '/api/messages',
+        data={'content': b64, 'recipient': 'alice'},
+        headers=headers,
+    )
     assert resp.status_code == 201
 
     resp = client.get('/api/messages', headers=headers)
@@ -214,3 +248,24 @@ def test_rsa_message_roundtrip(client):
     assert resp.status_code == 200
     assert len(data['messages']) == 1
     assert data['messages'][0]['content'] == b64
+
+    # Recipient also sees it
+    token_alice = login_user(client, 'alice').get_json()['access_token']
+    headers_alice = {'Authorization': f'Bearer {token_alice}'}
+    resp = client.get('/api/messages', headers=headers_alice)
+    assert resp.status_code == 200
+    assert len(resp.get_json()['messages']) == 1
+
+
+def test_send_unknown_recipient(client):
+    register_user(client, 'alice')
+    token = login_user(client, 'alice').get_json()['access_token']
+    headers = {'Authorization': f'Bearer {token}'}
+
+    b64 = base64.b64encode(b'hi').decode()
+    resp = client.post(
+        '/api/messages',
+        data={'content': b64, 'recipient': 'nonexistent'},
+        headers=headers,
+    )
+    assert resp.status_code == 404
