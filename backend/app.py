@@ -9,7 +9,7 @@ from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_jwt_extended import JWTManager, get_jwt_identity, verify_jwt_in_request
-from flask_socketio import SocketIO, disconnect
+from flask_socketio import SocketIO, disconnect, join_room
 from dotenv import load_dotenv
 
 # Load environment variables from a .env file if present.  This keeps
@@ -69,6 +69,8 @@ from .resources import Register, Login, Messages, PublicKey, AccountSettings
 def socket_connect():
     try:
         verify_jwt_in_request()
+        user_id = get_jwt_identity()
+        join_room(str(user_id))
     except Exception:
         app.logger.warning("WebSocket connection rejected due to missing or invalid token")
         disconnect()

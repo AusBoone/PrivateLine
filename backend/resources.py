@@ -26,6 +26,9 @@ message_parser = reqparse.RequestParser()
 message_parser.add_argument(
     'content', required=True, location='form', help="Content is required."
 )
+message_parser.add_argument(
+    'recipient', required=True, location='form', help="Recipient is required."
+)
 
 # Token serializer (legacy).  JWT is now used instead of this custom mechanism.
 # s = Serializer(app.config['SECRET_KEY'], expires_in=3600)
@@ -156,38 +159,49 @@ class Messages(Resource):
     # Retrieve all messages. Requires a valid JWT token.
     @jwt_required()
     def get(self):
-        """Return decrypted messages for the authenticated user."""
+        """Return encrypted messages for the authenticated user."""
         current_user_id = int(get_jwt_identity())
-        messages = Message.query.filter_by(user_id=current_user_id).all()
+        messages = Message.query.filter_by(recipient_id=current_user_id).all()
         message_list = []
         for msg in messages:
             nonce = b64decode(msg.nonce)
-            ciphertext = b64decode(msg.content)
-            plaintext = aesgcm.decrypt(nonce, ciphertext, None).decode()
+            stored = b64decode(msg.content)
+            ciphertext_b = aesgcm.decrypt(nonce, stored, None)
+            ciphertext = ciphertext_b.decode()
             message_list.append({
                 "id": msg.id,
-                "content": plaintext,
+                "content": ciphertext,
                 "timestamp": msg.timestamp.isoformat(),
                 "user_id": msg.user_id,
+                "recipient_id": msg.recipient_id,
             })
         return {"messages": message_list}
 
     # Send a new message. Rate limited via the limiter in app.py
     @jwt_required()
     def post(self):
-        """Store an encrypted message and broadcast it to clients."""
+        """Store an encrypted message and broadcast it to the recipient."""
         data = message_parser.parse_args()
 
         if len(data['content']) > 1000:
             return {"message": "Message too long."}, 400
 
+        recipient = User.query.filter_by(username=data['recipient']).first()
+        if not recipient:
+            return {"message": "Recipient not found."}, 404
+
         nonce = os.urandom(12)
-        ciphertext = aesgcm.encrypt(nonce, data["content"].encode(), None)
+        ciphertext = aesgcm.encrypt(nonce, data['content'].encode(), None)
         encrypted_content = b64encode(ciphertext).decode()
         nonce_b64 = b64encode(nonce).decode()
 
         current_user_id = int(get_jwt_identity())
-        new_message = Message(content=encrypted_content, nonce=nonce_b64, user_id=current_user_id)
+        new_message = Message(
+            content=encrypted_content,
+            nonce=nonce_b64,
+            user_id=current_user_id,
+            recipient_id=recipient.id,
+        )
         try:
             db.session.add(new_message)
             db.session.commit()
@@ -196,10 +210,11 @@ class Messages(Resource):
             db.session.rollback()
             return {"message": "Failed to store message."}, 500
 
-        # Broadcast the encrypted message to connected clients via WebSockets
+        # Broadcast the encrypted message only to the recipient via WebSockets
         socketio.emit(
             "new_message",
-            {"content": encrypted_content, "user_id": current_user_id},
+            {"content": data['content'], "user_id": current_user_id},
+            room=str(recipient.id),
         )
 
         return {"message": "Message sent successfully."}, 201

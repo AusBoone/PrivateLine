@@ -89,7 +89,7 @@ def test_message_flow(client):
     token = login.get_json()['access_token']
     headers = {'Authorization': f'Bearer {token}'}
 
-    resp = client.post('/api/messages', data={'content': 'hello'}, headers=headers)
+    resp = client.post('/api/messages', data={'content': 'hello', 'recipient': 'bob'}, headers=headers)
     assert resp.status_code == 201
 
     resp = client.get('/api/messages', headers=headers)
@@ -102,7 +102,7 @@ def test_message_privacy(client):
     register_user(client, 'eve')
     token_eve = login_user(client, 'eve').get_json()['access_token']
     headers_eve = {'Authorization': f'Bearer {token_eve}'}
-    client.post('/api/messages', data={'content': 'secret'}, headers=headers_eve)
+    client.post('/api/messages', data={'content': 'secret', 'recipient': 'eve'}, headers=headers_eve)
 
     register_user(client, 'mallory')
     token_mallory = login_user(client, 'mallory').get_json()['access_token']
