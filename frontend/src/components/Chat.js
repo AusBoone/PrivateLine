@@ -119,25 +119,11 @@ function Chat() {
       let s;
 
       async function init() {
-        try {
-          const resp = await api.get('/api/messages');
-          if (resp.status === 200 && Array.isArray(resp.data.messages)) {
-            setMessages(
-              resp.data.messages.map((m) => ({
-                id: m.id,
-                text: m.content,
-                type: 'received',
-              }))
-            );
-          }
-        } catch (err) {
-          console.error('Failed to fetch messages', err);
-        }
-
+        let key = null;
         const pem = sessionStorage.getItem('private_key_pem');
         if (pem) {
           try {
-            const key = await pemToCryptoKey(pem);
+            key = await pemToCryptoKey(pem);
             setPrivateKey(key);
           } catch (e) {
             console.error('Failed to import private key', e);
@@ -147,14 +133,43 @@ function Chat() {
           await loadKeyMaterial();
         }
 
+        try {
+          const resp = await api.get('/api/messages');
+          if (resp.status === 200 && Array.isArray(resp.data.messages)) {
+            const decrypted = await Promise.all(
+              resp.data.messages.map(async (m) => {
+                let text = m.content;
+                if (key) {
+                  try {
+                    text = await decryptMessage(key, m.content);
+                  } catch (e) {
+                    console.error('Failed to decrypt message', e);
+                  }
+                }
+                return { id: m.id, text, type: 'received' };
+              })
+            );
+            setMessages(decrypted);
+          }
+        } catch (err) {
+          console.error('Failed to fetch messages', err);
+        }
+
         s = io(process.env.REACT_APP_API_URL || 'http://localhost:5000');
         setSocket(s);
 
-        s.on('new_message', (payload) => {
-          // The server already returns plaintext so we simply display it.
+        s.on('new_message', async (payload) => {
+          let text = payload.content;
+          if (privateKey) {
+            try {
+              text = await decryptMessage(privateKey, payload.content);
+            } catch (e) {
+              console.error('Failed to decrypt incoming message', e);
+            }
+          }
           setMessages((prev) => [
             ...prev,
-            { id: Date.now(), text: payload.content, type: 'received' },
+            { id: Date.now(), text, type: 'received' },
           ]);
         });
       }
@@ -166,26 +181,34 @@ function Chat() {
       };
     }, []);
 
-    // Send the plaintext message to the server. End-to-end encryption will be added in the future.
     const handleSubmit = async (event) => {
       event.preventDefault();
 
-      // Send the plaintext message to the server
       try {
+        const recipient = 'bob'; // TODO: replace with selected conversation
+        let publicKeyPem = publicKeyCache.current.get(recipient);
+        if (!publicKeyPem) {
+          const resp = await api.get(`/api/public_key/${recipient}`);
+          if (resp.status === 200 && resp.data.public_key) {
+            publicKeyPem = resp.data.public_key;
+            publicKeyCache.current.set(recipient, publicKeyPem);
+          } else {
+            throw new Error('Failed to fetch recipient key');
+          }
+        }
+
+        const ciphertext = await encryptMessage(publicKeyPem, message);
         const formData = new URLSearchParams();
-        formData.append('content', message);
+        formData.append('content', ciphertext);
 
         const response = await api.post('/api/messages', formData);
 
         if (response.status === 201) {
-          // Append the sent message locally
           setMessages([...messages, { id: Date.now(), text: message, type: 'sent' }]);
           setMessage('');
-        } else {
-          // Handle errors
         }
       } catch (error) {
-        // Handle network or server errors
+        console.error('Failed to send message', error);
       }
     };
 
