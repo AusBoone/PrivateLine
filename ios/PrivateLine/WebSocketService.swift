@@ -3,14 +3,19 @@ import Foundation
 /// Handles real-time message updates using URLSession WebSocket.
 class WebSocketService: ObservableObject {
     private var task: URLSessionWebSocketTask?
+    private let session: URLSession
     @Published var messages: [Message] = []
+
+    init(session: URLSession = .shared) {
+        self.session = session
+    }
 
     func connect(token: String) {
         guard let urlString = Bundle.main.object(forInfoDictionaryKey: "WebSocketURL") as? String,
               let url = URL(string: urlString) else { return }
         var request = URLRequest(url: url)
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        task = URLSession.shared.webSocketTask(with: request)
+        task = session.webSocketTask(with: request)
         task?.resume()
         listen()
     }
