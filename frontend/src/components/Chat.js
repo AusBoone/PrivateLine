@@ -16,6 +16,8 @@ import './Chat.css';
 import { arrayBufferToBase64, base64ToArrayBuffer } from '../utils/encoding';
 import { loadKeyMaterial } from '../utils/secureStore';
 
+const USERS = ['alice', 'bob', 'carol'];
+
 function pemToCryptoKey(pem) {
   const b64 = pem
     .replace('-----BEGIN PRIVATE KEY-----', '')
@@ -110,6 +112,7 @@ function Chat() {
   const [messages, setMessages] = useState([]);
     const [socket, setSocket] = useState(null);
     const [privateKey, setPrivateKey] = useState(null);
+    const [recipient, setRecipient] = useState('alice');
 
     // Cache for recipient public keys.  In a real app this might live in a
     // Redux store or other global cache.
@@ -185,7 +188,7 @@ function Chat() {
       event.preventDefault();
 
       try {
-        const recipient = 'bob'; // TODO: replace with selected conversation
+        if (!recipient) return;
         let publicKeyPem = publicKeyCache.current.get(recipient);
         if (!publicKeyPem) {
           const resp = await api.get(`/api/public_key/${recipient}`);
@@ -221,7 +224,16 @@ function Chat() {
             <ListItem>
               <ListItemText primary="Conversations" />
             </ListItem>
-            {/* Future conversation items here */}
+            {USERS.map((user) => (
+              <ListItem
+                button
+                key={user}
+                selected={recipient === user}
+                onClick={() => setRecipient(user)}
+              >
+                <ListItemText primary={user} />
+              </ListItem>
+            ))}
           </List>
         </Drawer>
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
