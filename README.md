@@ -42,6 +42,8 @@ To run the application, follow these steps:
    * `JWT_SECRET_KEY` – key used for JWT signatures.
    * `AES_KEY` – base64 encoded 32 byte key used to encrypt persisted messages. A convenient way to generate one is `openssl rand -base64 32`.
    * Optional `DATABASE_URI` if you want to use a database other than the default SQLite file.
+   * Optional `REDIS_URL` for persistent rate limiting storage.
+   * Optional `SOCKETIO_ORIGINS` to restrict WebSocket origins.
 3. Install backend dependencies with `pip install -r backend/requirements.txt`.
 4. Install frontend dependencies with `npm install` inside the `frontend` directory.
 5. Start the backend with `python backend/app.py` and the frontend with `npm start`.
