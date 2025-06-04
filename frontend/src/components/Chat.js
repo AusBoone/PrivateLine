@@ -135,18 +135,11 @@ function Chat() {
         const s = io(process.env.REACT_APP_API_URL || 'http://localhost:5000');
         setSocket(s);
 
-        s.on('new_message', async (payload) => {
-          let text = payload.content;
-          if (privateKey) {
-            try {
-              text = await decryptMessage(privateKey, payload.content);
-            } catch (e) {
-              console.error('Failed to decrypt message', e);
-            }
-          }
+        s.on('new_message', (payload) => {
+          // The server already returns plaintext so we simply display it.
           setMessages((prev) => [
             ...prev,
-            { id: Date.now(), text, type: 'received' },
+            { id: Date.now(), text: payload.content, type: 'received' },
           ]);
         });
 
@@ -156,27 +149,14 @@ function Chat() {
       init();
     }, []);
 
-    // Takes care of encrypting the message using the recipient's public key before sending it to the server
+    // Send the plaintext message to the server. End-to-end encryption will be added in the future.
     const handleSubmit = async (event) => {
       event.preventDefault();
 
-      const recipient = 'alice'; // Placeholder - would be selected in the UI
-
-      // Attempt to load the recipient's public key from the cache; otherwise fetch from API
-      let recipientPublicKeyPem = publicKeyCache.current.get(recipient);
-      if (!recipientPublicKeyPem) {
-        const response = await api.get(`/api/public_key/${recipient}`);
-        recipientPublicKeyPem = response.data.public_key;
-        publicKeyCache.current.set(recipient, recipientPublicKeyPem);
-      }
-
-      // Encrypt the message using the recipient's public key
-      const encryptedMessage = await encryptMessage(recipientPublicKeyPem, message);
-
-      // Send the encrypted message to the server
+      // Send the plaintext message to the server
       try {
         const formData = new URLSearchParams();
-        formData.append('content', encryptedMessage);
+        formData.append('content', message);
 
         const response = await api.post('/api/messages', formData);
 
