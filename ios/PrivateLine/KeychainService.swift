@@ -7,7 +7,7 @@ struct KeychainService {
     private static let tokenKey = "PrivateLineToken"
 
     /// Generic helper to save arbitrary data in the keychain under ``account``.
-    private static func save(_ account: String, data: Data) {
+    static func save(_ account: String, data: Data) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: account,
@@ -18,7 +18,7 @@ struct KeychainService {
     }
 
     /// Generic helper to load arbitrary data from the keychain.
-    private static func loadData(account: String, context: LAContext? = nil) -> Data? {
+    static func loadData(account: String, context: LAContext? = nil) -> Data? {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: account,

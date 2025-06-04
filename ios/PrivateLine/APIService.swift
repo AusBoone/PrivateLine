@@ -13,6 +13,9 @@ class APIService: ObservableObject {
     /// Count the number of failed login attempts.
     private var loginFailures = 0
 
+    /// Cache of fetched recipient public keys
+    private var publicKeyCache: [String: String] = [:]
+
     /// URLSession used for API calls with certificate pinning.
     private let session: URLSession
 
@@ -69,6 +72,7 @@ class APIService: ObservableObject {
                 throw URLError(.badServerResponse)
             }
             loginFailures = 0
+            try? CryptoManager.loadPrivateKey(password: password)
             DispatchQueue.main.async {
                 self.token = token
                 self.isAuthenticated = true
@@ -89,9 +93,15 @@ class APIService: ObservableObject {
         request.httpMethod = "POST"
         let body = ["username": username, "email": email, "password": password]
         request.httpBody = body.map { "\($0)=\($1)" }.joined(separator: "&").data(using: .utf8)
-        let (_, response) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 201 else {
             throw URLError(.badServerResponse)
+        }
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: String],
+           let enc = json["encrypted_private_key"],
+           let salt = json["salt"],
+           let nonce = json["nonce"] {
+            CryptoManager.storeKeyMaterial(.init(encrypted_private_key: enc, salt: salt, nonce: nonce))
         }
     }
 
@@ -102,21 +112,44 @@ class APIService: ObservableObject {
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let (data, _) = try await session.data(for: request)
         let json = try JSONDecoder().decode([String: [Message]].self, from: data)
-        return json["messages"] ?? []
+        let msgs = json["messages"] ?? []
+        return msgs.compactMap { msg in
+            if let text = try? CryptoManager.decryptRSA(msg.content) {
+                return Message(id: msg.id, content: text)
+            }
+            return nil
+        }
     }
 
-    /// Send a single message to the server.
-    func sendMessage(_ content: String) async throws -> Message {
+    /// Fetch and cache the public key for ``username``.
+    private func publicKey(for username: String) async throws -> String {
+        if let cached = publicKeyCache[username] {
+            return cached
+        }
+        guard let token = token else { throw URLError(.userAuthenticationRequired) }
+        let url = baseURL.appendingPathComponent("public_key/\(username)")
+        var request = URLRequest(url: url)
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, _) = try await session.data(for: request)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: String],
+              let pem = json["public_key"] else {
+            throw URLError(.badServerResponse)
+        }
+        publicKeyCache[username] = pem
+        return pem
+    }
+
+    /// Send a single message to ``recipient``.
+    func sendMessage(_ content: String, to recipient: String) async throws {
         guard let token = token else { throw URLError(.userAuthenticationRequired) }
         var request = URLRequest(url: baseURL.appendingPathComponent("messages"))
         request.httpMethod = "POST"
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        // Encrypt locally and send Base64 ciphertext to the backend
-        let encrypted = try CryptoManager.encryptMessage(content)
+        let publicKeyPem = try await publicKey(for: recipient)
+        let encrypted = try CryptoManager.encryptRSA(content, publicKeyPem: publicKeyPem)
         let b64 = encrypted.base64EncodedString()
         request.httpBody = "content=\(b64)".data(using: .utf8)
-        let (data, _) = try await session.data(for: request)
-        return try JSONDecoder().decode(Message.self, from: data)
+        _ = try await session.data(for: request)
     }
 
     func logout() {
