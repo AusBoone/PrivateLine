@@ -1,5 +1,13 @@
 import React, { useState } from 'react';
-import { Box, Button, TextField, Typography } from '@mui/material';
+import {
+  Box,
+  Button,
+  TextField,
+  Typography,
+  Snackbar,
+  Alert,
+} from '@mui/material';
+import { useHistory, useLocation } from 'react-router-dom';
 import api from '../api';
 import { loadKeyMaterial } from '../utils/secureStore';
 import { base64ToArrayBuffer } from '../utils/encoding';
@@ -14,9 +22,17 @@ import { base64ToArrayBuffer } from '../utils/encoding';
  * @returns {React.Component} The LoginForm component
  */
 function LoginForm() {
+  // React Router navigation helpers
+  const history = useHistory();
+  const location = useLocation();
+
   // State variables to hold the user's input for username and password
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [openSuccess, setOpenSuccess] = useState(
+    location.state && location.state.registered
+  );
 
   /**
    * handleSubmit Function
@@ -43,7 +59,7 @@ function LoginForm() {
       if (response.status === 200) {
         // Store the received JWT so it can be attached to future requests
         localStorage.setItem('access_token', response.data.access_token);
-
+        
         try {
           const material = await loadKeyMaterial();
           const { encrypted_private_key, salt, nonce } = material;
@@ -78,45 +94,70 @@ function LoginForm() {
           console.error('Failed to load private key', e);
         }
 
-        // Redirect to the chat page or another appropriate page
+        // Redirect to the chat page
+        history.push('/chat');
       } else {
         // Handle login errors
-        // You may want to update the component state or show a notification to the user
+        setError(response.data.message || 'Login failed');
       }
     } catch (error) {
       // Handle network or server errors
-      // You may want to log the error or show an error message to the user
+      if (error.response && error.response.data && error.response.data.message) {
+        setError(error.response.data.message);
+      } else {
+        setError('An error occurred during login');
+      }
     }
   };
 
   return (
-    <Box
-      component="form"
-      onSubmit={handleSubmit}
-      sx={{ display: 'flex', flexDirection: 'column', maxWidth: 320, m: 'auto' }}
-    >
-      <Typography variant="h5" sx={{ mb: 2 }}>
-        Login
-      </Typography>
-      <TextField
-        label="Username"
-        value={username}
-        onChange={(e) => setUsername(e.target.value)}
-        required
-        margin="normal"
-      />
-      <TextField
-        label="Password"
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        required
-        margin="normal"
-      />
-      <Button variant="contained" type="submit" sx={{ mt: 2 }}>
-        Login
-      </Button>
-    </Box>
+    <>
+      <Box
+        component="form"
+        onSubmit={handleSubmit}
+        sx={{ display: 'flex', flexDirection: 'column', maxWidth: 320, m: 'auto' }}
+      >
+        <Typography variant="h5" sx={{ mb: 2 }}>
+          Login
+        </Typography>
+        <TextField
+          label="Username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          required
+          margin="normal"
+        />
+        <TextField
+          label="Password"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+          margin="normal"
+        />
+        {error && (
+          <Typography color="error" sx={{ mt: 1 }}>
+            {error}
+          </Typography>
+        )}
+        <Button variant="contained" type="submit" sx={{ mt: 2 }}>
+          Login
+        </Button>
+      </Box>
+      <Snackbar
+        open={openSuccess}
+        autoHideDuration={6000}
+        onClose={() => setOpenSuccess(false)}
+      >
+        <Alert
+          onClose={() => setOpenSuccess(false)}
+          severity="success"
+          sx={{ width: '100%' }}
+        >
+          Registration successful! Please log in.
+        </Alert>
+      </Snackbar>
+    </>
   );
 }
 

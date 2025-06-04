@@ -1,14 +1,22 @@
 // Registration form for creating a new account.
 // Sends username, email and password to the backend API.
 import React, { useState } from 'react';
-import { Box, Button, TextField, Typography } from '@mui/material';
+import {
+  Box,
+  Button,
+  TextField,
+  Typography,
+} from '@mui/material';
+import { useHistory } from 'react-router-dom';
 import api from '../api';
 import { saveKeyMaterial } from '../utils/secureStore';
 
 function RegisterForm() {
+  const history = useHistory();
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -24,13 +32,16 @@ function RegisterForm() {
       if (response.status === 201) {
         const { encrypted_private_key, salt, nonce } = response.data;
         await saveKeyMaterial({ encrypted_private_key, salt, nonce });
-
-        // Redirect to the login page or another appropriate page
+        history.push('/login', { registered: true });
       } else {
-        // Handle registration errors
+        setError(response.data.message || 'Registration failed');
       }
     } catch (error) {
-      // Handle network or server errors
+      if (error.response && error.response.data && error.response.data.message) {
+        setError(error.response.data.message);
+      } else {
+        setError('An error occurred during registration');
+      }
     }
   };
 
@@ -66,6 +77,11 @@ function RegisterForm() {
         required
         margin="normal"
       />
+      {error && (
+        <Typography color="error" sx={{ mt: 1 }}>
+          {error}
+        </Typography>
+      )}
       <Button variant="contained" type="submit" sx={{ mt: 2 }}>
         Register
       </Button>
