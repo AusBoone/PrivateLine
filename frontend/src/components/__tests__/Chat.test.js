@@ -16,7 +16,9 @@ it('fetches existing messages and shows websocket updates', async () => {
 
   render(<Chat />);
 
-  expect(api.get).toHaveBeenCalledWith('/api/messages');
+  await waitFor(() => {
+    expect(api.get).toHaveBeenCalledWith('/api/messages');
+  });
 
   // existing message from API should appear
   await screen.findByText('hello');
