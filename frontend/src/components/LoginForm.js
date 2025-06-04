@@ -59,6 +59,15 @@ function LoginForm() {
       if (response.status === 200) {
         // Store the received JWT so it can be attached to future requests
         localStorage.setItem('access_token', response.data.access_token);
+
+        try {
+          const pkResp = await api.get('/api/pinned_keys');
+          if (pkResp.status === 200) {
+            localStorage.setItem('pinned_keys', JSON.stringify(pkResp.data.pinned_keys || []));
+          }
+        } catch (e) {
+          console.error('Failed to fetch pinned keys', e);
+        }
         
         try {
           const material = await loadKeyMaterial();

@@ -54,3 +54,13 @@ class Message(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     sender_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     recipient_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+
+
+class PinnedKey(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    username = db.Column(db.String(64), nullable=False)
+    fingerprint = db.Column(db.String(64), nullable=False)
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'username', name='uix_user_pinned'),
+    )

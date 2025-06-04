@@ -25,6 +25,7 @@ enum CryptoManager {
         let encrypted_private_key: String
         let salt: String
         let nonce: String
+        let fingerprint: String?
     }
 
     /// Persist encrypted key material to the keychain.
@@ -40,6 +41,11 @@ enum CryptoManager {
             return nil
         }
         return try? JSONDecoder().decode(KeyMaterial.self, from: data)
+    }
+
+    /// Return the stored fingerprint if available
+    static func fingerprint() -> String? {
+        return loadKeyMaterial()?.fingerprint
     }
 
     /// Fetch the AES key from the keychain or generate one if needed.
@@ -162,5 +168,16 @@ enum CryptoManager {
             throw error!.takeRetainedValue() as Error
         }
         return String(decoding: decrypted, as: UTF8.self)
+    }
+
+    /// Compute SHA256 fingerprint of a PEM-encoded public key
+    static func fingerprint(of pem: String) -> String {
+        let b64 = pem
+            .replacingOccurrences(of: "-----BEGIN PUBLIC KEY-----", with: "")
+            .replacingOccurrences(of: "-----END PUBLIC KEY-----", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+        let data = Data(base64Encoded: b64) ?? Data()
+        let hash = SHA256.hash(data: data)
+        return hash.compactMap { String(format: "%02x", $0) }.joined()
     }
 }

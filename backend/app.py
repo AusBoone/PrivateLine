@@ -79,6 +79,7 @@ from .resources import (
     Login,
     Messages,
     PublicKey,
+    PinnedKeys,
     AccountSettings,
     RefreshToken,
     RevokeToken,
@@ -103,6 +104,7 @@ api.add_resource(Register, '/api/register')
 api.add_resource(Login, '/api/login')
 api.add_resource(Messages, '/api/messages')
 api.add_resource(PublicKey, '/api/public_key/<string:username>')
+api.add_resource(PinnedKeys, '/api/pinned_keys')
 api.add_resource(AccountSettings, '/api/account-settings')
 api.add_resource(RefreshToken, '/api/refresh')
 api.add_resource(RevokeToken, '/api/revoke')

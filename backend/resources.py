@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat
 from cryptography.hazmat.backends import default_backend
 from base64 import b64encode, b64decode
 import os
-from .models import User, Message
+from .models import User, Message, PinnedKey
 from .app import db, app, socketio, token_blocklist
 from flask_jwt_extended import (
     create_access_token,
@@ -80,6 +80,15 @@ class Register(Resource):
 
         # Generate key pair
         private_key, public_key_pem = User.generate_key_pair()
+        # Fingerprint of the public key to allow out-of-band verification
+        from cryptography.hazmat.primitives.serialization import PublicFormat
+        import hashlib
+        fingerprint = hashlib.sha256(
+            private_key.public_key().public_bytes(
+                encoding=Encoding.DER,
+                format=PublicFormat.SubjectPublicKeyInfo,
+            )
+        ).hexdigest()
 
         # Encrypt the private key with the user's password using AES-GCM
         password = data['password'].encode()  # Encode the user's password as bytes
@@ -123,10 +132,11 @@ class Register(Resource):
         
         # Send encrypted private key and encryption details to the user
         return {
-            "message": "User registered successfully.",                            # Confirmation message
-            "encrypted_private_key": b64encode(encrypted_private_key).decode(),     # Base64-encoded encrypted private key
-            "salt": b64encode(salt).decode(),                                      # Base64-encoded salt
-            "nonce": b64encode(nonce).decode()                                           # Base64-encoded nonce
+            "message": "User registered successfully.",  # Confirmation message
+            "encrypted_private_key": b64encode(encrypted_private_key).decode(),  # Base64-encoded encrypted private key
+            "salt": b64encode(salt).decode(),           # Base64-encoded salt
+            "nonce": b64encode(nonce).decode(),         # Base64-encoded nonce
+            "fingerprint": fingerprint,
         }, 201
 
 class Login(Resource):
@@ -245,6 +255,37 @@ class Messages(Resource):
 
         return {"message": "Message sent successfully."}, 201
 
+
+class PinnedKeys(Resource):
+    """Manage pinned key fingerprints for the authenticated user."""
+
+    @jwt_required()
+    def get(self):
+        user_id = int(get_jwt_identity())
+        keys = PinnedKey.query.filter_by(user_id=user_id).all()
+        return {
+            "pinned_keys": [{"username": k.username, "fingerprint": k.fingerprint} for k in keys]
+        }
+
+    @jwt_required()
+    def post(self):
+        data = request.get_json(silent=True) or request.form.to_dict()
+        if not data or "username" not in data or "fingerprint" not in data:
+            return {"message": "Username and fingerprint are required."}, 400
+        user_id = int(get_jwt_identity())
+        pk = PinnedKey.query.filter_by(user_id=user_id, username=data["username"]).first()
+        if pk:
+            pk.fingerprint = data["fingerprint"]
+        else:
+            pk = PinnedKey(user_id=user_id, username=data["username"], fingerprint=data["fingerprint"])
+
+            db.session.add(pk)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return {"message": "Failed to store pinned key."}, 500
+        return {"message": "Pinned key stored."}, 200
 
 class AccountSettings(Resource):
     """Update the authenticated user's account information."""

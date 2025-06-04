@@ -34,6 +34,18 @@ function pemToCryptoKey(pem) {
   );
 }
 
+async function fingerprintPem(pem) {
+  const b64 = pem
+    .replace('-----BEGIN PUBLIC KEY-----', '')
+    .replace('-----END PUBLIC KEY-----', '')
+    .replace(/\s/g, '');
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const digest = await window.crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 /**
  * Encrypts a given message using the recipient's public key.
  * 
@@ -197,6 +209,15 @@ function Chat() {
             publicKeyCache.current.set(recipient, publicKeyPem);
           } else {
             throw new Error('Failed to fetch recipient key');
+          }
+        }
+
+        const pinned = JSON.parse(localStorage.getItem('pinned_keys') || '[]');
+        const entry = pinned.find((p) => p.username === recipient);
+        if (entry) {
+          const fp = await fingerprintPem(publicKeyPem);
+          if (fp !== entry.fingerprint) {
+            throw new Error('Recipient key mismatch');
           }
         }
 
