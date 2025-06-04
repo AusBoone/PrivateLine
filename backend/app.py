@@ -8,7 +8,12 @@ from flask_migrate import Migrate
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from flask_jwt_extended import JWTManager, get_jwt_identity, verify_jwt_in_request
+from flask_jwt_extended import (
+    JWTManager,
+    get_jwt_identity,
+    verify_jwt_in_request,
+    get_jwt,
+)
 from flask_socketio import SocketIO, disconnect, join_room
 from dotenv import load_dotenv
 
@@ -61,8 +66,23 @@ api = Api(app)
 # Initialize JWTManager for handling JWT authentication
 jwt = JWTManager(app)
 
+# In-memory set of revoked token identifiers
+token_blocklist = set()
+
+@jwt.token_in_blocklist_loader
+def token_in_blocklist_callback(jwt_header, jwt_payload):
+    return jwt_payload.get("jti") in token_blocklist
+
 # Import resources after initializing app components to avoid circular imports
-from .resources import Register, Login, Messages, PublicKey, AccountSettings
+from .resources import (
+    Register,
+    Login,
+    Messages,
+    PublicKey,
+    AccountSettings,
+    RefreshToken,
+    RevokeToken,
+)
 
 # Reject WebSocket connections that do not provide a valid JWT.
 @socketio.on("connect")
@@ -84,6 +104,8 @@ api.add_resource(Login, '/api/login')
 api.add_resource(Messages, '/api/messages')
 api.add_resource(PublicKey, '/api/public_key/<string:username>')
 api.add_resource(AccountSettings, '/api/account-settings')
+api.add_resource(RefreshToken, '/api/refresh')
+api.add_resource(RevokeToken, '/api/revoke')
 
 # Run the development server only when executed directly.
 if __name__ == '__main__':

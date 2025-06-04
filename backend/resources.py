@@ -9,8 +9,13 @@ from cryptography.hazmat.backends import default_backend
 from base64 import b64encode, b64decode
 import os
 from .models import User, Message
-from .app import db, app, socketio
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
+from .app import db, app, socketio, token_blocklist
+from flask_jwt_extended import (
+    create_access_token,
+    jwt_required,
+    get_jwt_identity,
+    get_jwt,
+)
 
 # AES-GCM key for encrypting stored messages
 _aes_key_env = os.environ.get("AES_KEY")
@@ -262,3 +267,23 @@ class AccountSettings(Resource):
             db.session.rollback()
             return {"message": "Failed to update account."}, 500
         return {"message": "Account updated."}, 200
+
+
+class RefreshToken(Resource):
+    """Issue a new JWT for the authenticated user."""
+
+    @jwt_required()
+    def post(self):
+        user_id = get_jwt_identity()
+        new_token = create_access_token(identity=str(user_id))
+        return {"access_token": new_token}, 200
+
+
+class RevokeToken(Resource):
+    """Revoke the current JWT so it can no longer be used."""
+
+    @jwt_required()
+    def post(self):
+        jti = get_jwt()["jti"]
+        token_blocklist.add(jti)
+        return {"message": "Token revoked"}, 200
