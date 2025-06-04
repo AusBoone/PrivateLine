@@ -16,6 +16,9 @@ class APIService: ObservableObject {
     /// Cache of fetched recipient public keys
     private var publicKeyCache: [String: String] = [:]
 
+    /// Stored pinned fingerprints
+    private var pinnedKeys: [String: String] = [:]
+
     /// URLSession used for API calls with certificate pinning.
     private let session: URLSession
 
@@ -71,10 +74,21 @@ class APIService: ObservableObject {
                   let token = json["access_token"] as? String else {
                 throw URLError(.badServerResponse)
             }
-            loginFailures = 0
-            try? CryptoManager.loadPrivateKey(password: password)
+           loginFailures = 0
+           try? CryptoManager.loadPrivateKey(password: password)
+            self.token = token
+            do {
+                var request = URLRequest(url: self.baseURL.appendingPathComponent("pinned_keys"))
+                request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                let (pkData, _) = try await self.session.data(for: request)
+                if let json = try? JSONSerialization.jsonObject(with: pkData) as? [String: [[String: String]]],
+                   let arr = json["pinned_keys"] {
+                    self.pinnedKeys = Dictionary(uniqueKeysWithValues: arr.map { ($0["username"]!, $0["fingerprint"]!) })
+                }
+            } catch {
+                self.pinnedKeys = [:]
+            }
             DispatchQueue.main.async {
-                self.token = token
                 self.isAuthenticated = true
             }
         } catch {
@@ -101,7 +115,11 @@ class APIService: ObservableObject {
            let enc = json["encrypted_private_key"],
            let salt = json["salt"],
            let nonce = json["nonce"] {
-            CryptoManager.storeKeyMaterial(.init(encrypted_private_key: enc, salt: salt, nonce: nonce))
+            let fp = json["fingerprint"]
+            CryptoManager.storeKeyMaterial(.init(encrypted_private_key: enc, salt: salt, nonce: nonce, fingerprint: fp))
+            if let fp = fp {
+                print("Fingerprint: \(fp)")
+            }
         }
     }
 
@@ -146,6 +164,10 @@ class APIService: ObservableObject {
         request.httpMethod = "POST"
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let publicKeyPem = try await publicKey(for: recipient)
+        if let expected = pinnedKeys[recipient] {
+            let fp = CryptoManager.fingerprint(of: publicKeyPem)
+            guard fp == expected else { throw URLError(.secureConnectionFailed) }
+        }
         let encrypted = try CryptoManager.encryptRSA(content, publicKeyPem: publicKeyPem)
         let b64 = encrypted.base64EncodedString()
         request.httpBody = "content=\(b64)".data(using: .utf8)

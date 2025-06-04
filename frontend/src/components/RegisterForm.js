@@ -30,8 +30,9 @@ function RegisterForm() {
       });
 
       if (response.status === 201) {
-        const { encrypted_private_key, salt, nonce } = response.data;
-        await saveKeyMaterial({ encrypted_private_key, salt, nonce });
+        const { encrypted_private_key, salt, nonce, fingerprint } = response.data;
+        await saveKeyMaterial({ encrypted_private_key, salt, nonce, fingerprint });
+        alert(`Your key fingerprint is ${fingerprint}`);
         history.push('/login', { registered: true });
       } else {
         setError(response.data.message || 'Registration failed');

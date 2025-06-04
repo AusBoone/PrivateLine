@@ -59,7 +59,16 @@ def test_register_and_login(client):
     resp = register_user(client)
     assert resp.status_code == 201
     payload = resp.get_json()
-    assert {'encrypted_private_key', 'salt', 'nonce'} <= payload.keys()
+    assert {'encrypted_private_key', 'salt', 'nonce', 'fingerprint'} <= payload.keys()
+
+    # Validate fingerprint matches stored public key
+    user = User.query.filter_by(username='alice').first()
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    import hashlib
+    der = user.public_key.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    expected_fp = hashlib.sha256(der).hexdigest()
+    assert payload['fingerprint'] == expected_fp
 
     # Attempt to decrypt the private key using the returned parameters
     password = 'secret'.encode()
@@ -269,3 +278,23 @@ def test_send_unknown_recipient(client):
         headers=headers,
     )
     assert resp.status_code == 404
+
+
+def test_pinned_keys_endpoint(client):
+    register_user(client, 'alice')
+    register_user(client, 'bob')
+
+    token = login_user(client, 'alice').get_json()['access_token']
+    headers = {'Authorization': f'Bearer {token}'}
+
+    bob_user = User.query.filter_by(username='bob').first()
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    import hashlib
+    der = bob_user.public_key.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    fp = hashlib.sha256(der).hexdigest()
+
+    resp = client.post('/api/pinned_keys', json={'username': 'bob', 'fingerprint': fp}, headers=headers)
+    assert resp.status_code == 200
+    resp = client.get('/api/pinned_keys', headers=headers)
+    assert resp.status_code == 200
+    assert {'username': 'bob', 'fingerprint': fp} in resp.get_json()['pinned_keys']

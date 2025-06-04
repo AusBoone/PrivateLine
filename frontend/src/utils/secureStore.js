@@ -1,5 +1,5 @@
 const DB_NAME = 'privateline';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'keyMaterial';
 
 function openDB() {
@@ -16,12 +16,12 @@ function openDB() {
   });
 }
 
-export async function saveKeyMaterial({ encrypted_private_key, salt, nonce }) {
+export async function saveKeyMaterial({ encrypted_private_key, salt, nonce, fingerprint }) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
-    const req = store.put({ encrypted_private_key, salt, nonce }, 'material');
+    const req = store.put({ encrypted_private_key, salt, nonce, fingerprint }, 'material');
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(req.error);
   });
