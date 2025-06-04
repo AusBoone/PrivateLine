@@ -1,5 +1,5 @@
 # PrivateLine
-This project aims to create a privacy-focused messaging platform. End-to-end encryption is now partially implemented on the iOS client where messages are encrypted locally before being transmitted.
+This project aims to create a privacy-focused messaging platform. End-to-end encryption is now implemented across all clients: messages are encrypted locally before being transmitted.
 
 # Goal
 The goal of this project is to build a secure messaging application that allows users to send and receive encrypted messages. The application utilizes a combination of asymmetric and symmetric encryption techniques to ensure message confidentiality.
@@ -9,12 +9,13 @@ This secure messaging application consists of a frontend built with React and a 
 
 # Features
 - User registration and login
-- Asymmetric encryption using **RSA-OAEP** (4096-bit keys) for message exchange (iOS client only)
+- Asymmetric encryption using **RSA-OAEP** (4096-bit keys) for message exchange across all clients
 - Symmetric encryption using **AES-256** in GCM mode for private key storage and message persistence
 - Key derivation using **PBKDF2**
 - Encrypted message storage
 - Rate limiting on message sending
 - JWT-based user authentication
+- Token refresh and revocation endpoints for session management
 - Real-time message delivery over WebSockets
 - User account management interface
 - Offline caching of messages on the iOS client
@@ -22,9 +23,9 @@ This secure messaging application consists of a frontend built with React and a 
 
 # Frontend
 The frontend is built using React and consists of the following components:
-1. **LoginForm**: Handles user login by sending a request to the backend for authentication.
+1. **LoginForm**: Handles user login by sending a request to the backend for authentication and decrypts the stored private key using the user's password.
 2. **RegisterForm**: Handles user registration by sending user information to the backend, generating an RSA key pair, and storing the encrypted private key on the client-side.
-3. **Chat**: Provides an interface for users to send and receive messages. End-to-end encryption is a future goal and is not yet implemented.
+3. **Chat**: Provides an interface for users to send and receive encrypted messages using RSA-OAEP.
 4. **UserAccount**: Displays the user account management interface.
 5. **App**: Sets up the application's routing, theme provider and navigation bar.
 
@@ -35,6 +36,9 @@ The backend is built using Flask and consists of the following resources:
 1. **Register**: Handles user registration by saving user information, hashed passwords, and public keys to the database. It also returns the encrypted private key, salt, and IV to the frontend for storage.
 2. **Login**: Handles user login by verifying the provided username and password, and returns a JWT access token if the credentials are valid.
 3. **Messages**: Handles fetching and storing messages in the database. Messages are encrypted before storage and decrypted before sending them to the frontend.
+4. **RefreshToken**: Issues a new JWT for an authenticated user when called with a valid token.
+5. **RevokeToken**: Revokes the current JWT so it can no longer be used.
+
 The backend also includes rate limiting on message sending, JWT-based user authentication, and CORS configuration.
 
 # Setup
@@ -50,6 +54,7 @@ To run the application, follow these steps:
 4. Install frontend dependencies with `npm install` inside the `frontend` directory.
 5. Start the backend with `python backend/app.py` and the frontend with `npm start`.
 6. Open a browser and navigate to the frontend's URL to use the application.
+7. After registering a user, persist the returned `encrypted_private_key`, `salt` and `nonce`. The React client stores these values in IndexedDB so the private key can be decrypted on login.
 
 ## Running Tests
 Backend unit tests use **pytest**. Once the dependencies are installed you can
