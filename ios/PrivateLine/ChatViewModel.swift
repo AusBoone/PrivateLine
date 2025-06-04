@@ -5,6 +5,7 @@ import Combine
 final class ChatViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var input = ""
+    @Published var recipient = "bob"
 
     private let api: APIService
     private let socket = WebSocketService()
@@ -35,7 +36,8 @@ final class ChatViewModel: ObservableObject {
 
     func send() async {
         do {
-            let msg = try await api.sendMessage(input)
+            try await api.sendMessage(input, to: recipient)
+            let msg = Message(id: Int(Date().timeIntervalSince1970), content: input)
             messages.append(msg)
             MessageStore.save(messages)
             input = ""

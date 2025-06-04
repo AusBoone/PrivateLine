@@ -1,5 +1,7 @@
 import Foundation
 import CryptoKit
+import Security
+import CommonCrypto
 
 /// Simple cryptography helper used by the SwiftUI client.
 ///
@@ -12,6 +14,33 @@ enum CryptoManager {
 
     /// Identifier for the symmetric key stored in the keychain.
     private static let keyAccount = "PrivateLineSymmetricKey"
+    /// Keychain entry containing the encrypted RSA private key material.
+    private static let materialAccount = "PrivateLineKeyMaterial"
+
+    /// Cached RSA private key for decrypting messages.
+    private static var rsaPrivateKey: SecKey?
+
+    /// Helper struct describing the encrypted key material returned by the backend.
+    struct KeyMaterial: Codable {
+        let encrypted_private_key: String
+        let salt: String
+        let nonce: String
+    }
+
+    /// Persist encrypted key material to the keychain.
+    static func storeKeyMaterial(_ material: KeyMaterial) {
+        if let data = try? JSONEncoder().encode(material) {
+            KeychainService.save(materialAccount, data: data)
+        }
+    }
+
+    /// Load previously stored key material from the keychain.
+    private static func loadKeyMaterial() -> KeyMaterial? {
+        guard let data = KeychainService.loadData(account: materialAccount) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(KeyMaterial.self, from: data)
+    }
 
     /// Fetch the AES key from the keychain or generate one if needed.
     private static func key() throws -> SymmetricKey {
@@ -41,6 +70,97 @@ enum CryptoManager {
         let key = try key()
         let sealed = try AES.GCM.SealedBox(combined: data)
         let decrypted = try AES.GCM.open(sealed, using: key)
+        return String(decoding: decrypted, as: UTF8.self)
+    }
+
+    // MARK: - RSA helper functions
+
+    /// Import the encrypted private key using ``password`` and cache it for future use.
+    static func loadPrivateKey(password: String) throws {
+        guard rsaPrivateKey == nil, let material = loadKeyMaterial() else { return }
+
+        guard let salt = Data(base64Encoded: material.salt),
+              let nonce = Data(base64Encoded: material.nonce),
+              let ciphertext = Data(base64Encoded: material.encrypted_private_key) else { return }
+
+        let derived = try deriveKey(password: password, salt: salt)
+        let tag = ciphertext.suffix(16)
+        let ct = ciphertext.prefix(ciphertext.count - 16)
+        let box = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: nonce),
+                                        ciphertext: ct,
+                                        tag: tag)
+        let decrypted = try AES.GCM.open(box, using: derived)
+        let pem = String(decoding: decrypted, as: UTF8.self)
+        rsaPrivateKey = try importPrivateKeyPEM(pem)
+    }
+
+    private static func deriveKey(password: String, salt: Data) throws -> SymmetricKey {
+        var derived = Data(count: 32)
+        let pwdData = password.data(using: .utf8)!
+        let result = derived.withUnsafeMutableBytes { derivedBytes in
+            salt.withUnsafeBytes { saltBytes in
+                CCKeyDerivationPBKDF(CCPBKDFAlgorithm(kCCPBKDF2),
+                                     password, pwdData.count,
+                                     saltBytes.bindMemory(to: UInt8.self).baseAddress!, salt.count,
+                                     CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
+                                     200000,
+                                     derivedBytes.bindMemory(to: UInt8.self).baseAddress!, 32)
+            }
+        }
+        guard result == kCCSuccess else { throw NSError(domain: "PBKDF2", code: Int(result)) }
+        return SymmetricKey(data: derived)
+    }
+
+    private static func importPrivateKeyPEM(_ pem: String) throws -> SecKey {
+        let b64 = pem
+            .replacingOccurrences(of: "-----BEGIN PRIVATE KEY-----", with: "")
+            .replacingOccurrences(of: "-----END PRIVATE KEY-----", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+        guard let data = Data(base64Encoded: b64) else { throw CocoaError(.coderInvalidValue) }
+        let attrs: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
+            kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
+            kSecAttrKeySizeInBits as String: 4096
+        ]
+        var error: Unmanaged<CFError>?
+        guard let key = SecKeyCreateWithData(data as CFData, attrs as CFDictionary, &error) else {
+            throw error!.takeRetainedValue() as Error
+        }
+        return key
+    }
+
+    /// Encrypt ``message`` with ``publicKeyPem`` using RSA-OAEP.
+    static func encryptRSA(_ message: String, publicKeyPem: String) throws -> Data {
+        let b64 = publicKeyPem
+            .replacingOccurrences(of: "-----BEGIN PUBLIC KEY-----", with: "")
+            .replacingOccurrences(of: "-----END PUBLIC KEY-----", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+        guard let data = Data(base64Encoded: b64) else { throw CocoaError(.coderInvalidValue) }
+        let attrs: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
+            kSecAttrKeyClass as String: kSecAttrKeyClassPublic,
+            kSecAttrKeySizeInBits as String: 4096
+        ]
+        var error: Unmanaged<CFError>?
+        guard let key = SecKeyCreateWithData(data as CFData, attrs as CFDictionary, &error) else {
+            throw error!.takeRetainedValue() as Error
+        }
+        let plain = message.data(using: .utf8)!
+        guard let cipher = SecKeyCreateEncryptedData(key, .rsaEncryptionOAEPSHA256, plain as CFData, &error) as Data? else {
+            throw error!.takeRetainedValue() as Error
+        }
+        return cipher
+    }
+
+    /// Decrypt base64-encoded ciphertext using the cached private key.
+    static func decryptRSA(_ b64: String) throws -> String {
+        guard let key = rsaPrivateKey, let data = Data(base64Encoded: b64) else {
+            throw CocoaError(.coderValueNotFound)
+        }
+        var error: Unmanaged<CFError>?
+        guard let decrypted = SecKeyCreateDecryptedData(key, .rsaEncryptionOAEPSHA256, data as CFData, &error) as Data? else {
+            throw error!.takeRetainedValue() as Error
+        }
         return String(decoding: decrypted, as: UTF8.self)
     }
 }

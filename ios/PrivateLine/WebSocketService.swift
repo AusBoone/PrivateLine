@@ -23,7 +23,10 @@ class WebSocketService: ObservableObject {
             case .success(let message):
                 if case .string(let text) = message,
                    let data = text.data(using: .utf8),
-                   let msg = try? JSONDecoder().decode(Message.self, from: data) {
+                   let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let b64 = payload["content"] as? String,
+                   let plaintext = try? CryptoManager.decryptRSA(b64) {
+                    let msg = Message(id: Int(Date().timeIntervalSince1970), content: plaintext)
                     DispatchQueue.main.async {
                         self?.messages.append(msg)
                     }
