@@ -1,4 +1,4 @@
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import Chat from '../Chat';
 import api from '../../api';
 import io from 'socket.io-client';
@@ -8,6 +8,22 @@ jest.mock('socket.io-client');
 jest.mock('../../utils/secureStore', () => ({
   loadKeyMaterial: jest.fn().mockResolvedValue({}),
 }));
+
+beforeAll(() => {
+  global.crypto = {
+    subtle: {
+      importKey: jest.fn().mockResolvedValue('key'),
+      encrypt: jest.fn().mockResolvedValue(new ArrayBuffer(1)),
+    },
+  };
+  if (!global.TextEncoder) {
+    global.TextEncoder = require('util').TextEncoder;
+  }
+});
+
+afterEach(() => {
+  jest.clearAllMocks();
+});
 
 it('fetches existing messages and shows websocket updates', async () => {
   const socket = { on: jest.fn(), disconnect: jest.fn() };
@@ -33,4 +49,34 @@ it('fetches existing messages and shows websocket updates', async () => {
   });
 
   await screen.findByText('world');
+});
+
+it('uses selected recipient when sending a message', async () => {
+  const socket = { on: jest.fn(), disconnect: jest.fn() };
+  io.mockReturnValue(socket);
+  api.get.mockResolvedValueOnce({ status: 200, data: { messages: [] } });
+
+  render(<Chat />);
+
+  await waitFor(() => {
+    expect(api.get).toHaveBeenCalledWith('/api/messages');
+  });
+
+  const bobItem = screen.getByText('bob');
+  fireEvent.click(bobItem);
+
+  api.get.mockResolvedValueOnce({ status: 200, data: { public_key: 'KEY' } });
+  api.post.mockResolvedValueOnce({ status: 201 });
+
+  fireEvent.change(screen.getByPlaceholderText('Type your message'), {
+    target: { value: 'hi' },
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByText('Send'));
+  });
+
+  await waitFor(() => {
+    expect(api.get).toHaveBeenCalledWith('/api/public_key/bob');
+    expect(api.post).toHaveBeenCalled();
+  });
 });
