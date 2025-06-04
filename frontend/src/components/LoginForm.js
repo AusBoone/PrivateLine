@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Box, Button, TextField, Typography } from '@mui/material';
 import api from '../api';
+import { loadKeyMaterial } from '../utils/secureStore';
+import { base64ToArrayBuffer } from '../utils/encoding';
 
 /**
  * LoginForm Component
@@ -41,6 +43,40 @@ function LoginForm() {
       if (response.status === 200) {
         // Store the received JWT so it can be attached to future requests
         localStorage.setItem('access_token', response.data.access_token);
+
+        try {
+          const material = await loadKeyMaterial();
+          const { encrypted_private_key, salt, nonce } = material;
+          if (encrypted_private_key && salt && nonce) {
+            const passwordBytes = new TextEncoder().encode(password);
+            const saltBytes = base64ToArrayBuffer(salt);
+            const keyMaterial = await window.crypto.subtle.importKey(
+              'raw',
+              passwordBytes,
+              'PBKDF2',
+              false,
+              ['deriveKey']
+            );
+            const aesKey = await window.crypto.subtle.deriveKey(
+              { name: 'PBKDF2', salt: saltBytes, iterations: 200000, hash: 'SHA-256' },
+              keyMaterial,
+              { name: 'AES-GCM', length: 256 },
+              false,
+              ['decrypt']
+            );
+            const nonceBytes = base64ToArrayBuffer(nonce);
+            const ciphertext = base64ToArrayBuffer(encrypted_private_key);
+            const pkBuffer = await window.crypto.subtle.decrypt(
+              { name: 'AES-GCM', iv: nonceBytes },
+              aesKey,
+              ciphertext
+            );
+            const privateKeyPem = new TextDecoder().decode(pkBuffer);
+            sessionStorage.setItem('private_key_pem', privateKeyPem);
+          }
+        } catch (e) {
+          console.error('Failed to load private key', e);
+        }
 
         // Redirect to the chat page or another appropriate page
       } else {

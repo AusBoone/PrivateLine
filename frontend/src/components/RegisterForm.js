@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { Box, Button, TextField, Typography } from '@mui/material';
 import api from '../api';
+import { saveKeyMaterial } from '../utils/secureStore';
 
 function RegisterForm() {
   const [username, setUsername] = useState('');
@@ -20,9 +21,9 @@ function RegisterForm() {
         password,
       });
 
-      if (response.status === 200) {
-        // Save the private key securely on the user's device
-        // Implement a secure storage mechanism, e.g., IndexedDB
+      if (response.status === 201) {
+        const { encrypted_private_key, salt, nonce } = response.data;
+        await saveKeyMaterial({ encrypted_private_key, salt, nonce });
 
         // Redirect to the login page or another appropriate page
       } else {

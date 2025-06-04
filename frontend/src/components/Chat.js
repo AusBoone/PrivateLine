@@ -14,6 +14,23 @@ import {
 } from '@mui/material';
 import './Chat.css';
 import { arrayBufferToBase64, base64ToArrayBuffer } from '../utils/encoding';
+import { loadKeyMaterial } from '../utils/secureStore';
+
+function pemToCryptoKey(pem) {
+  const b64 = pem
+    .replace('-----BEGIN PRIVATE KEY-----', '')
+    .replace('-----END PRIVATE KEY-----', '')
+    .replace(/\s/g, '');
+  const binary = atob(b64);
+  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  return window.crypto.subtle.importKey(
+    'pkcs8',
+    bytes,
+    { name: 'RSA-OAEP', hash: 'SHA-256' },
+    true,
+    ['decrypt']
+  );
+}
 
 /**
  * Encrypts a given message using the recipient's public key.
@@ -94,25 +111,49 @@ function Chat() {
       { id: 1, text: 'Welcome to PrivateLine!', type: 'received' }
     ]);
     const [socket, setSocket] = useState(null);
+    const [privateKey, setPrivateKey] = useState(null);
 
     // Cache for recipient public keys.  In a real app this might live in a
     // Redux store or other global cache.
     const publicKeyCache = React.useRef(new Map());
 
     useEffect(() => {
-      // Connect to the Socket.IO backend when the component mounts
-      const s = io(process.env.REACT_APP_API_URL || 'http://localhost:5000');
-      setSocket(s);
+      async function init() {
+        const pem = sessionStorage.getItem('private_key_pem');
+        if (pem) {
+          try {
+            const key = await pemToCryptoKey(pem);
+            setPrivateKey(key);
+          } catch (e) {
+            console.error('Failed to import private key', e);
+          }
+        } else {
+          // Ensure IndexedDB is initialized
+          await loadKeyMaterial();
+        }
 
-      // Append new messages received from the server
-      s.on('new_message', (payload) => {
-        setMessages((prev) => [
-          ...prev,
-          { id: Date.now(), text: payload.content, type: 'received' },
-        ]);
-      });
+        const s = io(process.env.REACT_APP_API_URL || 'http://localhost:5000');
+        setSocket(s);
 
-      return () => s.disconnect();
+        s.on('new_message', async (payload) => {
+          let text = payload.content;
+          if (privateKey) {
+            try {
+              text = await decryptMessage(privateKey, payload.content);
+            } catch (e) {
+              console.error('Failed to decrypt message', e);
+            }
+          }
+          setMessages((prev) => [
+            ...prev,
+            { id: Date.now(), text, type: 'received' },
+          ]);
+        });
+
+        return () => s.disconnect();
+      }
+
+      init();
     }, []);
 
     // Takes care of encrypting the message using the recipient's public key before sending it to the server
