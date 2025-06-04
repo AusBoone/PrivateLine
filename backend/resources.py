@@ -13,11 +13,11 @@ from .app import db, app, socketio
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 
 # AES-GCM key for encrypting stored messages
-_aes_key_env = os.environ.get('AES_KEY')
-if _aes_key_env:
-    AES_KEY = b64decode(_aes_key_env)
-else:
-    AES_KEY = AESGCM.generate_key(bit_length=256)
+_aes_key_env = os.environ.get("AES_KEY")
+if not _aes_key_env:
+    app.logger.error("AES_KEY environment variable not set; cannot decrypt stored messages.")
+    raise RuntimeError("AES_KEY environment variable is required for encryption")
+AES_KEY = b64decode(_aes_key_env)
 aesgcm = AESGCM(AES_KEY)
 
 
@@ -53,10 +53,18 @@ class Register(Resource):
         if not data or not required <= data.keys():
             return {"message": "Username, email and password are required."}, 400
 
+        if len(data['username']) > 64 or len(data['email']) > 120:
+            return {"message": "Username or email too long."}, 400
+        if '@' not in data['email']:
+            return {"message": "Invalid email address."}, 400
+
         # Check if the user already exists
         user = User.query.filter_by(username=data['username']).first()
         if user:
             return {"message": "A user with that username already exists."}, 400
+
+        if len(data['password']) < 6:
+            return {"message": "Password must be at least 6 characters."}, 400
 
         # Hash the password
         # Use PBKDF2 with SHA-256 for password hashing
@@ -91,9 +99,19 @@ class Register(Resource):
         encrypted_private_key = aes.encrypt(nonce, private_bytes, None)
         
         # Create a new user and add it to the database
-        new_user = User(username=data['username'], email=data['email'], password_hash=hashed_password, public_key_pem=public_key_pem)
-        db.session.add(new_user)  # Add the new user to the database session
-        db.session.commit()       # Commit the database transaction
+        new_user = User(
+            username=data['username'],
+            email=data['email'],
+            password_hash=hashed_password,
+            public_key_pem=public_key_pem,
+        )
+        try:
+            db.session.add(new_user)
+            db.session.commit()
+        except Exception:
+            app.logger.exception("Failed to register user")
+            db.session.rollback()
+            return {"message": "Registration failed."}, 500
         
         # Send encrypted private key and encryption details to the user
         return {
@@ -107,7 +125,10 @@ class Login(Resource):
     """Authenticate a user and return a JWT access token."""
 
     def post(self):
-        data = request.get_json()
+        data = request.get_json() or {}
+
+        if 'username' not in data or 'password' not in data:
+            return {'message': 'Username and password are required.'}, 400
 
         # Query the database for the user with the given username
         user = User.query.filter_by(username=data['username']).first()
@@ -115,8 +136,7 @@ class Login(Resource):
         if user and check_password_hash(user.password_hash, data['password']):
             access_token = create_access_token(identity=str(user.id))
             return {'access_token': access_token}, 200
-        else:
-            return {'message': 'Invalid username or password'}, 401
+        return {'message': 'Invalid username or password'}, 401
 
 
 class PublicKey(Resource):
@@ -137,7 +157,8 @@ class Messages(Resource):
     @jwt_required()
     def get(self):
         """Return decrypted messages for the authenticated user."""
-        messages = Message.query.all()
+        current_user_id = int(get_jwt_identity())
+        messages = Message.query.filter_by(user_id=current_user_id).all()
         message_list = []
         for msg in messages:
             nonce = b64decode(msg.nonce)
@@ -157,6 +178,9 @@ class Messages(Resource):
         """Store an encrypted message and broadcast it to clients."""
         data = message_parser.parse_args()
 
+        if len(data['content']) > 1000:
+            return {"message": "Message too long."}, 400
+
         nonce = os.urandom(12)
         ciphertext = aesgcm.encrypt(nonce, data["content"].encode(), None)
         encrypted_content = b64encode(ciphertext).decode()
@@ -164,8 +188,13 @@ class Messages(Resource):
 
         current_user_id = int(get_jwt_identity())
         new_message = Message(content=encrypted_content, nonce=nonce_b64, user_id=current_user_id)
-        db.session.add(new_message)
-        db.session.commit()
+        try:
+            db.session.add(new_message)
+            db.session.commit()
+        except Exception:
+            app.logger.exception("Failed to store message")
+            db.session.rollback()
+            return {"message": "Failed to store message."}, 500
 
         # Broadcast the encrypted message to connected clients via WebSockets
         socketio.emit(
@@ -183,7 +212,7 @@ class AccountSettings(Resource):
     def put(self):
         data = request.get_json() or {}
         user_id = int(get_jwt_identity())
-        user = User.query.get(user_id)
+        user = db.session.get(User, user_id)
         if not user:
             return {"message": "User not found"}, 404
 
@@ -191,12 +220,16 @@ class AccountSettings(Resource):
 
         new_email = data.get("email")
         if new_email:
+            if len(new_email) > 120 or '@' not in new_email:
+                return {"message": "Invalid email address."}, 400
             user.email = new_email
             updated = True
 
         current_pw = data.get("currentPassword")
         new_pw = data.get("newPassword")
         if current_pw and new_pw:
+            if len(new_pw) < 6:
+                return {"message": "New password must be at least 6 characters."}, 400
             if check_password_hash(user.password_hash, current_pw):
                 # Rehash the new password using PBKDF2 with SHA-256
                 user.password_hash = generate_password_hash(new_pw, method="pbkdf2:sha256")
@@ -207,5 +240,10 @@ class AccountSettings(Resource):
         if not updated:
             return {"message": "No account changes provided."}, 400
 
-        db.session.commit()
+        try:
+            db.session.commit()
+        except Exception:
+            app.logger.exception("Failed to update account settings")
+            db.session.rollback()
+            return {"message": "Failed to update account."}, 500
         return {"message": "Account updated."}, 200

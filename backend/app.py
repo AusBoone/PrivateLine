@@ -7,8 +7,9 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_cors import CORS
 from flask_limiter import Limiter
-from flask_jwt_extended import JWTManager
-from flask_socketio import SocketIO
+from flask_limiter.util import get_remote_address
+from flask_jwt_extended import JWTManager, get_jwt_identity, verify_jwt_in_request
+from flask_socketio import SocketIO, disconnect
 from dotenv import load_dotenv
 
 # Load environment variables from a .env file if present.  This keeps
@@ -21,11 +22,27 @@ app = Flask(__name__)
 # Enable Cross-Origin Resource Sharing (CORS) for the app
 CORS(app)
 
-# SocketIO is used for pushing real-time updates to connected clients
-socketio = SocketIO(app, cors_allowed_origins="*")
+# SocketIO is used for pushing real-time updates to connected clients. Origins
+# can be restricted via the SOCKETIO_ORIGINS environment variable.
+socketio = SocketIO(app, cors_allowed_origins=os.environ.get("SOCKETIO_ORIGINS", "*"))
 
-# Initialize rate limiting
-limiter = Limiter(app)
+# Initialize rate limiting with a custom key function that prefers the
+# authenticated user id and falls back to the client's IP address.
+def rate_limit_key():
+    try:
+        verify_jwt_in_request(optional=True)
+        identity = get_jwt_identity()
+        if identity:
+            return identity
+    except Exception:
+        pass
+    return get_remote_address()
+
+_redis_url = os.environ.get("REDIS_URL")
+_limiter_kwargs = {"key_func": rate_limit_key, "app": app}
+if _redis_url:
+    _limiter_kwargs["storage_uri"] = _redis_url
+limiter = Limiter(**_limiter_kwargs)
 
 # Configure app settings. Values can be overridden via environment variables.
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
@@ -46,6 +63,15 @@ jwt = JWTManager(app)
 
 # Import resources after initializing app components to avoid circular imports
 from .resources import Register, Login, Messages, PublicKey, AccountSettings
+
+# Reject WebSocket connections that do not provide a valid JWT.
+@socketio.on("connect")
+def socket_connect():
+    try:
+        verify_jwt_in_request()
+    except Exception:
+        app.logger.warning("WebSocket connection rejected due to missing or invalid token")
+        disconnect()
 
 # Apply rate limiting on the messages resource
 limiter.limit("50/minute")(Messages)

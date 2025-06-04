@@ -1,4 +1,6 @@
 import json
+import os
+import base64
 import pytest
 from base64 import b64decode
 from cryptography.hazmat.primitives import hashes
@@ -7,6 +9,10 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.backends import default_backend
 
 # These imports will fail if Flask and related dependencies are not installed.
+# Ensure an AES key is available for the backend before it is imported. Tests
+# run without a .env file so we generate a deterministic key on the fly.
+os.environ.setdefault("AES_KEY", base64.b64encode(os.urandom(32)).decode())
+
 from backend.app import app, db
 from backend.models import User, Message
 
@@ -36,6 +42,17 @@ def login_user(client, username='alice'):
         'username': username,
         'password': 'secret',
     })
+
+
+def test_register_missing_fields(client):
+    resp = client.post('/api/register', data={'username': 'x'})
+    assert resp.status_code == 400
+
+
+def test_login_invalid_credentials(client):
+    register_user(client, 'dave')
+    resp = client.post('/api/login', json={'username': 'dave', 'password': 'bad'})
+    assert resp.status_code == 401
 
 
 def test_register_and_login(client):
@@ -79,6 +96,21 @@ def test_message_flow(client):
     data = resp.get_json()
     assert resp.status_code == 200
     assert len(data['messages']) == 1
+
+
+def test_message_privacy(client):
+    register_user(client, 'eve')
+    token_eve = login_user(client, 'eve').get_json()['access_token']
+    headers_eve = {'Authorization': f'Bearer {token_eve}'}
+    client.post('/api/messages', data={'content': 'secret'}, headers=headers_eve)
+
+    register_user(client, 'mallory')
+    token_mallory = login_user(client, 'mallory').get_json()['access_token']
+    headers_mallory = {'Authorization': f'Bearer {token_mallory}'}
+
+    resp = client.get('/api/messages', headers=headers_mallory)
+    assert resp.status_code == 200
+    assert len(resp.get_json()['messages']) == 0
 
 
 def test_account_settings_update(client):
