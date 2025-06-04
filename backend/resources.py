@@ -156,17 +156,20 @@ class Messages(Resource):
     # Retrieve all messages. Requires a valid JWT token.
     @jwt_required()
     def get(self):
-        """Return decrypted messages for the authenticated user."""
+        """Return base64-encoded ciphertext for the authenticated user."""
         current_user_id = int(get_jwt_identity())
         messages = Message.query.filter_by(user_id=current_user_id).all()
         message_list = []
         for msg in messages:
             nonce = b64decode(msg.nonce)
             ciphertext = b64decode(msg.content)
-            plaintext = aesgcm.decrypt(nonce, ciphertext, None).decode()
+            # Decrypt the layer of server-side encryption to obtain the
+            # client-provided ciphertext, then re-encode it for transport.
+            plaintext_bytes = aesgcm.decrypt(nonce, ciphertext, None)
+            plaintext_b64 = b64encode(plaintext_bytes).decode()
             message_list.append({
                 "id": msg.id,
-                "content": plaintext,
+                "content": plaintext_b64,
                 "timestamp": msg.timestamp.isoformat(),
                 "user_id": msg.user_id,
             })
@@ -178,11 +181,18 @@ class Messages(Resource):
         """Store an encrypted message and broadcast it to clients."""
         data = message_parser.parse_args()
 
-        if len(data['content']) > 1000:
+        if len(data['content']) > 2000:
             return {"message": "Message too long."}, 400
 
+        # The client sends base64 encoded ciphertext. Decode it before applying
+        # server-side encryption for storage.
+        try:
+            client_ciphertext = b64decode(data["content"], validate=True)
+        except Exception:
+            return {"message": "Invalid base64 content."}, 400
+
         nonce = os.urandom(12)
-        ciphertext = aesgcm.encrypt(nonce, data["content"].encode(), None)
+        ciphertext = aesgcm.encrypt(nonce, client_ciphertext, None)
         encrypted_content = b64encode(ciphertext).decode()
         nonce_b64 = b64encode(nonce).decode()
 
@@ -199,7 +209,7 @@ class Messages(Resource):
         # Broadcast the encrypted message to connected clients via WebSockets
         socketio.emit(
             "new_message",
-            {"content": encrypted_content, "user_id": current_user_id},
+            {"content": data["content"], "user_id": current_user_id},
         )
 
         return {"message": "Message sent successfully."}, 201
