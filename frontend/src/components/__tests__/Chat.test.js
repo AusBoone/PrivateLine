@@ -30,10 +30,14 @@ afterEach(() => {
 it('fetches existing messages and shows websocket updates', async () => {
   const socket = { on: jest.fn(), disconnect: jest.fn() };
   io.mockReturnValue(socket);
-  api.get.mockResolvedValue({ status: 200, data: { messages: [{ id: 1, content: 'hello' }] } });
+  api.get.mockResolvedValueOnce({ status: 200, data: { groups: [] } });
+  api.get.mockResolvedValueOnce({ status: 200, data: { messages: [{ id: 1, content: 'hello' }] } });
 
   render(<Chat />);
 
+  await waitFor(() => {
+    expect(api.get).toHaveBeenCalledWith('/api/groups');
+  });
   await waitFor(() => {
     expect(api.get).toHaveBeenCalledWith('/api/messages');
   });
@@ -56,10 +60,14 @@ it('fetches existing messages and shows websocket updates', async () => {
 it('uses selected recipient when sending a message', async () => {
   const socket = { on: jest.fn(), disconnect: jest.fn() };
   io.mockReturnValue(socket);
+  api.get.mockResolvedValueOnce({ status: 200, data: { groups: [] } });
   api.get.mockResolvedValueOnce({ status: 200, data: { messages: [] } });
 
   render(<Chat />);
 
+  await waitFor(() => {
+    expect(api.get).toHaveBeenCalledWith('/api/groups');
+  });
   await waitFor(() => {
     expect(api.get).toHaveBeenCalledWith('/api/messages');
   });

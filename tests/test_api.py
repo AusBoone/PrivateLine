@@ -44,6 +44,32 @@ def login_user(client, username='alice'):
         'password': 'secret',
     })
 
+def decrypt_private_key(resp):
+    from cryptography.hazmat.primitives import serialization
+    data = resp.get_json()
+    salt = b64decode(data['salt'])
+    nonce = b64decode(data['nonce'])
+    ciphertext = b64decode(data['encrypted_private_key'])
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=200000,
+        backend=default_backend(),
+    )
+    key = kdf.derive(b'secret')
+    pem = AESGCM(key).decrypt(nonce, ciphertext, None)
+    return serialization.load_pem_private_key(pem, password=None)
+
+def sign_content(private_key, content):
+    from cryptography.hazmat.primitives.asymmetric import padding as asympad
+    sig = private_key.sign(
+        content.encode(),
+        asympad.PSS(mgf=asympad.MGF1(hashes.SHA256()), salt_length=asympad.PSS.MAX_LENGTH),
+        hashes.SHA256(),
+    )
+    return base64.b64encode(sig).decode()
+
 
 def test_register_missing_fields(client):
     resp = client.post('/api/register', data={'username': 'x'})
@@ -94,16 +120,18 @@ def test_register_and_login(client):
 
 
 def test_message_flow(client):
-    register_user(client, 'alice')
-    register_user(client, 'bob')
+    reg_a = register_user(client, 'alice')
+    reg_b = register_user(client, 'bob')
+    pk_b = decrypt_private_key(reg_b)
 
     token_bob = login_user(client, 'bob').get_json()['access_token']
     headers_bob = {'Authorization': f'Bearer {token_bob}'}
 
     b64 = base64.b64encode(b'hello').decode()
+    sig = sign_content(pk_b, b64)
     resp = client.post(
         '/api/messages',
-        data={'content': b64, 'recipient': 'alice'},
+        data={'content': b64, 'recipient': 'alice', 'signature': sig},
         headers=headers_bob,
     )
     assert resp.status_code == 201
@@ -127,16 +155,19 @@ def test_message_flow(client):
 
 
 def test_message_privacy(client):
-    register_user(client, 'eve')
+    reg_eve = register_user(client, 'eve')
     register_user(client, 'mallory')
     register_user(client, 'carol')
+
+    pk_eve = decrypt_private_key(reg_eve)
 
     token_eve = login_user(client, 'eve').get_json()['access_token']
     headers_eve = {'Authorization': f'Bearer {token_eve}'}
     encoded = base64.b64encode(b'secret').decode()
+    sig = sign_content(pk_eve, encoded)
     client.post(
         '/api/messages',
-        data={'content': encoded, 'recipient': 'mallory'},
+        data={'content': encoded, 'recipient': 'mallory', 'signature': sig},
         headers=headers_eve,
     )
 
@@ -223,7 +254,8 @@ def test_public_key_endpoint(client):
 
 def test_rsa_message_roundtrip(client):
     register_user(client, 'alice')
-    register_user(client, 'bob')
+    reg_bob = register_user(client, 'bob')
+    pk_bob = decrypt_private_key(reg_bob)
     token = login_user(client, 'bob').get_json()['access_token']
     headers = {'Authorization': f'Bearer {token}'}
 
@@ -246,9 +278,10 @@ def test_rsa_message_roundtrip(client):
     )
     b64 = base64.b64encode(ciphertext).decode()
 
+    sig = sign_content(pk_bob, b64)
     resp = client.post(
         '/api/messages',
-        data={'content': b64, 'recipient': 'alice'},
+        data={'content': b64, 'recipient': 'alice', 'signature': sig},
         headers=headers,
     )
     assert resp.status_code == 201
@@ -268,14 +301,16 @@ def test_rsa_message_roundtrip(client):
 
 
 def test_send_unknown_recipient(client):
-    register_user(client, 'alice')
+    reg = register_user(client, 'alice')
+    pk = decrypt_private_key(reg)
     token = login_user(client, 'alice').get_json()['access_token']
     headers = {'Authorization': f'Bearer {token}'}
 
     b64 = base64.b64encode(b'hi').decode()
+    sig = sign_content(pk, b64)
     resp = client.post(
         '/api/messages',
-        data={'content': b64, 'recipient': 'nonexistent'},
+        data={'content': b64, 'recipient': 'nonexistent', 'signature': sig},
         headers=headers,
     )
     assert resp.status_code == 404
@@ -303,7 +338,8 @@ def test_pinned_keys_endpoint(client):
 
 def test_push_token_and_notification(monkeypatch, client):
     register_user(client, 'alice')
-    register_user(client, 'bob')
+    reg_bob = register_user(client, 'bob')
+    pk_bob = decrypt_private_key(reg_bob)
 
     token_alice = login_user(client, 'alice').get_json()['access_token']
     headers_alice = {'Authorization': f'Bearer {token_alice}'}
@@ -316,13 +352,15 @@ def test_push_token_and_notification(monkeypatch, client):
     token_bob = login_user(client, 'bob').get_json()['access_token']
     headers_bob = {'Authorization': f'Bearer {token_bob}'}
     b64 = base64.b64encode(b'hi').decode()
-    client.post('/api/messages', data={'content': b64, 'recipient': 'alice'}, headers=headers_bob)
+    sig = sign_content(pk_bob, b64)
+    client.post('/api/messages', data={'content': b64, 'recipient': 'alice', 'signature': sig}, headers=headers_bob)
 
     assert calls
 
 
 def test_group_message_flow(client):
-    register_user(client, 'alice')
+    reg_a = register_user(client, 'alice')
+    pk_a = decrypt_private_key(reg_a)
     register_user(client, 'bob')
 
     token_alice = login_user(client, 'alice').get_json()['access_token']
@@ -340,7 +378,8 @@ def test_group_message_flow(client):
         db.session.commit()
 
     b64 = base64.b64encode(b'hi').decode()
-    resp = client.post(f'/api/groups/{gid}/messages', data={'content': b64}, headers=headers_alice)
+    sig = sign_content(pk_a, b64)
+    resp = client.post(f'/api/groups/{gid}/messages', data={'content': b64, 'signature': sig}, headers=headers_alice)
     assert resp.status_code == 201
 
     resp = client.get(f'/api/groups/{gid}/messages', headers=headers_bob)

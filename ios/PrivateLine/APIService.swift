@@ -167,7 +167,8 @@ class APIService: ObservableObject {
         var request = URLRequest(url: baseURL.appendingPathComponent("groups/\(groupId)/messages"))
         request.httpMethod = "POST"
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.httpBody = "content=\(content)&group_id=\(groupId)".data(using: .utf8)
+        let sig = try CryptoManager.signMessage(content).base64EncodedString()
+        request.httpBody = "content=\(content)&group_id=\(groupId)&signature=\(sig)".data(using: .utf8)
         _ = try await session.data(for: request)
     }
 
@@ -223,7 +224,8 @@ class APIService: ObservableObject {
         }
         let encrypted = try CryptoManager.encryptRSA(content, publicKeyPem: publicKeyPem)
         let b64 = encrypted.base64EncodedString()
-        request.httpBody = "content=\(b64)".data(using: .utf8)
+        let sig = try CryptoManager.signMessage(b64).base64EncodedString()
+        request.httpBody = "content=\(b64)&signature=\(sig)".data(using: .utf8)
         _ = try await session.data(for: request)
     }
 
