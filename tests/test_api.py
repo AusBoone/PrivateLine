@@ -388,6 +388,32 @@ def test_group_message_flow(client):
     assert len(msgs) == 1
 
 
+def test_group_key_distribution(client):
+    register_user(client, 'alice')
+    register_user(client, 'bob')
+    token_a = login_user(client, 'alice').get_json()['access_token']
+    headers_a = {'Authorization': f'Bearer {token_a}'}
+    resp = client.post('/api/groups', json={'name': 'g1'}, headers=headers_a)
+    assert resp.status_code == 201
+    gid = resp.get_json()['id']
+    from backend.models import GroupMember, Group
+    with app.app_context():
+        db.session.add(GroupMember(group_id=gid, user_id=2))
+        db.session.commit()
+        key_before = db.session.get(Group, gid).aes_key
+
+    token_b = login_user(client, 'bob').get_json()['access_token']
+    headers_b = {'Authorization': f'Bearer {token_b}'}
+    resp = client.get(f'/api/groups/{gid}/key', headers=headers_b)
+    assert resp.status_code == 200
+    assert resp.get_json()['key'] == key_before
+
+    resp = client.put(f'/api/groups/{gid}/key', headers=headers_a)
+    assert resp.status_code == 200
+    new_key = resp.get_json()['key']
+    assert new_key != key_before
+
+
 def test_file_upload_download(client):
     register_user(client, 'alice')
     token = login_user(client, 'alice').get_json()['access_token']

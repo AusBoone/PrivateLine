@@ -124,25 +124,28 @@ async function decryptMessage(privateKey, encryptedMessage) {
   return new TextDecoder().decode(decryptedMessageBuffer);
 }
 
-// Simple symmetric group key. In a real application this would be
-// distributed securely to all group members. For demonstration
-// purposes it is a constant shared across clients.
-const GROUP_KEY_B64 =
-  process.env.REACT_APP_GROUP_KEY ||
-  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='; // 32 zero bytes
+const groupKeyCache = new Map();
 
-async function importGroupKey() {
-  return window.crypto.subtle.importKey(
-    'raw',
-    base64ToArrayBuffer(GROUP_KEY_B64),
-    'AES-GCM',
-    false,
-    ['encrypt', 'decrypt']
-  );
+async function fetchGroupKey(groupId) {
+  let key = groupKeyCache.get(groupId);
+  if (key) return key;
+  const resp = await api.get(`/api/groups/${groupId}/key`);
+  if (resp.status === 200 && resp.data.key) {
+    key = await window.crypto.subtle.importKey(
+      'raw',
+      base64ToArrayBuffer(resp.data.key),
+      'AES-GCM',
+      false,
+      ['encrypt', 'decrypt']
+    );
+    groupKeyCache.set(groupId, key);
+    return key;
+  }
+  throw new Error('failed to fetch group key');
 }
 
-async function encryptGroupMessage(message) {
-  const key = await importGroupKey();
+async function encryptGroupMessage(message, groupId) {
+  const key = await fetchGroupKey(groupId);
   const iv = window.crypto.getRandomValues(new Uint8Array(12));
   const plaintext = new TextEncoder().encode(message);
   const cipher = await window.crypto.subtle.encrypt(
@@ -156,8 +159,8 @@ async function encryptGroupMessage(message) {
   return arrayBufferToBase64(combined.buffer);
 }
 
-async function decryptGroupMessage(b64) {
-  const key = await importGroupKey();
+async function decryptGroupMessage(b64, groupId) {
+  const key = await fetchGroupKey(groupId);
   const data = base64ToArrayBuffer(b64);
   const iv = data.slice(0, 12);
   const ct = data.slice(12);
@@ -171,8 +174,11 @@ async function decryptGroupMessage(b64) {
 
 // Encrypt a File/Blob using the shared group key. The returned Blob contains
 // the random IV prepended to the ciphertext so that it can be decrypted later.
-async function encryptFileBlob(blob) {
-  const key = await importGroupKey();
+async function encryptFileBlob(blob, groupId) {
+  if (groupId == null) {
+    return blob;
+  }
+  const key = await fetchGroupKey(groupId);
   const iv = window.crypto.getRandomValues(new Uint8Array(12));
   const data = new Uint8Array(await blob.arrayBuffer());
   const cipher = await window.crypto.subtle.encrypt(
@@ -188,8 +194,11 @@ async function encryptFileBlob(blob) {
 
 // Decrypt data downloaded from the server that was encrypted with
 // ``encryptFileBlob``.
-async function decryptFileData(buffer) {
-  const key = await importGroupKey();
+async function decryptFileData(buffer, groupId) {
+  if (groupId == null) {
+    return new Uint8Array(buffer);
+  }
+  const key = await fetchGroupKey(groupId);
   const data = new Uint8Array(buffer);
   const iv = data.slice(0, 12);
   const ct = data.slice(12);
@@ -253,7 +262,7 @@ function Chat() {
                 let text = m.content;
                 if (selectedGroup) {
                   try {
-                    text = await decryptGroupMessage(m.content);
+                    text = await decryptGroupMessage(m.content, selectedGroup);
                   } catch (e) {
                     console.error('Failed to decrypt group message', e);
                   }
@@ -280,7 +289,7 @@ function Chat() {
           let text = payload.content;
           if (payload.group_id) {
             try {
-              text = await decryptGroupMessage(payload.content);
+              text = await decryptGroupMessage(payload.content, payload.group_id);
             } catch (e) {
               console.error('Failed to decrypt incoming group message', e);
             }
@@ -338,7 +347,7 @@ function Chat() {
           ciphertext = await encryptMessage(publicKeyPem, message);
           formData.append('recipient', recipient);
         } else {
-          ciphertext = await encryptGroupMessage(message);
+          ciphertext = await encryptGroupMessage(message, selectedGroup);
         }
 
         formData.append('content', ciphertext);
@@ -361,7 +370,7 @@ function Chat() {
         }
         if (file) {
           const fd = new FormData();
-          const enc = await encryptFileBlob(file);
+          const enc = await encryptFileBlob(file, selectedGroup);
           fd.append('file', new File([enc], file.name));
           const upload = await api.post('/api/files', fd);
           if (upload.status === 201) {
@@ -429,7 +438,7 @@ function Chat() {
                         const resp = await api.get(`/api/files/${msg.file_id}`, {
                           responseType: 'arraybuffer',
                         });
-                        const data = await decryptFileData(resp.data);
+                        const data = await decryptFileData(resp.data, selectedGroup);
                         let filename = 'download';
                         const disp = resp.headers['content-disposition'];
                         const match = /filename=([^;]+)/.exec(disp);
