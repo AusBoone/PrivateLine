@@ -31,7 +31,8 @@ class WebSocketService: ObservableObject {
                    let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let b64 = payload["content"] as? String,
                    let plaintext = try? CryptoManager.decryptRSA(b64) {
-                    let msg = Message(id: Int(Date().timeIntervalSince1970), content: plaintext)
+                    let fid = payload["file_id"] as? Int
+                    let msg = Message(id: Int(Date().timeIntervalSince1970), content: plaintext, file_id: fid)
                     DispatchQueue.main.async {
                         self?.messages.append(msg)
                     }

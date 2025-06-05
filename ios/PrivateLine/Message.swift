@@ -6,4 +6,10 @@ struct Message: Identifiable, Decodable {
     let id: Int
     /// Decrypted text content.
     let content: String
+    let file_id: Int?
+}
+
+struct Group: Identifiable, Decodable {
+    let id: Int
+    let name: String
 }

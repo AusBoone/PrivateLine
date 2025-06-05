@@ -1,6 +1,7 @@
 import json
 import os
 import base64
+import io
 import pytest
 from base64 import b64decode
 from cryptography.hazmat.primitives import hashes
@@ -318,3 +319,47 @@ def test_push_token_and_notification(monkeypatch, client):
     client.post('/api/messages', data={'content': b64, 'recipient': 'alice'}, headers=headers_bob)
 
     assert calls
+
+
+def test_group_message_flow(client):
+    register_user(client, 'alice')
+    register_user(client, 'bob')
+
+    token_alice = login_user(client, 'alice').get_json()['access_token']
+    headers_alice = {'Authorization': f'Bearer {token_alice}'}
+    resp = client.post('/api/groups', json={'name': 'test'}, headers=headers_alice)
+    assert resp.status_code == 201
+    gid = resp.get_json()['id']
+
+    token_bob = login_user(client, 'bob').get_json()['access_token']
+    headers_bob = {'Authorization': f'Bearer {token_bob}'}
+    # add bob to group
+    from backend.models import GroupMember
+    with app.app_context():
+        db.session.add(GroupMember(group_id=gid, user_id=2))
+        db.session.commit()
+
+    b64 = base64.b64encode(b'hi').decode()
+    resp = client.post(f'/api/groups/{gid}/messages', data={'content': b64}, headers=headers_alice)
+    assert resp.status_code == 201
+
+    resp = client.get(f'/api/groups/{gid}/messages', headers=headers_bob)
+    assert resp.status_code == 200
+    msgs = resp.get_json()['messages']
+    assert len(msgs) == 1
+
+
+def test_file_upload_download(client):
+    register_user(client, 'alice')
+    token = login_user(client, 'alice').get_json()['access_token']
+    headers = {'Authorization': f'Bearer {token}'}
+    data = {'file': (io.BytesIO(b'hello'), 'hello.txt')}
+    from werkzeug.datastructures import FileStorage
+    fs = FileStorage(stream=io.BytesIO(b'hello'), filename='hello.txt')
+    data = {'file': fs}
+    resp = client.post('/api/files', data=data, headers=headers, content_type='multipart/form-data')
+    assert resp.status_code == 201
+    fid = resp.get_json()['file_id']
+    resp = client.get(f'/api/files/{fid}', headers=headers)
+    assert resp.status_code == 200
+    assert resp.data == b'hello'

@@ -9,6 +9,7 @@ from cryptography.hazmat.backends import default_backend
 from base64 import b64encode, b64decode
 import os
 from .models import User, Message, PinnedKey, PushToken
+from .models import Group, GroupMember, File
 from .app import db, app, socketio, token_blocklist
 from flask_jwt_extended import (
     create_access_token,
@@ -32,8 +33,10 @@ message_parser.add_argument(
     'content', required=True, location='form', help="Content is required."
 )
 message_parser.add_argument(
-    'recipient', required=True, location='form', help="Recipient username is required."
+    'recipient', required=False, location='form'
 )
+message_parser.add_argument('group_id', required=False, location='form')
+message_parser.add_argument('file_id', required=False, location='form')
 
 # Token serializer (legacy).  JWT is now used instead of this custom mechanism.
 # s = Serializer(app.config['SECRET_KEY'], expires_in=3600)
@@ -214,6 +217,110 @@ class PublicKey(Resource):
             return {"message": "User not found"}, 404
         return {"public_key": user.public_key_pem}
 
+
+class Groups(Resource):
+    """Create or list chat groups."""
+
+    @jwt_required()
+    def get(self):
+        groups = Group.query.all()
+        return {"groups": [{"id": g.id, "name": g.name} for g in groups]}
+
+    @jwt_required()
+    def post(self):
+        data = request.get_json() or {}
+        name = data.get("name")
+        if not name:
+            return {"message": "Group name required"}, 400
+        if Group.query.filter_by(name=name).first():
+            return {"message": "Group exists"}, 400
+        g = Group(name=name)
+        db.session.add(g)
+        db.session.commit()
+        # Add creator as member
+        uid = int(get_jwt_identity())
+        gm = GroupMember(group_id=g.id, user_id=uid)
+        db.session.add(gm)
+        db.session.commit()
+        return {"id": g.id, "name": g.name}, 201
+
+
+class GroupMessages(Resource):
+    """Send or retrieve messages for a group."""
+
+    @jwt_required()
+    def get(self, group_id):
+        uid = int(get_jwt_identity())
+        if not GroupMember.query.filter_by(group_id=group_id, user_id=uid).first():
+            return {"message": "Not a member"}, 403
+        msgs = Message.query.filter_by(group_id=group_id).all()
+        result = []
+        for msg in msgs:
+            nonce = b64decode(msg.nonce)
+            plaintext_bytes = aesgcm.decrypt(nonce, b64decode(msg.content), None)
+            result.append({
+                "id": msg.id,
+                "content": b64encode(plaintext_bytes).decode(),
+                "timestamp": msg.timestamp.isoformat(),
+                "sender_id": msg.sender_id,
+                "file_id": msg.file_id,
+            })
+        return {"messages": result}
+
+    @jwt_required()
+    def post(self, group_id):
+        uid = int(get_jwt_identity())
+        if not GroupMember.query.filter_by(group_id=group_id, user_id=uid).first():
+            return {"message": "Not a member"}, 403
+        data = message_parser.parse_args()
+        try:
+            client_ciphertext = b64decode(data["content"], validate=True)
+        except Exception:
+            return {"message": "Invalid base64 content."}, 400
+        nonce = os.urandom(12)
+        ciphertext = aesgcm.encrypt(nonce, client_ciphertext, None)
+        m = Message(
+            content=b64encode(ciphertext).decode(),
+            nonce=b64encode(nonce).decode(),
+            user_id=uid,
+            sender_id=uid,
+            group_id=group_id,
+        )
+        db.session.add(m)
+        db.session.commit()
+        socketio.emit("new_message", {"content": data["content"], "group_id": group_id}, to=str(group_id))
+        return {"message": "sent"}, 201
+
+
+class FileUpload(Resource):
+    """Upload an encrypted file and return its id."""
+
+    @jwt_required()
+    def post(self):
+        if 'file' not in request.files:
+            return {"message": "file required"}, 400
+        f = request.files['file']
+        data = f.read()
+        file_rec = File(filename=f.filename, data=data)
+        db.session.add(file_rec)
+        db.session.commit()
+        return {"file_id": file_rec.id}, 201
+
+
+class FileDownload(Resource):
+    """Return a file by id."""
+
+    @jwt_required()
+    def get(self, file_id):
+        f = db.session.get(File, file_id)
+        if not f:
+            return {"message": "Not found"}, 404
+        from flask import make_response
+        resp = make_response(f.data)
+        resp.headers.set("Content-Type", "application/octet-stream")
+        resp.headers.set("Content-Disposition", f"attachment; filename={f.filename}")
+        return resp
+
 class Messages(Resource):
     """Retrieve or create encrypted chat messages."""
 
@@ -256,9 +363,13 @@ class Messages(Resource):
         if len(data['content']) > 2000:
             return {"message": "Message too long."}, 400
 
-        recipient = User.query.filter_by(username=data['recipient']).first()
-        if not recipient:
-            return {"message": "Recipient not found."}, 404
+        recipient = None
+        if data.get('recipient'):
+            recipient = User.query.filter_by(username=data['recipient']).first()
+            if not recipient:
+                return {"message": "Recipient not found."}, 404
+        elif not data.get('group_id'):
+            return {"message": "Recipient or group_id required."}, 400
 
         # The client sends base64 encoded ciphertext. Decode it before applying
         # server-side encryption for storage.
@@ -278,7 +389,9 @@ class Messages(Resource):
             nonce=nonce_b64,
             user_id=current_user_id,
             sender_id=current_user_id,
-            recipient_id=recipient.id,
+            recipient_id=recipient.id if recipient else None,
+            group_id=data.get('group_id'),
+            file_id=data.get('file_id'),
         )
         try:
             db.session.add(new_message)
@@ -289,17 +402,34 @@ class Messages(Resource):
             return {"message": "Failed to store message."}, 500
 
         # Broadcast the encrypted message to connected clients via WebSockets
-        socketio.emit(
-            "new_message",
-            {
-                "content": data["content"],
-                "sender_id": current_user_id,
-                "recipient_id": recipient.id,
-            },
-            to=str(recipient.id),
-        )
-
-        send_push_notifications(recipient.id, "New message")
+        if recipient:
+            socketio.emit(
+                "new_message",
+                {
+                    "content": data["content"],
+                    "sender_id": current_user_id,
+                    "recipient_id": recipient.id,
+                    "file_id": data.get('file_id'),
+                },
+                to=str(recipient.id),
+            )
+            send_push_notifications(recipient.id, "New message")
+        else:
+            gid = data.get('group_id')
+            socketio.emit(
+                "new_message",
+                {
+                    "content": data["content"],
+                    "sender_id": current_user_id,
+                    "group_id": gid,
+                    "file_id": data.get('file_id'),
+                },
+                to=str(gid),
+            )
+            members = GroupMember.query.filter_by(group_id=gid).all()
+            for m in members:
+                if m.user_id != current_user_id:
+                    send_push_notifications(m.user_id, "New group message")
 
         return {"message": "Message sent successfully."}, 201
 

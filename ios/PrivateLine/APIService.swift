@@ -6,6 +6,7 @@ import LocalAuthentication
 class APIService: ObservableObject {
     /// Base URL of the backend API, loaded from Info.plist.
     private let baseURL: URL
+    var baseURLString: String { baseURL.absoluteString }
 
     /// Indicates whether the user is currently authenticated.
     @Published var isAuthenticated = false
@@ -18,6 +19,7 @@ class APIService: ObservableObject {
 
     /// Stored pinned fingerprints
     private var pinnedKeys: [String: String] = [:]
+    @Published var groups: [Group] = []
 
     /// URLSession used for API calls with certificate pinning.
     private let session: URLSession
@@ -137,6 +139,57 @@ class APIService: ObservableObject {
             }
             return nil
         }
+    }
+
+    func fetchGroupMessages(_ id: Int) async throws -> [Message] {
+        guard let token = token else { return [] }
+        var request = URLRequest(url: baseURL.appendingPathComponent("groups/\(id)/messages"))
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, _) = try await session.data(for: request)
+        let json = try JSONDecoder().decode([String: [Message]].self, from: data)
+        let msgs = json["messages"] ?? []
+        return msgs
+    }
+
+    func fetchGroups() async throws -> [Group] {
+        guard let token = token else { return [] }
+        var request = URLRequest(url: baseURL.appendingPathComponent("groups"))
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, _) = try await session.data(for: request)
+        let json = try JSONDecoder().decode([String: [Group]].self, from: data)
+        let gs = json["groups"] ?? []
+        DispatchQueue.main.async { self.groups = gs }
+        return gs
+    }
+
+    func sendGroupMessage(_ content: String, groupId: Int) async throws {
+        guard let token = token else { throw URLError(.userAuthenticationRequired) }
+        var request = URLRequest(url: baseURL.appendingPathComponent("groups/\(groupId)/messages"))
+        request.httpMethod = "POST"
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = "content=\(content)&group_id=\(groupId)".data(using: .utf8)
+        _ = try await session.data(for: request)
+    }
+
+    func uploadFile(data: Data, filename: String) async throws -> Int? {
+        guard let token = token else { return nil }
+        var request = URLRequest(url: baseURL.appendingPathComponent("files"))
+        request.httpMethod = "POST"
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let boundary = UUID().uuidString
+        request.addValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: application/octet-stream\r\n\r\n".data(using: .utf8)!)
+        body.append(data)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        request.httpBody = body
+        let (respData, _) = try await session.upload(for: request, from: body)
+        if let json = try? JSONSerialization.jsonObject(with: respData) as? [String: Int] {
+            return json["file_id"]
+        }
+        return nil
     }
 
     /// Fetch and cache the public key for ``username``.
