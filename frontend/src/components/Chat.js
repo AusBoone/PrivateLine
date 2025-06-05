@@ -15,6 +15,7 @@ import {
 import './Chat.css';
 import { arrayBufferToBase64, base64ToArrayBuffer } from '../utils/encoding';
 import { loadKeyMaterial } from '../utils/secureStore';
+import { setupWebPush } from '../utils/push';
 
 const USERS = ['alice', 'bob', 'carol'];
 
@@ -134,6 +135,7 @@ function Chat() {
       let s;
 
       async function init() {
+        setupWebPush();
         let key = null;
         const pem = sessionStorage.getItem('private_key_pem');
         if (pem) {

@@ -2,12 +2,14 @@ import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import Chat from '../Chat';
 import api from '../../api';
 import io from 'socket.io-client';
+import { setupWebPush } from '../../utils/push';
 
 jest.mock('../../api');
 jest.mock('socket.io-client');
 jest.mock('../../utils/secureStore', () => ({
   loadKeyMaterial: jest.fn().mockResolvedValue({}),
 }));
+jest.mock('../../utils/push', () => ({ setupWebPush: jest.fn() }));
 
 beforeAll(() => {
   global.crypto = {

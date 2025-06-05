@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat
 from cryptography.hazmat.backends import default_backend
 from base64 import b64encode, b64decode
 import os
-from .models import User, Message, PinnedKey
+from .models import User, Message, PinnedKey, PushToken
 from .app import db, app, socketio, token_blocklist
 from flask_jwt_extended import (
     create_access_token,
@@ -41,6 +41,52 @@ message_parser.add_argument(
 # The previous implementation relied on a custom token_required decorator that
 # used itsdangerous for token verification.  The project now leverages
 # Flask-JWT-Extended, so authentication decorators below use @jwt_required.
+
+# --- Push Notification Helpers ---
+def send_apns(token: str, message: str) -> None:
+    """Send a push notification via APNs if credentials are configured."""
+    try:
+        from apns2.client import APNsClient
+        from apns2.payload import Payload
+
+        cert = os.environ.get("APNS_CERT")
+        topic = os.environ.get("APNS_TOPIC")
+        if not cert or not topic:
+            return
+        client = APNsClient(cert, use_sandbox=True)
+        payload = Payload(alert=message, sound="default", badge=1)
+        client.send_notification(token, payload, topic=topic)
+    except Exception as e:
+        app.logger.warning("Failed to send APNs notification: %s", e)
+
+
+def send_web_push(subscription_json: str, message: str) -> None:
+    """Send a Web Push notification if VAPID keys are configured."""
+    try:
+        from pywebpush import webpush
+        import json
+
+        private_key = os.environ.get("VAPID_PRIVATE_KEY")
+        if not private_key:
+            return
+        webpush(
+            json.loads(subscription_json),
+            data=message,
+            vapid_private_key=private_key,
+            vapid_claims={"sub": os.environ.get("VAPID_SUBJECT", "mailto:admin@example.com")},
+        )
+    except Exception as e:
+        app.logger.warning("Failed to send web push: %s", e)
+
+
+def send_push_notifications(user_id: int, message: str) -> None:
+    """Send notifications to all registered tokens for the user."""
+    tokens = PushToken.query.filter_by(user_id=user_id).all()
+    for t in tokens:
+        if t.platform == "web":
+            send_web_push(t.token, message)
+        else:
+            send_apns(t.token, message)
 
 """
 The private key is encrypted using AES-256 in GCM mode,
@@ -253,6 +299,8 @@ class Messages(Resource):
             to=str(recipient.id),
         )
 
+        send_push_notifications(recipient.id, "New message")
+
         return {"message": "Message sent successfully."}, 201
 
 
@@ -286,6 +334,32 @@ class PinnedKeys(Resource):
             db.session.rollback()
             return {"message": "Failed to store pinned key."}, 500
         return {"message": "Pinned key stored."}, 200
+
+
+class PushTokenResource(Resource):
+    """Store push notification tokens for the authenticated user."""
+
+    @jwt_required()
+    def post(self):
+        data = request.get_json() or {}
+        token = data.get("token")
+        if not token:
+            return {"message": "Token is required."}, 400
+
+        platform = data.get("platform", "ios")
+        user_id = int(get_jwt_identity())
+        pt = PushToken.query.filter_by(user_id=user_id, token=token).first()
+        if pt:
+            pt.platform = platform
+        else:
+            pt = PushToken(user_id=user_id, token=token, platform=platform)
+            db.session.add(pt)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return {"message": "Failed to store token."}, 500
+        return {"message": "Token stored."}, 200
 
 class AccountSettings(Resource):
     """Update the authenticated user's account information."""

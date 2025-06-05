@@ -298,3 +298,23 @@ def test_pinned_keys_endpoint(client):
     resp = client.get('/api/pinned_keys', headers=headers)
     assert resp.status_code == 200
     assert {'username': 'bob', 'fingerprint': fp} in resp.get_json()['pinned_keys']
+
+
+def test_push_token_and_notification(monkeypatch, client):
+    register_user(client, 'alice')
+    register_user(client, 'bob')
+
+    token_alice = login_user(client, 'alice').get_json()['access_token']
+    headers_alice = {'Authorization': f'Bearer {token_alice}'}
+    resp = client.post('/api/push-token', json={'token': 'abc', 'platform': 'web'}, headers=headers_alice)
+    assert resp.status_code == 200
+
+    calls = []
+    monkeypatch.setattr('backend.resources.send_push_notifications', lambda uid, msg: calls.append((uid, msg)))
+
+    token_bob = login_user(client, 'bob').get_json()['access_token']
+    headers_bob = {'Authorization': f'Bearer {token_bob}'}
+    b64 = base64.b64encode(b'hi').decode()
+    client.post('/api/messages', data={'content': b64, 'recipient': 'alice'}, headers=headers_bob)
+
+    assert calls
