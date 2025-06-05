@@ -56,6 +56,16 @@ To run the application, follow these steps:
 6. Open a browser and navigate to the frontend's URL to use the application.
 7. After registering a user, persist the returned `encrypted_private_key`, `salt` and `nonce`. The React client stores these values in IndexedDB so the private key can be decrypted on login.
 
+## Docker
+
+Docker images are provided for easier deployment. After copying `.env.example` to `.env` and setting the required values, build and start the containers with:
+
+```bash
+docker-compose up --build
+```
+
+When running with Docker, set `REACT_APP_API_URL=http://backend:5000` in your `.env` file so the React app can reach the Flask API container. The frontend will be available on port **3000** and the backend on port **5000**.
+
 ## Running Tests
 Backend unit tests use **pytest**. Once the dependencies are installed you can
 run all tests from the repository root:
