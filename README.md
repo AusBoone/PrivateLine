@@ -50,6 +50,8 @@ To run the application, follow these steps:
    * Optional `DATABASE_URI` if you want to use a database other than the default SQLite file.
    * Optional `REDIS_URL` for persistent rate limiting storage.
    * Optional `SOCKETIO_ORIGINS` to restrict WebSocket origins.
+   * Optional push notification settings: `APNS_CERT`, `APNS_TOPIC`,
+     `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`.
 3. Install backend dependencies with `pip install -r backend/requirements.txt`.
 4. Install frontend dependencies with `npm install` inside the `frontend` directory.
 5. Start the backend with `python backend/app.py` and the frontend with `npm start`.
@@ -79,3 +81,26 @@ message handling.
 
 ## iOS Client
 A minimal SwiftUI client is located in the `ios/` directory. Open it with Xcode and run the app while the backend is running locally.
+
+## Push Notifications
+The backend can notify offline clients via Apple Push Notification service (APNs)
+and the Web Push protocol. To enable this feature you must provide additional
+environment variables:
+
+* `APNS_CERT` – path to the PEM certificate used for APNs.
+* `APNS_TOPIC` – the bundle identifier of your iOS app.
+* `VAPID_PRIVATE_KEY` – private key for Web Push messages.
+* `VAPID_SUBJECT` – contact URI shown in Web Push claims.
+
+Generate VAPID keys with `npx web-push generate-vapid-keys` and copy the
+public key to `REACT_APP_VAPID_PUBLIC_KEY` for the React frontend. For APNs,
+export your push notification certificate as a `.p12` file and convert it to PEM:
+
+```bash
+openssl pkcs12 -in cert.p12 -out apns.pem -nodes
+```
+
+After authentication each client calls `POST /api/push-token` with its push
+token and platform (`ios` or `web`). These tokens are stored in the database and
+used by `send_push_notifications` to deliver alerts whenever a new message is
+created.
