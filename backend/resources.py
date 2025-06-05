@@ -248,7 +248,13 @@ class Groups(Resource):
 
 
 class GroupMessages(Resource):
-    """Send or retrieve messages for a group."""
+    """Send or retrieve messages for a group.
+
+    The ``content`` field is expected to contain base64 encoded ciphertext
+    produced by the client (e.g. using a shared group key). The server does not
+    decrypt this payload; it merely applies its own layer of encryption for
+    storage and verifies the accompanying signature.
+    """
 
     @jwt_required()
     def get(self, group_id):
