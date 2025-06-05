@@ -6,10 +6,10 @@ import CommonCrypto
 /// Simple cryptography helper used by the SwiftUI client.
 ///
 /// This implementation uses ``CryptoKit`` to provide symmetric AES-GCM
-/// encryption. The symmetric key is persisted in the Keychain so that
-/// messages can be encrypted and decrypted locally.  This does not yet
-/// provide full end-to-end encryption with other users but lays the
-/// groundwork for it.
+/// encryption for persisted data and RSA-OAEP for message exchange.
+/// The symmetric key is stored in the Keychain and messages are
+/// encrypted locally before being transmitted, enabling end-to-end
+/// security across clients.
 enum CryptoManager {
 
     /// Identifier for the symmetric key stored in the keychain.
