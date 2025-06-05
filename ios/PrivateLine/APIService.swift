@@ -191,7 +191,8 @@ class APIService: ObservableObject {
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
         body.append("Content-Type: application/octet-stream\r\n\r\n".data(using: .utf8)!)
-        body.append(data)
+        let encrypted = try CryptoManager.encryptData(data)
+        body.append(encrypted)
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
         request.httpBody = body
         let (respData, _) = try await session.upload(for: request, from: body)
@@ -199,6 +200,15 @@ class APIService: ObservableObject {
             return json["file_id"]
         }
         return nil
+    }
+
+    func downloadFile(id: Int) async throws -> Data {
+        guard let token = token else { throw URLError(.userAuthenticationRequired) }
+        var request = URLRequest(url: baseURL.appendingPathComponent("files/\(id)"))
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, _) = try await session.data(for: request)
+        let decrypted = try CryptoManager.decryptData(data)
+        return decrypted
     }
 
     /// Fetch and cache the public key for ``username``.

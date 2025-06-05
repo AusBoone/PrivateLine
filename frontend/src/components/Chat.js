@@ -169,6 +169,38 @@ async function decryptGroupMessage(b64) {
   return new TextDecoder().decode(plain);
 }
 
+// Encrypt a File/Blob using the shared group key. The returned Blob contains
+// the random IV prepended to the ciphertext so that it can be decrypted later.
+async function encryptFileBlob(blob) {
+  const key = await importGroupKey();
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+  const data = new Uint8Array(await blob.arrayBuffer());
+  const cipher = await window.crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    data
+  );
+  const combined = new Uint8Array(iv.length + cipher.byteLength);
+  combined.set(iv);
+  combined.set(new Uint8Array(cipher), iv.length);
+  return new Blob([combined], { type: 'application/octet-stream' });
+}
+
+// Decrypt data downloaded from the server that was encrypted with
+// ``encryptFileBlob``.
+async function decryptFileData(buffer) {
+  const key = await importGroupKey();
+  const data = new Uint8Array(buffer);
+  const iv = data.slice(0, 12);
+  const ct = data.slice(12);
+  const plain = await window.crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    ct
+  );
+  return new Uint8Array(plain);
+}
+
 // React functional component for the chat interface
 function Chat() {
     // State variable to manage the message input field
@@ -329,7 +361,8 @@ function Chat() {
         }
         if (file) {
           const fd = new FormData();
-          fd.append('file', file);
+          const enc = await encryptFileBlob(file);
+          fd.append('file', new File([enc], file.name));
           const upload = await api.post('/api/files', fd);
           if (upload.status === 201) {
             formData.append('file_id', upload.data.file_id);
@@ -388,7 +421,33 @@ function Chat() {
               >
                 {msg.text}
                 {msg.file_id && (
-                  <a href={`/api/files/${msg.file_id}`} style={{ marginLeft: 8 }}>
+                  <a
+                    href="#"
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      try {
+                        const resp = await api.get(`/api/files/${msg.file_id}`, {
+                          responseType: 'arraybuffer',
+                        });
+                        const data = await decryptFileData(resp.data);
+                        let filename = 'download';
+                        const disp = resp.headers['content-disposition'];
+                        const match = /filename=([^;]+)/.exec(disp);
+                        if (match) filename = match[1];
+                        const url = window.URL.createObjectURL(
+                          new Blob([data])
+                        );
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = filename;
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                      } catch (err) {
+                        console.error('Download failed', err);
+                      }
+                    }}
+                    style={{ marginLeft: 8 }}
+                  >
                     [attachment]
                   </a>
                 )}
