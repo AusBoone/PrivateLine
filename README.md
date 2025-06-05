@@ -152,3 +152,10 @@ Copy the contents of `frontend/build` to the directory served by your HTTP serve
 `JWT_SECRET_KEY`, `AES_KEY` and `DATABASE_URI` are configured on the backend in
 production.
 
+
+### TLS Termination
+For HTTPS deployments, place a reverse proxy such as Nginx in front of the application.
+Terminate TLS at the proxy and forward traffic to Gunicorn on port 5000.
+If running with Docker, you can use an nginx-proxy setup with the LetsEncrypt companion
+container for automatic certificate management.
+
