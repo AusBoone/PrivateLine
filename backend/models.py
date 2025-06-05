@@ -64,3 +64,15 @@ class PinnedKey(db.Model):
     __table_args__ = (
         db.UniqueConstraint('user_id', 'username', name='uix_user_pinned'),
     )
+
+
+class PushToken(db.Model):
+    """Store push notification tokens for a user."""
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    token = db.Column(db.Text, nullable=False)
+    platform = db.Column(db.String(16), nullable=False)
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'token', name='uix_user_token'),
+    )
