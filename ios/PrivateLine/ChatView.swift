@@ -28,6 +28,11 @@ struct ChatView: View {
             List(viewModel.messages) { msg in
                 HStack {
                     Text(msg.content)
+                    if let read = msg.read, msg.id != 0 {
+                        Spacer()
+                        Image(systemName: read ? "checkmark.circle.fill" : "checkmark.circle")
+                            .foregroundColor(.gray)
+                    }
                     if let fid = msg.file_id {
                         Link("attachment", destination: URL(string: "\(viewModel.api.baseURLString)/files/\(fid)")!)
                     }

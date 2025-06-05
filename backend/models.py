@@ -81,6 +81,7 @@ class Message(db.Model):
     group_id = db.Column(db.Integer, db.ForeignKey('group.id'))
     file_id = db.Column(db.Integer, db.ForeignKey('file.id'))
     signature = db.Column(db.String(684), nullable=False)
+    read = db.Column(db.Boolean, default=False, nullable=False)
 
 
 class PinnedKey(db.Model):

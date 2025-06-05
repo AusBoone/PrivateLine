@@ -7,6 +7,7 @@ struct Message: Identifiable, Decodable {
     /// Decrypted text content.
     let content: String
     let file_id: Int?
+    let read: Bool?
 }
 
 struct Group: Identifiable, Decodable {
