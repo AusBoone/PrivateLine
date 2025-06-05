@@ -69,15 +69,28 @@ docker-compose up --build
 When running with Docker, set `REACT_APP_API_URL=http://backend:5000` in your `.env` file so the React app can reach the Flask API container. The frontend will be available on port **3000** and the backend on port **5000**.
 
 ## Running Tests
-Backend unit tests use **pytest**. Once the dependencies are installed you can
-run all tests from the repository root:
+Backend unit tests use **pytest**. Install the Python dependencies first:
+
+```bash
+pip install -r backend/requirements.txt
+```
+
+Then run all backend tests from the repository root:
 
 ```bash
 pytest
 ```
 
-The tests exercise the Flask API endpoints such as registration, login and
-message handling.
+Frontend tests are written with **Jest**. Install the Node dependencies inside
+the `frontend` directory and run the tests with:
+
+```bash
+cd frontend
+npm install
+npm test
+```
+
+The tests exercise the Flask API endpoints as well as the React components.
 
 ## iOS Client
 A minimal SwiftUI client is located in the `ios/` directory. Open it with Xcode and run the app while the backend is running locally.
