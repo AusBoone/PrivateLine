@@ -79,6 +79,27 @@ enum CryptoManager {
         return String(decoding: decrypted, as: UTF8.self)
     }
 
+    // MARK: - Group encryption helpers
+
+    /// Fixed group key used for demo purposes. In a production app this
+    /// would be provisioned per-group and distributed securely.
+    private static let groupKey = SymmetricKey(data: Data(repeating: 0, count: 32))
+
+    /// Encrypt a message with the shared group key.
+    static func encryptGroupMessage(_ message: String) throws -> Data {
+        let data = Data(message.utf8)
+        let sealed = try AES.GCM.seal(data, using: groupKey)
+        guard let combined = sealed.combined else { throw CocoaError(.coderValueNotFound) }
+        return combined
+    }
+
+    /// Decrypt a group message previously encrypted with ``encryptGroupMessage``.
+    static func decryptGroupMessage(_ data: Data) throws -> String {
+        let sealed = try AES.GCM.SealedBox(combined: data)
+        let decrypted = try AES.GCM.open(sealed, using: groupKey)
+        return String(decoding: decrypted, as: UTF8.self)
+    }
+
     // MARK: - RSA helper functions
 
     /// Import the encrypted private key using ``password`` and cache it for future use.

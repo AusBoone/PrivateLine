@@ -16,6 +16,7 @@ beforeAll(() => {
     subtle: {
       importKey: jest.fn().mockResolvedValue('key'),
       encrypt: jest.fn().mockResolvedValue(new ArrayBuffer(1)),
+      decrypt: jest.fn().mockResolvedValue(new ArrayBuffer(1)),
     },
   };
   if (!global.TextEncoder) {

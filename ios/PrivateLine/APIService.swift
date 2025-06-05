@@ -148,7 +148,13 @@ class APIService: ObservableObject {
         let (data, _) = try await session.data(for: request)
         let json = try JSONDecoder().decode([String: [Message]].self, from: data)
         let msgs = json["messages"] ?? []
-        return msgs
+        return msgs.compactMap { msg in
+            guard let data = Data(base64Encoded: msg.content) else { return nil }
+            if let text = try? CryptoManager.decryptGroupMessage(data) {
+                return Message(id: msg.id, content: text, file_id: msg.file_id)
+            }
+            return nil
+        }
     }
 
     func fetchGroups() async throws -> [Group] {
@@ -167,8 +173,10 @@ class APIService: ObservableObject {
         var request = URLRequest(url: baseURL.appendingPathComponent("groups/\(groupId)/messages"))
         request.httpMethod = "POST"
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let sig = try CryptoManager.signMessage(content).base64EncodedString()
-        request.httpBody = "content=\(content)&group_id=\(groupId)&signature=\(sig)".data(using: .utf8)
+        let encrypted = try CryptoManager.encryptGroupMessage(content)
+        let b64 = encrypted.base64EncodedString()
+        let sig = try CryptoManager.signMessage(b64).base64EncodedString()
+        request.httpBody = "content=\(b64)&group_id=\(groupId)&signature=\(sig)".data(using: .utf8)
         _ = try await session.data(for: request)
     }
 

@@ -29,12 +29,19 @@ class WebSocketService: ObservableObject {
                 if case .string(let text) = message,
                    let data = text.data(using: .utf8),
                    let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let b64 = payload["content"] as? String,
-                   let plaintext = try? CryptoManager.decryptRSA(b64) {
-                    let fid = payload["file_id"] as? Int
-                    let msg = Message(id: Int(Date().timeIntervalSince1970), content: plaintext, file_id: fid)
-                    DispatchQueue.main.async {
-                        self?.messages.append(msg)
+                   let b64 = payload["content"] as? String {
+                    var plaintext: String?
+                    if let _ = payload["group_id"], let ct = Data(base64Encoded: b64) {
+                        plaintext = try? CryptoManager.decryptGroupMessage(ct)
+                    } else {
+                        plaintext = try? CryptoManager.decryptRSA(b64)
+                    }
+                    if let plaintext = plaintext {
+                        let fid = payload["file_id"] as? Int
+                        let msg = Message(id: Int(Date().timeIntervalSince1970), content: plaintext, file_id: fid)
+                        DispatchQueue.main.async {
+                            self?.messages.append(msg)
+                        }
                     }
                 }
             }

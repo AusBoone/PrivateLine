@@ -121,7 +121,52 @@ async function decryptMessage(privateKey, encryptedMessage) {
     );
 
     // Return the decrypted message as a plaintext string
-    return new TextDecoder().decode(decryptedMessageBuffer);
+  return new TextDecoder().decode(decryptedMessageBuffer);
+}
+
+// Simple symmetric group key. In a real application this would be
+// distributed securely to all group members. For demonstration
+// purposes it is a constant shared across clients.
+const GROUP_KEY_B64 =
+  process.env.REACT_APP_GROUP_KEY ||
+  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='; // 32 zero bytes
+
+async function importGroupKey() {
+  return window.crypto.subtle.importKey(
+    'raw',
+    base64ToArrayBuffer(GROUP_KEY_B64),
+    'AES-GCM',
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function encryptGroupMessage(message) {
+  const key = await importGroupKey();
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+  const plaintext = new TextEncoder().encode(message);
+  const cipher = await window.crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    plaintext
+  );
+  const combined = new Uint8Array(iv.length + cipher.byteLength);
+  combined.set(iv);
+  combined.set(new Uint8Array(cipher), iv.length);
+  return arrayBufferToBase64(combined.buffer);
+}
+
+async function decryptGroupMessage(b64) {
+  const key = await importGroupKey();
+  const data = base64ToArrayBuffer(b64);
+  const iv = data.slice(0, 12);
+  const ct = data.slice(12);
+  const plain = await window.crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: new Uint8Array(iv) },
+    key,
+    ct
+  );
+  return new TextDecoder().decode(plain);
 }
 
 // React functional component for the chat interface
@@ -174,7 +219,13 @@ function Chat() {
             const decrypted = await Promise.all(
               resp.data.messages.map(async (m) => {
                 let text = m.content;
-                if (key) {
+                if (selectedGroup) {
+                  try {
+                    text = await decryptGroupMessage(m.content);
+                  } catch (e) {
+                    console.error('Failed to decrypt group message', e);
+                  }
+                } else if (key) {
                   try {
                     text = await decryptMessage(key, m.content);
                   } catch (e) {
@@ -195,7 +246,13 @@ function Chat() {
 
         s.on('new_message', async (payload) => {
           let text = payload.content;
-          if (privateKey) {
+          if (payload.group_id) {
+            try {
+              text = await decryptGroupMessage(payload.content);
+            } catch (e) {
+              console.error('Failed to decrypt incoming group message', e);
+            }
+          } else if (privateKey) {
             try {
               text = await decryptMessage(privateKey, payload.content);
             } catch (e) {
@@ -249,7 +306,7 @@ function Chat() {
           ciphertext = await encryptMessage(publicKeyPem, message);
           formData.append('recipient', recipient);
         } else {
-          ciphertext = message; // already encrypted client-side for groups
+          ciphertext = await encryptGroupMessage(message);
         }
 
         formData.append('content', ciphertext);
