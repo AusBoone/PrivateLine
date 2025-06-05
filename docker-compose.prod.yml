@@ -5,7 +5,6 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     env_file: .env
-    command: gunicorn -k gevent -w 1 backend.app:app
     depends_on:
       - db
       - redis
