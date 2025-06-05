@@ -5,6 +5,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption, PublicFormat
 from cryptography.hazmat.backends import default_backend
+from base64 import b64encode
+import os
 
 """
 When a new user is registered, a public-private key pair is generated.
@@ -44,6 +46,11 @@ class User(db.Model):
 class Group(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(64), unique=True, nullable=False)
+    aes_key = db.Column(
+        db.String(44),
+        nullable=False,
+        default=lambda: b64encode(os.urandom(32)).decode(),
+    )
 
 
 class GroupMember(db.Model):

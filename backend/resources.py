@@ -247,6 +247,32 @@ class Groups(Resource):
         return {"id": g.id, "name": g.name}, 201
 
 
+class GroupKey(Resource):
+    """Return or rotate the AES key for a group."""
+
+    @jwt_required()
+    def get(self, group_id):
+        uid = int(get_jwt_identity())
+        if not GroupMember.query.filter_by(group_id=group_id, user_id=uid).first():
+            return {"message": "Not a member"}, 403
+        g = db.session.get(Group, group_id)
+        if not g:
+            return {"message": "Not found"}, 404
+        return {"key": g.aes_key}
+
+    @jwt_required()
+    def put(self, group_id):
+        uid = int(get_jwt_identity())
+        if not GroupMember.query.filter_by(group_id=group_id, user_id=uid).first():
+            return {"message": "Not a member"}, 403
+        g = db.session.get(Group, group_id)
+        if not g:
+            return {"message": "Not found"}, 404
+        g.aes_key = b64encode(os.urandom(32)).decode()
+        db.session.commit()
+        return {"key": g.aes_key}
+
+
 class GroupMessages(Resource):
     """Send or retrieve messages for a group.
 

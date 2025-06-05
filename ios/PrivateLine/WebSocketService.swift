@@ -31,8 +31,8 @@ class WebSocketService: ObservableObject {
                    let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let b64 = payload["content"] as? String {
                     var plaintext: String?
-                    if let _ = payload["group_id"], let ct = Data(base64Encoded: b64) {
-                        plaintext = try? CryptoManager.decryptGroupMessage(ct)
+                    if let gid = payload["group_id"] as? Int, let ct = Data(base64Encoded: b64) {
+                        plaintext = try? CryptoManager.decryptGroupMessage(ct, groupId: gid)
                     } else {
                         plaintext = try? CryptoManager.decryptRSA(b64)
                     }

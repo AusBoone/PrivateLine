@@ -97,22 +97,30 @@ enum CryptoManager {
 
     // MARK: - Group encryption helpers
 
-    /// Fixed group key used for demo purposes. In a production app this
-    /// would be provisioned per-group and distributed securely.
-    private static let groupKey = SymmetricKey(data: Data(repeating: 0, count: 32))
+    /// Cached per-group symmetric keys
+    private static var groupKeys: [Int: SymmetricKey] = [:]
+
+    /// Store a base64-encoded AES key for ``groupId``.
+    static func storeGroupKey(_ b64: String, groupId: Int) {
+        if let data = Data(base64Encoded: b64) {
+            groupKeys[groupId] = SymmetricKey(data: data)
+        }
+    }
 
     /// Encrypt a message with the shared group key.
-    static func encryptGroupMessage(_ message: String) throws -> Data {
+    static func encryptGroupMessage(_ message: String, groupId: Int) throws -> Data {
+        guard let key = groupKeys[groupId] else { throw CocoaError(.coderValueNotFound) }
         let data = Data(message.utf8)
-        let sealed = try AES.GCM.seal(data, using: groupKey)
+        let sealed = try AES.GCM.seal(data, using: key)
         guard let combined = sealed.combined else { throw CocoaError(.coderValueNotFound) }
         return combined
     }
 
     /// Decrypt a group message previously encrypted with ``encryptGroupMessage``.
-    static func decryptGroupMessage(_ data: Data) throws -> String {
+    static func decryptGroupMessage(_ data: Data, groupId: Int) throws -> String {
+        guard let key = groupKeys[groupId] else { throw CocoaError(.coderValueNotFound) }
         let sealed = try AES.GCM.SealedBox(combined: data)
-        let decrypted = try AES.GCM.open(sealed, using: groupKey)
+        let decrypted = try AES.GCM.open(sealed, using: key)
         return String(decoding: decrypted, as: UTF8.self)
     }
 

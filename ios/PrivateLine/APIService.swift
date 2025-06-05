@@ -20,6 +20,7 @@ class APIService: ObservableObject {
     /// Stored pinned fingerprints
     private var pinnedKeys: [String: String] = [:]
     @Published var groups: [Group] = []
+    private var groupKeys: [Int: String] = [:]
 
     /// URLSession used for API calls with certificate pinning.
     private let session: URLSession
@@ -143,6 +144,7 @@ class APIService: ObservableObject {
 
     func fetchGroupMessages(_ id: Int) async throws -> [Message] {
         guard let token = token else { return [] }
+        _ = try await groupKey(for: id)
         var request = URLRequest(url: baseURL.appendingPathComponent("groups/\(id)/messages"))
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let (data, _) = try await session.data(for: request)
@@ -150,7 +152,7 @@ class APIService: ObservableObject {
         let msgs = json["messages"] ?? []
         return msgs.compactMap { msg in
             guard let data = Data(base64Encoded: msg.content) else { return nil }
-            if let text = try? CryptoManager.decryptGroupMessage(data) {
+            if let text = try? CryptoManager.decryptGroupMessage(data, groupId: id) {
                 return Message(id: msg.id, content: text, file_id: msg.file_id)
             }
             return nil
@@ -170,10 +172,11 @@ class APIService: ObservableObject {
 
     func sendGroupMessage(_ content: String, groupId: Int) async throws {
         guard let token = token else { throw URLError(.userAuthenticationRequired) }
+        _ = try await groupKey(for: groupId)
         var request = URLRequest(url: baseURL.appendingPathComponent("groups/\(groupId)/messages"))
         request.httpMethod = "POST"
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let encrypted = try CryptoManager.encryptGroupMessage(content)
+        let encrypted = try CryptoManager.encryptGroupMessage(content, groupId: groupId)
         let b64 = encrypted.base64EncodedString()
         let sig = try CryptoManager.signMessage(b64).base64EncodedString()
         request.httpBody = "content=\(b64)&group_id=\(groupId)&signature=\(sig)".data(using: .utf8)
@@ -227,6 +230,20 @@ class APIService: ObservableObject {
         }
         publicKeyCache[username] = pem
         return pem
+    }
+
+    /// Fetch and cache the AES key for ``groupId``.
+    private func groupKey(for groupId: Int) async throws -> String {
+        if let cached = groupKeys[groupId] { return cached }
+        guard let token = token else { throw URLError(.userAuthenticationRequired) }
+        var request = URLRequest(url: baseURL.appendingPathComponent("groups/\(groupId)/key"))
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, _) = try await session.data(for: request)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: String],
+              let key = json["key"] else { throw URLError(.badServerResponse) }
+        groupKeys[groupId] = key
+        CryptoManager.storeGroupKey(key, groupId: groupId)
+        return key
     }
 
     /// Send a single message to ``recipient``.
