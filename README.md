@@ -56,7 +56,7 @@ To run the application, follow these steps:
 4. Install frontend dependencies with `npm install` inside the `frontend` directory.
 5. Start the backend with `python backend/app.py` and the frontend with `npm start`.
 6. Open a browser and navigate to the frontend's URL to use the application.
-7. After registering a user, persist the returned `encrypted_private_key`, `salt` and `nonce`. The React client stores these values in IndexedDB so the private key can be decrypted on login.
+7. After registering a user, persist the returned `encrypted_private_key`, `salt` and `nonce`. The React client stores these values in IndexedDB so the private key can be decrypted on login. The iOS client saves the same values securely in the Keychain.
 
 ## Docker
 
