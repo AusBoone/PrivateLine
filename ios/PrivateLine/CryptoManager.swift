@@ -79,6 +79,22 @@ enum CryptoManager {
         return String(decoding: decrypted, as: UTF8.self)
     }
 
+    /// Encrypt arbitrary binary data with the stored key.
+    static func encryptData(_ data: Data) throws -> Data {
+        let key = try key()
+        let sealed = try AES.GCM.seal(data, using: key)
+        guard let combined = sealed.combined else { throw CocoaError(.coderValueNotFound) }
+        return combined
+    }
+
+    /// Decrypt data previously encrypted with ``encryptData``.
+    static func decryptData(_ data: Data) throws -> Data {
+        let key = try key()
+        let sealed = try AES.GCM.SealedBox(combined: data)
+        let decrypted = try AES.GCM.open(sealed, using: key)
+        return decrypted
+    }
+
     // MARK: - Group encryption helpers
 
     /// Fixed group key used for demo purposes. In a production app this

@@ -335,7 +335,10 @@ class FileUpload(Resource):
             return {"message": "file required"}, 400
         f = request.files['file']
         data = f.read()
-        file_rec = File(filename=f.filename, data=data)
+        nonce = os.urandom(12)
+        ciphertext = aesgcm.encrypt(nonce, data, None)
+        stored = nonce + ciphertext
+        file_rec = File(filename=f.filename, data=stored)
         db.session.add(file_rec)
         db.session.commit()
         return {"file_id": file_rec.id}, 201
@@ -349,8 +352,11 @@ class FileDownload(Resource):
         f = db.session.get(File, file_id)
         if not f:
             return {"message": "Not found"}, 404
+        nonce = f.data[:12]
+        ciphertext = f.data[12:]
+        plaintext = aesgcm.decrypt(nonce, ciphertext, None)
         from flask import make_response
-        resp = make_response(f.data)
+        resp = make_response(plaintext)
         resp.headers.set("Content-Type", "application/octet-stream")
         resp.headers.set("Content-Disposition", f"attachment; filename={f.filename}")
         return resp
