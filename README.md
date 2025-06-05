@@ -117,3 +117,38 @@ After authentication each client calls `POST /api/push-token` with its push
 token and platform (`ios` or `web`). These tokens are stored in the database and
 used by `send_push_notifications` to deliver alerts whenever a new message is
 created.
+
+## Production Deployment
+Running the backend with the built-in Flask development server is not recommended for production.
+Use Gunicorn together with an async worker so Socket.IO connections work properly.
+Example commands using **eventlet** or **gevent**:
+
+```bash
+# Eventlet worker
+pip install gunicorn eventlet
+gunicorn -k eventlet -w 1 backend.app:app
+
+# Or gevent worker
+pip install gunicorn gevent
+gunicorn -k gevent -w 1 backend.app:app
+```
+
+Before starting the server, apply database migrations so your schema is up to date:
+
+```bash
+flask db upgrade
+```
+
+### Serving the React build
+Build the frontend and serve the static files with your web server:
+
+```bash
+cd frontend
+REACT_APP_API_URL=https://api.example.com npm run build
+```
+
+Copy the contents of `frontend/build` to the directory served by your HTTP server
+(e.g. the `html` directory for Nginx). Ensure environment variables such as
+`JWT_SECRET_KEY`, `AES_KEY` and `DATABASE_URI` are configured on the backend in
+production.
+
