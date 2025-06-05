@@ -53,6 +53,20 @@
   border-radius: 0.5rem;
 }
 
+.read-receipt {
+  font-size: 0.75rem;
+  color: #888;
+}
+
+.conversation-list {
+  background: #fafafa;
+  height: 100%;
+}
+
+.conversation-item.active {
+  background: #e0e0e0;
+}
+
 body[data-theme='dark'] {
   --chat-bg: #2a2c2e;
 }

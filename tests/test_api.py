@@ -142,6 +142,7 @@ def test_message_flow(client):
     assert resp.status_code == 200
     assert len(data['messages']) == 1
     assert data['messages'][0]['content'] == b64
+    assert data['messages'][0]['read'] is False
     assert data['messages'][0]['recipient_id'] == User.query.filter_by(username='alice').first().id
 
     # Recipient should also see the message
@@ -152,6 +153,7 @@ def test_message_flow(client):
     assert resp.status_code == 200
     assert len(data['messages']) == 1
     assert data['messages'][0]['content'] == b64
+    assert data['messages'][0]['read'] is False
 
 
 def test_message_privacy(client):
@@ -291,13 +293,16 @@ def test_rsa_message_roundtrip(client):
     assert resp.status_code == 200
     assert len(data['messages']) == 1
     assert data['messages'][0]['content'] == b64
+    assert data['messages'][0]['read'] is False
 
     # Recipient also sees it
     token_alice = login_user(client, 'alice').get_json()['access_token']
     headers_alice = {'Authorization': f'Bearer {token_alice}'}
     resp = client.get('/api/messages', headers=headers_alice)
+    data2 = resp.get_json()
     assert resp.status_code == 200
-    assert len(resp.get_json()['messages']) == 1
+    assert len(data2['messages']) == 1
+    assert data2['messages'][0]['content'] == b64
 
 
 def test_send_unknown_recipient(client):
@@ -428,3 +433,28 @@ def test_file_upload_download(client):
     resp = client.get(f'/api/files/{fid}', headers=headers)
     assert resp.status_code == 200
     assert resp.data == b'hello'
+
+
+def test_message_delete_and_read(client):
+    reg = register_user(client, 'alice')
+    pk = decrypt_private_key(reg)
+    token = login_user(client, 'alice').get_json()['access_token']
+    headers = {'Authorization': f'Bearer {token}'}
+    b64 = base64.b64encode(b'delete').decode()
+    sig = sign_content(pk, b64)
+    resp = client.post('/api/messages', data={'content': b64, 'recipient': 'alice', 'signature': sig}, headers=headers)
+    assert resp.status_code == 201
+    msg_id = Message.query.first().id
+
+    resp = client.post(f'/api/messages/{msg_id}/read', headers=headers)
+    assert resp.status_code == 200
+
+    resp = client.get('/api/messages', headers=headers)
+    data = resp.get_json()['messages']
+    assert data[0]['read'] is True
+
+    resp = client.delete(f'/api/messages/{msg_id}', headers=headers)
+    assert resp.status_code == 200
+
+    resp = client.get('/api/messages', headers=headers)
+    assert resp.get_json()['messages'] == []

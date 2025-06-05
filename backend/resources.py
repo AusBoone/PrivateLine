@@ -309,6 +309,7 @@ class GroupMessages(Resource):
                 "timestamp": msg.timestamp.isoformat(),
                 "sender_id": msg.sender_id,
                 "file_id": msg.file_id,
+                "read": msg.read,
             })
         return {"messages": result}
 
@@ -427,6 +428,8 @@ class Messages(Resource):
                 "timestamp": msg.timestamp.isoformat(),
                 "sender_id": msg.sender_id,
                 "recipient_id": msg.recipient_id,
+                "file_id": msg.file_id,
+                "read": msg.read,
             })
         return {"messages": message_list}
 
@@ -524,6 +527,38 @@ class Messages(Resource):
                     send_push_notifications(m.user_id, "New group message")
 
         return {"message": "Message sent successfully."}, 201
+
+
+class MessageResource(Resource):
+    """Delete or modify a single message."""
+
+    @jwt_required()
+    def delete(self, message_id):
+        uid = int(get_jwt_identity())
+        msg = db.session.get(Message, message_id)
+        if not msg:
+            return {"message": "Not found"}, 404
+        if msg.sender_id != uid:
+            return {"message": "Forbidden"}, 403
+        db.session.delete(msg)
+        db.session.commit()
+        return {"message": "deleted"}, 200
+
+
+class MessageRead(Resource):
+    """Mark a message as read by the recipient."""
+
+    @jwt_required()
+    def post(self, message_id):
+        uid = int(get_jwt_identity())
+        msg = db.session.get(Message, message_id)
+        if not msg:
+            return {"message": "Not found"}, 404
+        if msg.recipient_id != uid and msg.group_id is None:
+            return {"message": "Forbidden"}, 403
+        msg.read = True
+        db.session.commit()
+        return {"message": "read"}, 200
 
 
 class PinnedKeys(Resource):

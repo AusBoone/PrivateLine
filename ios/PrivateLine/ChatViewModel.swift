@@ -25,6 +25,9 @@ final class ChatViewModel: ObservableObject {
             groups = try await api.fetchGroups()
             let fetched = try await (selectedGroup != nil ? api.fetchGroupMessages(selectedGroup!) : api.fetchMessages())
             messages = fetched
+            for msg in fetched where msg.read != true && (msg.id != 0) {
+                try? await api.markMessageRead(id: msg.id)
+            }
             MessageStore.save(fetched)
             if let token = api.authToken {
                 socket.connect(token: token)
@@ -50,7 +53,7 @@ final class ChatViewModel: ObservableObject {
             } else {
                 try await api.sendMessage(input, to: recipient)
             }
-            let msg = Message(id: Int(Date().timeIntervalSince1970), content: input, file_id: fileId)
+            let msg = Message(id: Int(Date().timeIntervalSince1970), content: input, file_id: fileId, read: true)
             messages.append(msg)
             MessageStore.save(messages)
             input = ""

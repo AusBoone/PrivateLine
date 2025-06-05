@@ -9,9 +9,11 @@ import {
   List,
   ListItem,
   ListItemText,
+  IconButton,
   TextField,
   Button,
 } from '@mui/material';
+import DeleteIcon from '@mui/icons-material/Delete';
 import './Chat.css';
 import { arrayBufferToBase64, base64ToArrayBuffer } from '../utils/encoding';
 import { loadKeyMaterial } from '../utils/secureStore';
@@ -273,7 +275,10 @@ function Chat() {
                     console.error('Failed to decrypt message', e);
                   }
                 }
-                return { id: m.id, text, type: 'received' };
+                if (!m.read) {
+                  markRead(m.id);
+                }
+                return { id: m.id, text, type: 'received', read: m.read };
               })
             );
             setMessages(decrypted);
@@ -303,7 +308,7 @@ function Chat() {
           if ((payload.group_id && payload.group_id === selectedGroup) || (!payload.group_id && !selectedGroup && payload.recipient_id == null)) {
             setMessages((prev) => [
               ...prev,
-              { id: Date.now(), text, type: 'received', file_id: payload.file_id },
+              { id: Date.now(), text, type: 'received', file_id: payload.file_id, read: true },
             ]);
           }
         });
@@ -315,6 +320,23 @@ function Chat() {
         if (s) s.disconnect();
       };
     }, [selectedGroup, recipient]);
+
+    const deleteMessage = async (id) => {
+      try {
+        await api.delete(`/api/messages/${id}`);
+        setMessages((prev) => prev.filter((m) => m.id !== id));
+      } catch (e) {
+        console.error('Delete failed', e);
+      }
+    };
+
+    const markRead = async (id) => {
+      try {
+        await api.post(`/api/messages/${id}/read`);
+      } catch (e) {
+        // ignore
+      }
+    };
 
     const handleSubmit = async (event) => {
       event.preventDefault();
@@ -380,7 +402,7 @@ function Chat() {
         const response = await api.post(url, formData);
 
         if (response.status === 201) {
-          setMessages([...messages, { id: Date.now(), text: message, type: 'sent', file_id: formData.get('file_id') }]);
+          setMessages([...messages, { id: Date.now(), text: message, type: 'sent', file_id: formData.get('file_id'), read: true }]);
           setMessage('');
           setFile(null);
         }
@@ -394,13 +416,14 @@ function Chat() {
     return (
       <Box sx={{ display: 'flex', height: 'calc(100vh - 64px)' }}>
         <Drawer variant="permanent" sx={{ width: 240, flexShrink: 0 }}>
-          <List sx={{ width: 240 }}>
+          <List className="conversation-list" sx={{ width: 240 }}>
             <ListItem>
               <ListItemText primary="Conversations" />
             </ListItem>
             {USERS.map((user) => (
               <ListItem
                 button
+                className={`conversation-item${!selectedGroup && recipient === user ? ' active' : ''}`}
                 key={user}
                 selected={!selectedGroup && recipient === user}
                 onClick={() => { setSelectedGroup(null); setRecipient(user); }}
@@ -411,6 +434,7 @@ function Chat() {
             {groups.map((g) => (
               <ListItem
                 button
+                className={`conversation-item${selectedGroup === g.id ? ' active' : ''}`}
                 key={`g-${g.id}`}
                 selected={selectedGroup === g.id}
                 onClick={() => { setSelectedGroup(g.id); }}
@@ -429,6 +453,11 @@ function Chat() {
                 sx={{ mb: 1 }}
               >
                 {msg.text}
+                {msg.type === 'sent' && (
+                  <span className="read-receipt" style={{ marginLeft: 4 }}>
+                    {msg.read ? '✓✓' : '✓'}
+                  </span>
+                )}
                 {msg.file_id && (
                   <a
                     href="#"
@@ -460,6 +489,9 @@ function Chat() {
                     [attachment]
                   </a>
                 )}
+                <IconButton size="small" onClick={() => deleteMessage(msg.id)}>
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
               </Box>
             ))}
           </Box>

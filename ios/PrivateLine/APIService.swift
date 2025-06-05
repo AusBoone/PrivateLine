@@ -136,7 +136,7 @@ class APIService: ObservableObject {
         let msgs = json["messages"] ?? []
         return msgs.compactMap { msg in
             if let text = try? CryptoManager.decryptRSA(msg.content) {
-                return Message(id: msg.id, content: text)
+                return Message(id: msg.id, content: text, file_id: msg.file_id, read: msg.read)
             }
             return nil
         }
@@ -153,7 +153,7 @@ class APIService: ObservableObject {
         return msgs.compactMap { msg in
             guard let data = Data(base64Encoded: msg.content) else { return nil }
             if let text = try? CryptoManager.decryptGroupMessage(data, groupId: id) {
-                return Message(id: msg.id, content: text, file_id: msg.file_id)
+                return Message(id: msg.id, content: text, file_id: msg.file_id, read: msg.read)
             }
             return nil
         }
@@ -261,6 +261,22 @@ class APIService: ObservableObject {
         let b64 = encrypted.base64EncodedString()
         let sig = try CryptoManager.signMessage(b64).base64EncodedString()
         request.httpBody = "content=\(b64)&signature=\(sig)".data(using: .utf8)
+        _ = try await session.data(for: request)
+    }
+
+    func deleteMessage(id: Int) async throws {
+        guard let token = token else { throw URLError(.userAuthenticationRequired) }
+        var request = URLRequest(url: baseURL.appendingPathComponent("messages/\(id)"))
+        request.httpMethod = "DELETE"
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        _ = try await session.data(for: request)
+    }
+
+    func markMessageRead(id: Int) async throws {
+        guard let token = token else { throw URLError(.userAuthenticationRequired) }
+        var request = URLRequest(url: baseURL.appendingPathComponent("messages/\(id)/read"))
+        request.httpMethod = "POST"
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         _ = try await session.data(for: request)
     }
 
