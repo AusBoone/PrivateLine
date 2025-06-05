@@ -23,7 +23,7 @@ const USERS = ['alice', 'bob', 'carol'];
 // Each has {id, name}
 
 
-function pemToCryptoKey(pem) {
+function pemToCryptoKey(pem, usage = 'decrypt') {
   const b64 = pem
     .replace('-----BEGIN PRIVATE KEY-----', '')
     .replace('-----END PRIVATE KEY-----', '')
@@ -33,9 +33,11 @@ function pemToCryptoKey(pem) {
   return window.crypto.subtle.importKey(
     'pkcs8',
     bytes,
-    { name: 'RSA-OAEP', hash: 'SHA-256' },
+    usage === 'decrypt'
+      ? { name: 'RSA-OAEP', hash: 'SHA-256' }
+      : { name: 'RSA-PSS', hash: 'SHA-256' },
     true,
-    ['decrypt']
+    [usage]
   );
 }
 
@@ -129,6 +131,7 @@ function Chat() {
   const [messages, setMessages] = useState([]);
   const [socket, setSocket] = useState(null);
   const [privateKey, setPrivateKey] = useState(null);
+  const [signKey, setSignKey] = useState(null);
   const [recipient, setRecipient] = useState('alice');
   const [groups, setGroups] = useState([]);
   const [selectedGroup, setSelectedGroup] = useState(null);
@@ -149,6 +152,8 @@ function Chat() {
           try {
             key = await pemToCryptoKey(pem);
             setPrivateKey(key);
+            const sk = await pemToCryptoKey(pem, 'sign');
+            setSignKey(sk);
           } catch (e) {
             console.error('Failed to import private key', e);
           }
@@ -159,7 +164,7 @@ function Chat() {
 
         try {
           const respGroups = await api.get('/api/groups');
-          if (respGroups.status === 200) {
+          if (respGroups.status === 200 && Array.isArray(respGroups.data.groups)) {
             setGroups(respGroups.data.groups);
           }
           const resp = selectedGroup
@@ -197,7 +202,7 @@ function Chat() {
               console.error('Failed to decrypt incoming message', e);
             }
           }
-          if ((payload.group_id && payload.group_id === selectedGroup) || (!payload.group_id && !selectedGroup && payload.recipient_id === null)) {
+          if ((payload.group_id && payload.group_id === selectedGroup) || (!payload.group_id && !selectedGroup && payload.recipient_id == null)) {
             setMessages((prev) => [
               ...prev,
               { id: Date.now(), text, type: 'received', file_id: payload.file_id },
@@ -248,6 +253,16 @@ function Chat() {
         }
 
         formData.append('content', ciphertext);
+        if (signKey) {
+          const buf = await window.crypto.subtle.sign(
+            { name: 'RSA-PSS', saltLength: 32 },
+            signKey,
+            new TextEncoder().encode(ciphertext)
+          );
+          formData.append('signature', arrayBufferToBase64(buf));
+        } else {
+          formData.append('signature', '');
+        }
 
         let url = '/api/messages';
         if (selectedGroup) {

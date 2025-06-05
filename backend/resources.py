@@ -2,6 +2,7 @@ from flask_restful import Resource, reqparse
 from flask import request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
@@ -37,6 +38,7 @@ message_parser.add_argument(
 )
 message_parser.add_argument('group_id', required=False, location='form')
 message_parser.add_argument('file_id', required=False, location='form')
+message_parser.add_argument('signature', required=True, location='form')
 
 # Token serializer (legacy).  JWT is now used instead of this custom mechanism.
 # s = Serializer(app.config['SECRET_KEY'], expires_in=3600)
@@ -258,9 +260,20 @@ class GroupMessages(Resource):
         for msg in msgs:
             nonce = b64decode(msg.nonce)
             plaintext_bytes = aesgcm.decrypt(nonce, b64decode(msg.content), None)
+            plaintext_b64 = b64encode(plaintext_bytes).decode()
+            try:
+                user = db.session.get(User, msg.sender_id)
+                user.public_key.verify(
+                    b64decode(msg.signature),
+                    plaintext_b64.encode(),
+                    padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                    hashes.SHA256(),
+                )
+            except Exception:
+                continue
             result.append({
                 "id": msg.id,
-                "content": b64encode(plaintext_bytes).decode(),
+                "content": plaintext_b64,
                 "timestamp": msg.timestamp.isoformat(),
                 "sender_id": msg.sender_id,
                 "file_id": msg.file_id,
@@ -277,6 +290,20 @@ class GroupMessages(Resource):
             client_ciphertext = b64decode(data["content"], validate=True)
         except Exception:
             return {"message": "Invalid base64 content."}, 400
+        try:
+            sig = b64decode(data["signature"], validate=True)
+        except Exception:
+            return {"message": "Invalid signature."}, 400
+        user = db.session.get(User, uid)
+        try:
+            user.public_key.verify(
+                sig,
+                data["content"].encode(),
+                padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                hashes.SHA256(),
+            )
+        except Exception:
+            return {"message": "Signature verification failed."}, 400
         nonce = os.urandom(12)
         ciphertext = aesgcm.encrypt(nonce, client_ciphertext, None)
         m = Message(
@@ -285,6 +312,7 @@ class GroupMessages(Resource):
             user_id=uid,
             sender_id=uid,
             group_id=group_id,
+            signature=data["signature"],
         )
         db.session.add(m)
         db.session.commit()
@@ -345,6 +373,16 @@ class Messages(Resource):
             # client-provided ciphertext, then re-encode it for transport.
             plaintext_bytes = aesgcm.decrypt(nonce, ciphertext, None)
             plaintext_b64 = b64encode(plaintext_bytes).decode()
+            try:
+                user = db.session.get(User, msg.sender_id)
+                user.public_key.verify(
+                    b64decode(msg.signature),
+                    plaintext_b64.encode(),
+                    padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                    hashes.SHA256(),
+                )
+            except Exception:
+                continue
             message_list.append({
                 "id": msg.id,
                 "content": plaintext_b64,
@@ -377,6 +415,21 @@ class Messages(Resource):
             client_ciphertext = b64decode(data["content"], validate=True)
         except Exception:
             return {"message": "Invalid base64 content."}, 400
+        try:
+            sig = b64decode(data["signature"], validate=True)
+        except Exception:
+            return {"message": "Invalid signature."}, 400
+
+        sender = db.session.get(User, int(get_jwt_identity()))
+        try:
+            sender.public_key.verify(
+                sig,
+                data["content"].encode(),
+                padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                hashes.SHA256(),
+            )
+        except Exception:
+            return {"message": "Signature verification failed."}, 400
 
         nonce = os.urandom(12)
         ciphertext = aesgcm.encrypt(nonce, client_ciphertext, None)
@@ -392,6 +445,7 @@ class Messages(Resource):
             recipient_id=recipient.id if recipient else None,
             group_id=data.get('group_id'),
             file_id=data.get('file_id'),
+            signature=data["signature"],
         )
         try:
             db.session.add(new_message)
