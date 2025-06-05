@@ -4,4 +4,7 @@ COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ .
 EXPOSE 5000
-CMD ["python", "app.py"]
+COPY backend/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["gunicorn", "-k", "gevent", "-w", "1", "backend.app:app"]
