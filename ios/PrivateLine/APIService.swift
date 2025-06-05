@@ -170,7 +170,9 @@ class APIService: ObservableObject {
         }
         let encrypted = try CryptoManager.encryptRSA(content, publicKeyPem: publicKeyPem)
         let b64 = encrypted.base64EncodedString()
-        request.httpBody = "content=\(b64)".data(using: .utf8)
+        let sig = try CryptoManager.signRSA(b64)
+        let body = "content=\(b64)&recipient=\(recipient)&signature=\(sig)"
+        request.httpBody = body.data(using: .utf8)
         _ = try await session.data(for: request)
     }
 

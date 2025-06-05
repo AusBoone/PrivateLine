@@ -170,6 +170,21 @@ enum CryptoManager {
         return String(decoding: decrypted, as: UTF8.self)
     }
 
+    /// Sign base64-encoded ciphertext using the cached private key.
+    static func signRSA(_ b64: String) throws -> String {
+        guard let key = rsaPrivateKey, let data = Data(base64Encoded: b64) else {
+            throw CocoaError(.coderValueNotFound)
+        }
+        var error: Unmanaged<CFError>?
+        guard let sig = SecKeyCreateSignature(key,
+                                              .rsaSignatureMessagePKCS1v15SHA256,
+                                              data as CFData,
+                                              &error) as Data? else {
+            throw error!.takeRetainedValue() as Error
+        }
+        return sig.base64EncodedString()
+    }
+
     /// Compute SHA256 fingerprint of a PEM-encoded public key
     static func fingerprint(of pem: String) -> String {
         let b64 = pem

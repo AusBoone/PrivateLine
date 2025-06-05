@@ -45,6 +45,7 @@ class Message(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     content = db.Column(db.String(1000), nullable=False)
     nonce = db.Column(db.String(24), nullable=False)
+    signature = db.Column(db.Text, nullable=False)
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
     # ``user_id`` historically referenced the owner of the message.  To support
     # private messaging between two users while maintaining backward

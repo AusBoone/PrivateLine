@@ -117,6 +117,29 @@ async function decryptMessage(privateKey, encryptedMessage) {
     return new TextDecoder().decode(decryptedMessageBuffer);
 }
 
+async function signCiphertext(privateKeyPem, ciphertextB64) {
+  const b64 = privateKeyPem
+    .replace('-----BEGIN PRIVATE KEY-----', '')
+    .replace('-----END PRIVATE KEY-----', '')
+    .replace(/\s/g, '');
+  const binary = atob(b64);
+  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  const key = await window.crypto.subtle.importKey(
+    'pkcs8',
+    bytes,
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const data = base64ToArrayBuffer(ciphertextB64);
+  const signature = await window.crypto.subtle.sign(
+    { name: 'RSASSA-PKCS1-v1_5' },
+    key,
+    data
+  );
+  return arrayBufferToBase64(signature);
+}
+
 // React functional component for the chat interface
 function Chat() {
     // State variable to manage the message input field
@@ -224,7 +247,12 @@ function Chat() {
         const ciphertext = await encryptMessage(publicKeyPem, message);
         const formData = new URLSearchParams();
         formData.append('content', ciphertext);
-
+        formData.append('recipient', recipient);
+        const pem = sessionStorage.getItem('private_key_pem');
+        if (pem) {
+          const sig = await signCiphertext(pem, ciphertext);
+          formData.append('signature', sig);
+        }
         const response = await api.post('/api/messages', formData);
 
         if (response.status === 201) {

@@ -2,6 +2,8 @@ from flask_restful import Resource, reqparse
 from flask import request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
@@ -33,6 +35,9 @@ message_parser.add_argument(
 )
 message_parser.add_argument(
     'recipient', required=True, location='form', help="Recipient username is required."
+)
+message_parser.add_argument(
+    'signature', required=True, location='form', help="Signature is required."
 )
 
 # Token serializer (legacy).  JWT is now used instead of this custom mechanism.
@@ -191,6 +196,17 @@ class Messages(Resource):
             # Decrypt the layer of server-side encryption to obtain the
             # client-provided ciphertext, then re-encode it for transport.
             plaintext_bytes = aesgcm.decrypt(nonce, ciphertext, None)
+            try:
+                signature = b64decode(msg.signature)
+                sender = db.session.get(User, msg.sender_id)
+                sender.public_key.verify(
+                    signature,
+                    plaintext_bytes,
+                    padding.PKCS1v15(),
+                    hashes.SHA256(),
+                )
+            except Exception:
+                continue
             plaintext_b64 = b64encode(plaintext_bytes).decode()
             message_list.append({
                 "id": msg.id,
@@ -218,8 +234,20 @@ class Messages(Resource):
         # server-side encryption for storage.
         try:
             client_ciphertext = b64decode(data["content"], validate=True)
+            signature = b64decode(data["signature"], validate=True)
         except Exception:
             return {"message": "Invalid base64 content."}, 400
+
+        sender = db.session.get(User, int(get_jwt_identity()))
+        try:
+            sender.public_key.verify(
+                signature,
+                client_ciphertext,
+                padding.PKCS1v15(),
+                hashes.SHA256(),
+            )
+        except Exception:
+            return {"message": "Invalid signature."}, 400
 
         nonce = os.urandom(12)
         ciphertext = aesgcm.encrypt(nonce, client_ciphertext, None)
@@ -230,6 +258,7 @@ class Messages(Resource):
         new_message = Message(
             content=encrypted_content,
             nonce=nonce_b64,
+            signature=data["signature"],
             user_id=current_user_id,
             sender_id=current_user_id,
             recipient_id=recipient.id,

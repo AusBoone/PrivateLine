@@ -7,6 +7,8 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 
 # These imports will fail if Flask and related dependencies are not installed.
 # Ensure an AES key is available for the backend before it is imported. Tests
@@ -42,6 +44,28 @@ def login_user(client, username='alice'):
         'username': username,
         'password': 'secret',
     })
+
+def decode_private_key(resp):
+    data = resp.get_json()
+    password = 'secret'.encode()
+    salt = b64decode(data['salt'])
+    nonce = b64decode(data['nonce'])
+    ciphertext = b64decode(data['encrypted_private_key'])
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=200000,
+        backend=default_backend(),
+    )
+    key = kdf.derive(password)
+    plaintext = AESGCM(key).decrypt(nonce, ciphertext, None)
+    return serialization.load_pem_private_key(plaintext, password=None)
+
+def sign(private_key, b64):
+    data = b64decode(b64)
+    signature = private_key.sign(data, padding.PKCS1v15(), hashes.SHA256())
+    return base64.b64encode(signature).decode()
 
 
 def test_register_missing_fields(client):
@@ -94,15 +118,17 @@ def test_register_and_login(client):
 
 def test_message_flow(client):
     register_user(client, 'alice')
-    register_user(client, 'bob')
+    bob_resp = register_user(client, 'bob')
+    bob_key = decode_private_key(bob_resp)
 
     token_bob = login_user(client, 'bob').get_json()['access_token']
     headers_bob = {'Authorization': f'Bearer {token_bob}'}
 
     b64 = base64.b64encode(b'hello').decode()
+    sig = sign(bob_key, b64)
     resp = client.post(
         '/api/messages',
-        data={'content': b64, 'recipient': 'alice'},
+        data={'content': b64, 'recipient': 'alice', 'signature': sig},
         headers=headers_bob,
     )
     assert resp.status_code == 201
@@ -126,16 +152,18 @@ def test_message_flow(client):
 
 
 def test_message_privacy(client):
-    register_user(client, 'eve')
+    eve_resp = register_user(client, 'eve')
+    eve_key = decode_private_key(eve_resp)
     register_user(client, 'mallory')
     register_user(client, 'carol')
 
     token_eve = login_user(client, 'eve').get_json()['access_token']
     headers_eve = {'Authorization': f'Bearer {token_eve}'}
     encoded = base64.b64encode(b'secret').decode()
+    sig = sign(eve_key, encoded)
     client.post(
         '/api/messages',
-        data={'content': encoded, 'recipient': 'mallory'},
+        data={'content': encoded, 'recipient': 'mallory', 'signature': sig},
         headers=headers_eve,
     )
 
@@ -222,7 +250,8 @@ def test_public_key_endpoint(client):
 
 def test_rsa_message_roundtrip(client):
     register_user(client, 'alice')
-    register_user(client, 'bob')
+    bob_resp = register_user(client, 'bob')
+    bob_key = decode_private_key(bob_resp)
     token = login_user(client, 'bob').get_json()['access_token']
     headers = {'Authorization': f'Bearer {token}'}
 
@@ -245,9 +274,10 @@ def test_rsa_message_roundtrip(client):
     )
     b64 = base64.b64encode(ciphertext).decode()
 
+    sig = sign(bob_key, b64)
     resp = client.post(
         '/api/messages',
-        data={'content': b64, 'recipient': 'alice'},
+        data={'content': b64, 'recipient': 'alice', 'signature': sig},
         headers=headers,
     )
     assert resp.status_code == 201
@@ -266,15 +296,32 @@ def test_rsa_message_roundtrip(client):
     assert len(resp.get_json()['messages']) == 1
 
 
+def test_invalid_signature(client):
+    alice_resp = register_user(client, 'alice')
+    alice_key = decode_private_key(alice_resp)
+    register_user(client, 'bob')
+    token = login_user(client, 'bob').get_json()['access_token']
+    headers = {'Authorization': f'Bearer {token}'}
+    b64 = base64.b64encode(b'bad').decode()
+    sig = sign(alice_key, b64)  # wrong key
+    resp = client.post(
+        '/api/messages',
+        data={'content': b64, 'recipient': 'alice', 'signature': sig},
+        headers=headers,
+    )
+    assert resp.status_code == 400
+
 def test_send_unknown_recipient(client):
-    register_user(client, 'alice')
+    alice_resp = register_user(client, 'alice')
+    alice_key = decode_private_key(alice_resp)
     token = login_user(client, 'alice').get_json()['access_token']
     headers = {'Authorization': f'Bearer {token}'}
 
     b64 = base64.b64encode(b'hi').decode()
+    sig = sign(alice_key, b64)
     resp = client.post(
         '/api/messages',
-        data={'content': b64, 'recipient': 'nonexistent'},
+        data={'content': b64, 'recipient': 'nonexistent', 'signature': sig},
         headers=headers,
     )
     assert resp.status_code == 404
