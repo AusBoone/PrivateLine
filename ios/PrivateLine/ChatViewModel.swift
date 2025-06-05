@@ -6,6 +6,8 @@ final class ChatViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var input = ""
     @Published var recipient = "bob"
+    @Published var groups: [[String: Any]] = []
+    @Published var groupId: Int?
 
     private let api: APIService
     private let socket = WebSocketService()
@@ -29,6 +31,9 @@ final class ChatViewModel: ObservableObject {
                 self?.messages = msgs
                 MessageStore.save(msgs)
             }.store(in: &cancellables)
+            if let list = try? await api.fetchGroups() {
+                groups = list
+            }
         } catch {
             messages = []
         }
@@ -36,7 +41,11 @@ final class ChatViewModel: ObservableObject {
 
     func send() async {
         do {
-            try await api.sendMessage(input, to: recipient)
+            if let gid = groupId {
+                try await api.sendGroupMessage(input, groupId: gid)
+            } else {
+                try await api.sendMessage(input, to: recipient)
+            }
             let msg = Message(id: Int(Date().timeIntervalSince1970), content: input)
             messages.append(msg)
             MessageStore.save(messages)

@@ -174,6 +174,27 @@ class APIService: ObservableObject {
         _ = try await session.data(for: request)
     }
 
+    /// Fetch groups for the authenticated user.
+    func fetchGroups() async throws -> [[String: Any]] {
+        guard let token = token else { return [] }
+        var request = URLRequest(url: baseURL.appendingPathComponent("groups"))
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, _) = try await session.data(for: request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: [[String: Any]]]
+        return json?["groups"] ?? []
+    }
+
+    /// Send a message to a group by id.
+    func sendGroupMessage(_ content: String, groupId: Int) async throws {
+        guard let token = token else { throw URLError(.userAuthenticationRequired) }
+        var request = URLRequest(url: baseURL.appendingPathComponent("groups/\(groupId)/messages"))
+        request.httpMethod = "POST"
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let b64 = Data(content.utf8).base64EncodedString()
+        request.httpBody = "content=\(b64)".data(using: .utf8)
+        _ = try await session.data(for: request)
+    }
+
     func logout() {
         token = nil
         isAuthenticated = false

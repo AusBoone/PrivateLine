@@ -5,6 +5,15 @@ struct ChatView: View {
 
     var body: some View {
         VStack {
+            Picker("Group", selection: $viewModel.groupId) {
+                Text("Direct").tag(Int?.none)
+                ForEach(0..<viewModel.groups.count, id: \..self) { idx in
+                    let item = viewModel.groups[idx]
+                    if let id = item["id"] as? Int, let name = item["name"] as? String {
+                        Text(name).tag(Int?.some(id))
+                    }
+                }
+            }
             List(viewModel.messages) { msg in
                 Text(msg.content)
                     .accessibilityLabel("Message: \(msg.content)")

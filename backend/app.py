@@ -83,6 +83,9 @@ from .resources import (
     AccountSettings,
     RefreshToken,
     RevokeToken,
+    Groups,
+    GroupMessages,
+    FilesResource,
 )
 
 # Reject WebSocket connections that do not provide a valid JWT.
@@ -108,6 +111,9 @@ api.add_resource(PinnedKeys, '/api/pinned_keys')
 api.add_resource(AccountSettings, '/api/account-settings')
 api.add_resource(RefreshToken, '/api/refresh')
 api.add_resource(RevokeToken, '/api/revoke')
+api.add_resource(Groups, '/api/groups')
+api.add_resource(GroupMessages, '/api/groups/<int:group_id>/messages')
+api.add_resource(FilesResource, '/api/files', '/api/files/<int:file_id>')
 
 # Run the development server only when executed directly.
 if __name__ == '__main__':

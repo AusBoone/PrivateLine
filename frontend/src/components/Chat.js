@@ -1,6 +1,6 @@
 // Includes the utility functions for encrypting and decrypting messages using RSA-OAEP,
 // as well as the logic for sending encrypted messages and decrypting received messages.
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import api from '../api';
 import {
@@ -17,6 +17,9 @@ import { arrayBufferToBase64, base64ToArrayBuffer } from '../utils/encoding';
 import { loadKeyMaterial } from '../utils/secureStore';
 
 const USERS = ['alice', 'bob', 'carol'];
+
+// Initially empty list of groups, populated from the backend
+const INITIAL_GROUPS = [];
 
 function pemToCryptoKey(pem) {
   const b64 = pem
@@ -122,9 +125,12 @@ function Chat() {
     // State variable to manage the message input field
     const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
-    const [socket, setSocket] = useState(null);
-    const [privateKey, setPrivateKey] = useState(null);
-    const [recipient, setRecipient] = useState('alice');
+  const [socket, setSocket] = useState(null);
+  const [privateKey, setPrivateKey] = useState(null);
+  const [recipient, setRecipient] = useState('alice');
+  const [groups, setGroups] = useState(INITIAL_GROUPS);
+  const [groupId, setGroupId] = useState(null);
+  const [attachment, setAttachment] = useState(null);
 
     // Cache for recipient public keys.  In a real app this might live in a
     // Redux store or other global cache.
@@ -170,6 +176,15 @@ function Chat() {
           console.error('Failed to fetch messages', err);
         }
 
+        try {
+          const resp = await api.get('/api/groups');
+          if (resp && resp.status === 200 && Array.isArray(resp.data.groups)) {
+            setGroups(resp.data.groups);
+          }
+        } catch (err) {
+          console.error('Failed to fetch groups', err);
+        }
+
         s = io(process.env.REACT_APP_API_URL || 'http://localhost:5000');
         setSocket(s);
 
@@ -200,7 +215,14 @@ function Chat() {
       event.preventDefault();
 
       try {
-        if (!recipient) return;
+        let url = '/api/messages';
+        let ciphertext;
+        let targetRecipient = recipient;
+        if (groupId) {
+          url = `/api/groups/${groupId}/messages`;
+          ciphertext = btoa(message);
+        } else {
+          if (!recipient) return;
         let publicKeyPem = publicKeyCache.current.get(recipient);
         if (!publicKeyPem) {
           const resp = await api.get(`/api/public_key/${recipient}`);
@@ -221,11 +243,22 @@ function Chat() {
           }
         }
 
-        const ciphertext = await encryptMessage(publicKeyPem, message);
+        ciphertext = await encryptMessage(publicKeyPem, message);
+        }
         const formData = new URLSearchParams();
         formData.append('content', ciphertext);
 
-        const response = await api.post('/api/messages', formData);
+        const response = await api.post(url, formData);
+
+        if (attachment) {
+          const reader = await attachment.arrayBuffer();
+          const b64 = arrayBufferToBase64(reader);
+          const fd = new FormData();
+          fd.append('filename', attachment.name);
+          fd.append('content', b64);
+          await api.post('/api/files', fd);
+          setAttachment(null);
+        }
 
         if (response.status === 201) {
           setMessages([...messages, { id: Date.now(), text: message, type: 'sent' }]);
@@ -249,10 +282,26 @@ function Chat() {
               <ListItem
                 button
                 key={user}
-                selected={recipient === user}
-                onClick={() => setRecipient(user)}
+                selected={!groupId && recipient === user}
+                onClick={() => {
+                  setRecipient(user);
+                  setGroupId(null);
+                }}
               >
                 <ListItemText primary={user} />
+              </ListItem>
+            ))}
+            {groups.map((g) => (
+              <ListItem
+                button
+                key={g.id}
+                selected={groupId === g.id}
+                onClick={() => {
+                  setGroupId(g.id);
+                  setRecipient('');
+                }}
+              >
+                <ListItemText primary={g.name} />
               </ListItem>
             ))}
           </List>
@@ -281,6 +330,11 @@ function Chat() {
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               size="small"
+            />
+            <input
+              type="file"
+              onChange={(e) => setAttachment(e.target.files[0])}
+              style={{ marginLeft: '8px' }}
             />
             <Button type="submit" variant="contained" sx={{ ml: 1 }}>
               Send

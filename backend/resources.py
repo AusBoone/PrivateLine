@@ -8,7 +8,14 @@ from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat
 from cryptography.hazmat.backends import default_backend
 from base64 import b64encode, b64decode
 import os
-from .models import User, Message, PinnedKey
+from .models import (
+    User,
+    Message,
+    PinnedKey,
+    Group,
+    GroupMember,
+    File,
+)
 from .app import db, app, socketio, token_blocklist
 from flask_jwt_extended import (
     create_access_token,
@@ -33,6 +40,12 @@ message_parser.add_argument(
 )
 message_parser.add_argument(
     'recipient', required=True, location='form', help="Recipient username is required."
+)
+
+# Parser used when posting to a group
+group_message_parser = reqparse.RequestParser()
+group_message_parser.add_argument(
+    'content', required=True, location='form', help="Content is required."
 )
 
 # Token serializer (legacy).  JWT is now used instead of this custom mechanism.
@@ -349,3 +362,156 @@ class RevokeToken(Resource):
         jti = get_jwt()["jti"]
         token_blocklist.add(jti)
         return {"message": "Token revoked"}, 200
+
+
+class Groups(Resource):
+    """Create and list groups for the authenticated user."""
+
+    @jwt_required()
+    def get(self):
+        user_id = int(get_jwt_identity())
+        groups = (
+            Group.query.join(GroupMember)
+            .filter(GroupMember.user_id == user_id)
+            .all()
+        )
+        return {
+            "groups": [
+                {"id": g.id, "name": g.name, "owner_id": g.owner_id}
+                for g in groups
+            ]
+        }
+
+    @jwt_required()
+    def post(self):
+        data = request.get_json() or {}
+        name = data.get("name")
+        members = data.get("members", [])
+        if not name or not isinstance(members, list):
+            return {"message": "Name and member list required"}, 400
+        user_id = int(get_jwt_identity())
+        group = Group(name=name, owner_id=user_id)
+        try:
+            db.session.add(group)
+            db.session.flush()
+            db.session.add(GroupMember(group_id=group.id, user_id=user_id))
+            for username in members:
+                u = User.query.filter_by(username=username).first()
+                if u:
+                    db.session.add(GroupMember(group_id=group.id, user_id=u.id))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return {"message": "Failed to create group."}, 500
+        return {"group_id": group.id}, 201
+
+
+class GroupMessages(Resource):
+    """Retrieve or create messages for a group."""
+
+    @jwt_required()
+    def get(self, group_id):
+        user_id = int(get_jwt_identity())
+        member = GroupMember.query.filter_by(group_id=group_id, user_id=user_id).first()
+        if not member:
+            return {"message": "Not a member"}, 403
+        messages = Message.query.filter_by(group_id=group_id).all()
+        results = []
+        for m in messages:
+            nonce = b64decode(m.nonce)
+            ciphertext = b64decode(m.content)
+            plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+            results.append(
+                {
+                    "id": m.id,
+                    "content": b64encode(plaintext).decode(),
+                    "timestamp": m.timestamp.isoformat(),
+                    "sender_id": m.sender_id,
+                }
+            )
+        return {"messages": results}
+
+    @jwt_required()
+    def post(self, group_id):
+        user_id = int(get_jwt_identity())
+        member = GroupMember.query.filter_by(group_id=group_id, user_id=user_id).first()
+        if not member:
+            return {"message": "Not a member"}, 403
+        data = group_message_parser.parse_args()
+        try:
+            client_ciphertext = b64decode(data["content"], validate=True)
+        except Exception:
+            return {"message": "Invalid base64 content."}, 400
+        nonce = os.urandom(12)
+        ciphertext = aesgcm.encrypt(nonce, client_ciphertext, None)
+        new_message = Message(
+            content=b64encode(ciphertext).decode(),
+            nonce=b64encode(nonce).decode(),
+            user_id=user_id,
+            sender_id=user_id,
+            recipient_id=0,
+            group_id=group_id,
+        )
+        try:
+            db.session.add(new_message)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return {"message": "Failed"}, 500
+        # Broadcast to members
+        members = GroupMember.query.filter_by(group_id=group_id).all()
+        for mem in members:
+            socketio.emit(
+                "new_message",
+                {"content": data["content"], "sender_id": user_id, "group_id": group_id},
+                to=str(mem.user_id),
+            )
+        return {"message": "Sent"}, 201
+
+
+class FilesResource(Resource):
+    """Upload and download encrypted files."""
+
+    @jwt_required()
+    def post(self):
+        user_id = int(get_jwt_identity())
+        file = request.files.get("file")
+        if not file:
+            data = request.form
+            filename = data.get("filename")
+            content_b64 = data.get("content")
+        else:
+            filename = file.filename
+            content_b64 = b64encode(file.read()).decode()
+        if not filename or not content_b64:
+            return {"message": "Missing file"}, 400
+        try:
+            client_bytes = b64decode(content_b64, validate=True)
+        except Exception:
+            return {"message": "Invalid base64"}, 400
+        nonce = os.urandom(12)
+        ciphertext = aesgcm.encrypt(nonce, client_bytes, None)
+        f = File(
+            filename=filename,
+            content=ciphertext,
+            nonce=b64encode(nonce).decode(),
+            user_id=user_id,
+        )
+        try:
+            db.session.add(f)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return {"message": "Failed"}, 500
+        return {"file_id": f.id}, 201
+
+    @jwt_required()
+    def get(self, file_id):
+        f = File.query.get(file_id)
+        if not f:
+            return {"message": "Not found"}, 404
+        plaintext = aesgcm.decrypt(b64decode(f.nonce), f.content, None)
+        return {
+            "filename": f.filename,
+            "content": b64encode(plaintext).decode(),
+        }
