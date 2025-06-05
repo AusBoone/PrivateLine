@@ -159,3 +159,21 @@ Terminate TLS at the proxy and forward traffic to Gunicorn on port 5000.
 If running with Docker, you can use an nginx-proxy setup with the LetsEncrypt companion
 container for automatic certificate management.
 
+### Example production setup on DigitalOcean
+
+One approach for hosting is a small **DigitalOcean Droplet** running Docker
+and Docker Compose. After provisioning an Ubuntu droplet and installing the
+Docker tooling, copy `.env.example` to `.env` and set at least
+`POSTGRES_PASSWORD`, `JWT_SECRET_KEY` and `AES_KEY`. Optionally provide
+`SENTRY_DSN` for error reporting.
+
+Deploy the stack using the production compose file:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Logs from the services are sent to the address defined in the `gelf` logging
+driver. Adjust `logcollector` in `docker-compose.prod.yml` to point at your
+aggregator (e.g. Graylog or Logstash).
+

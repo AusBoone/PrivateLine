@@ -1,0 +1,57 @@
+version: '3.8'
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: .env
+    command: gunicorn -k gevent -w 1 backend.app:app
+    depends_on:
+      - db
+      - redis
+    environment:
+      DATABASE_URI: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "5000:5000"
+    logging:
+      driver: "gelf"
+      options:
+        gelf-address: "udp://logcollector:12201"
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        REACT_APP_API_URL: ${REACT_APP_API_URL}
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+    logging:
+      driver: "gelf"
+      options:
+        gelf-address: "udp://logcollector:12201"
+  db:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    logging:
+      driver: "gelf"
+      options:
+        gelf-address: "udp://logcollector:12201"
+  redis:
+    image: redis:7
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    logging:
+      driver: "gelf"
+      options:
+        gelf-address: "udp://logcollector:12201"
+volumes:
+  db-data:
+  redis-data:
