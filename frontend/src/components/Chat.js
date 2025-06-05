@@ -19,6 +19,10 @@ import { setupWebPush } from '../utils/push';
 
 const USERS = ['alice', 'bob', 'carol'];
 
+// Chat groups loaded from the backend
+// Each has {id, name}
+
+
 function pemToCryptoKey(pem) {
   const b64 = pem
     .replace('-----BEGIN PRIVATE KEY-----', '')
@@ -123,9 +127,12 @@ function Chat() {
     // State variable to manage the message input field
     const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
-    const [socket, setSocket] = useState(null);
-    const [privateKey, setPrivateKey] = useState(null);
-    const [recipient, setRecipient] = useState('alice');
+  const [socket, setSocket] = useState(null);
+  const [privateKey, setPrivateKey] = useState(null);
+  const [recipient, setRecipient] = useState('alice');
+  const [groups, setGroups] = useState([]);
+  const [selectedGroup, setSelectedGroup] = useState(null);
+  const [file, setFile] = useState(null);
 
     // Cache for recipient public keys.  In a real app this might live in a
     // Redux store or other global cache.
@@ -151,7 +158,13 @@ function Chat() {
         }
 
         try {
-          const resp = await api.get('/api/messages');
+          const respGroups = await api.get('/api/groups');
+          if (respGroups.status === 200) {
+            setGroups(respGroups.data.groups);
+          }
+          const resp = selectedGroup
+            ? await api.get(`/api/groups/${selectedGroup}/messages`)
+            : await api.get('/api/messages');
           if (resp.status === 200 && Array.isArray(resp.data.messages)) {
             const decrypted = await Promise.all(
               resp.data.messages.map(async (m) => {
@@ -184,10 +197,12 @@ function Chat() {
               console.error('Failed to decrypt incoming message', e);
             }
           }
-          setMessages((prev) => [
-            ...prev,
-            { id: Date.now(), text, type: 'received' },
-          ]);
+          if ((payload.group_id && payload.group_id === selectedGroup) || (!payload.group_id && !selectedGroup && payload.recipient_id === null)) {
+            setMessages((prev) => [
+              ...prev,
+              { id: Date.now(), text, type: 'received', file_id: payload.file_id },
+            ]);
+          }
         });
       }
 
@@ -196,42 +211,64 @@ function Chat() {
       return () => {
         if (s) s.disconnect();
       };
-    }, []);
+    }, [selectedGroup, recipient]);
 
     const handleSubmit = async (event) => {
       event.preventDefault();
 
       try {
-        if (!recipient) return;
-        let publicKeyPem = publicKeyCache.current.get(recipient);
-        if (!publicKeyPem) {
-          const resp = await api.get(`/api/public_key/${recipient}`);
-          if (resp.status === 200 && resp.data.public_key) {
-            publicKeyPem = resp.data.public_key;
-            publicKeyCache.current.set(recipient, publicKeyPem);
-          } else {
-            throw new Error('Failed to fetch recipient key');
-          }
-        }
-
-        const pinned = JSON.parse(localStorage.getItem('pinned_keys') || '[]');
-        const entry = pinned.find((p) => p.username === recipient);
-        if (entry) {
-          const fp = await fingerprintPem(publicKeyPem);
-          if (fp !== entry.fingerprint) {
-            throw new Error('Recipient key mismatch');
-          }
-        }
-
-        const ciphertext = await encryptMessage(publicKeyPem, message);
+        if (!recipient && !selectedGroup) return;
+        let ciphertext;
         const formData = new URLSearchParams();
+        if (recipient && !selectedGroup) {
+          let publicKeyPem = publicKeyCache.current.get(recipient);
+          if (!publicKeyPem) {
+            const resp = await api.get(`/api/public_key/${recipient}`);
+            if (resp.status === 200 && resp.data.public_key) {
+              publicKeyPem = resp.data.public_key;
+              publicKeyCache.current.set(recipient, publicKeyPem);
+            } else {
+              throw new Error('Failed to fetch recipient key');
+            }
+          }
+
+          const pinned = JSON.parse(localStorage.getItem('pinned_keys') || '[]');
+          const entry = pinned.find((p) => p.username === recipient);
+          if (entry) {
+            const fp = await fingerprintPem(publicKeyPem);
+            if (fp !== entry.fingerprint) {
+              throw new Error('Recipient key mismatch');
+            }
+          }
+
+          ciphertext = await encryptMessage(publicKeyPem, message);
+          formData.append('recipient', recipient);
+        } else {
+          ciphertext = message; // already encrypted client-side for groups
+        }
+
         formData.append('content', ciphertext);
 
-        const response = await api.post('/api/messages', formData);
+        let url = '/api/messages';
+        if (selectedGroup) {
+          url = `/api/groups/${selectedGroup}/messages`;
+          formData.append('group_id', selectedGroup);
+          formData.delete('recipient');
+        }
+        if (file) {
+          const fd = new FormData();
+          fd.append('file', file);
+          const upload = await api.post('/api/files', fd);
+          if (upload.status === 201) {
+            formData.append('file_id', upload.data.file_id);
+          }
+        }
+        const response = await api.post(url, formData);
 
         if (response.status === 201) {
-          setMessages([...messages, { id: Date.now(), text: message, type: 'sent' }]);
+          setMessages([...messages, { id: Date.now(), text: message, type: 'sent', file_id: formData.get('file_id') }]);
           setMessage('');
+          setFile(null);
         }
       } catch (error) {
         console.error('Failed to send message', error);
@@ -251,10 +288,20 @@ function Chat() {
               <ListItem
                 button
                 key={user}
-                selected={recipient === user}
-                onClick={() => setRecipient(user)}
+                selected={!selectedGroup && recipient === user}
+                onClick={() => { setSelectedGroup(null); setRecipient(user); }}
               >
                 <ListItemText primary={user} />
+              </ListItem>
+            ))}
+            {groups.map((g) => (
+              <ListItem
+                button
+                key={`g-${g.id}`}
+                selected={selectedGroup === g.id}
+                onClick={() => { setSelectedGroup(g.id); }}
+              >
+                <ListItemText primary={g.name} />
               </ListItem>
             ))}
           </List>
@@ -268,6 +315,11 @@ function Chat() {
                 sx={{ mb: 1 }}
               >
                 {msg.text}
+                {msg.file_id && (
+                  <a href={`/api/files/${msg.file_id}`} style={{ marginLeft: 8 }}>
+                    [attachment]
+                  </a>
+                )}
               </Box>
             ))}
           </Box>
@@ -284,6 +336,7 @@ function Chat() {
               onChange={(e) => setMessage(e.target.value)}
               size="small"
             />
+            <input type="file" onChange={(e) => setFile(e.target.files[0])} />
             <Button type="submit" variant="contained" sx={{ ml: 1 }}>
               Send
             </Button>

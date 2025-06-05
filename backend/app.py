@@ -79,6 +79,10 @@ from .resources import (
     Login,
     Messages,
     PublicKey,
+    Groups,
+    GroupMessages,
+    FileUpload,
+    FileDownload,
     PinnedKeys,
     AccountSettings,
     RefreshToken,
@@ -93,6 +97,10 @@ def socket_connect():
         verify_jwt_in_request()
         user_id = get_jwt_identity()
         join_room(str(user_id))
+        from .models import GroupMember
+        groups = GroupMember.query.filter_by(user_id=user_id).all()
+        for g in groups:
+            join_room(str(g.group_id))
     except Exception:
         app.logger.warning("WebSocket connection rejected due to missing or invalid token")
         disconnect()
@@ -105,6 +113,10 @@ api.add_resource(Register, '/api/register')
 api.add_resource(Login, '/api/login')
 api.add_resource(Messages, '/api/messages')
 api.add_resource(PublicKey, '/api/public_key/<string:username>')
+api.add_resource(Groups, '/api/groups')
+api.add_resource(GroupMessages, '/api/groups/<int:group_id>/messages')
+api.add_resource(FileUpload, '/api/files')
+api.add_resource(FileDownload, '/api/files/<int:file_id>')
 api.add_resource(PinnedKeys, '/api/pinned_keys')
 api.add_resource(AccountSettings, '/api/account-settings')
 api.add_resource(RefreshToken, '/api/refresh')

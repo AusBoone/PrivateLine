@@ -6,8 +6,11 @@ final class ChatViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var input = ""
     @Published var recipient = "bob"
+    @Published var groups: [Group] = []
+    @Published var selectedGroup: Int? = nil
+    @Published var attachment: Data? = nil
 
-    private let api: APIService
+    let api: APIService
     private let socket = WebSocketService()
     private var cancellables = Set<AnyCancellable>()
 
@@ -19,7 +22,8 @@ final class ChatViewModel: ObservableObject {
         // Load cached messages first for offline support
         messages = MessageStore.load()
         do {
-            let fetched = try await api.fetchMessages()
+            groups = try await api.fetchGroups()
+            let fetched = try await (selectedGroup != nil ? api.fetchGroupMessages(selectedGroup!) : api.fetchMessages())
             messages = fetched
             MessageStore.save(fetched)
             if let token = api.authToken {
@@ -36,8 +40,17 @@ final class ChatViewModel: ObservableObject {
 
     func send() async {
         do {
-            try await api.sendMessage(input, to: recipient)
-            let msg = Message(id: Int(Date().timeIntervalSince1970), content: input)
+            var fileId: Int? = nil
+            if let data = attachment {
+                fileId = try await api.uploadFile(data: data, filename: "file")
+                attachment = nil
+            }
+            if let gid = selectedGroup {
+                try await api.sendGroupMessage(input, groupId: gid)
+            } else {
+                try await api.sendMessage(input, to: recipient)
+            }
+            let msg = Message(id: Int(Date().timeIntervalSince1970), content: input, file_id: fileId)
             messages.append(msg)
             MessageStore.save(messages)
             input = ""
