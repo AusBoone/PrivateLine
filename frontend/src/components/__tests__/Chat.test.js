@@ -33,6 +33,7 @@ it('fetches existing messages and shows websocket updates', async () => {
   io.mockReturnValue(socket);
   api.get.mockResolvedValueOnce({ status: 200, data: { groups: [] } });
   api.get.mockResolvedValueOnce({ status: 200, data: { messages: [{ id: 1, content: 'hello' }] } });
+  api.get.mockResolvedValueOnce({ status: 200, data: { users: ['alice', 'bob'] } });
 
   render(<Chat />);
 
@@ -41,6 +42,9 @@ it('fetches existing messages and shows websocket updates', async () => {
   });
   await waitFor(() => {
     expect(api.get).toHaveBeenCalledWith('/api/messages');
+  });
+  await waitFor(() => {
+    expect(api.get).toHaveBeenCalledWith('/api/users');
   });
 
   // existing message from API should appear
@@ -63,6 +67,7 @@ it('uses selected recipient when sending a message', async () => {
   io.mockReturnValue(socket);
   api.get.mockResolvedValueOnce({ status: 200, data: { groups: [] } });
   api.get.mockResolvedValueOnce({ status: 200, data: { messages: [] } });
+  api.get.mockResolvedValueOnce({ status: 200, data: { users: ['alice', 'bob'] } });
 
   render(<Chat />);
 
@@ -71,6 +76,9 @@ it('uses selected recipient when sending a message', async () => {
   });
   await waitFor(() => {
     expect(api.get).toHaveBeenCalledWith('/api/messages');
+  });
+  await waitFor(() => {
+    expect(api.get).toHaveBeenCalledWith('/api/users');
   });
 
   const bobItem = screen.getByText('bob');

@@ -90,6 +90,7 @@ from .resources import (
     Login,
     Messages,
     PublicKey,
+    Users,
     Groups,
     GroupKey,
     GroupMessages,
@@ -127,6 +128,7 @@ api.add_resource(Register, '/api/register')
 api.add_resource(Login, '/api/login')
 api.add_resource(Messages, '/api/messages')
 api.add_resource(PublicKey, '/api/public_key/<string:username>')
+api.add_resource(Users, '/api/users')
 api.add_resource(Groups, '/api/groups')
 api.add_resource(GroupKey, '/api/groups/<int:group_id>/key')
 api.add_resource(GroupMessages, '/api/groups/<int:group_id>/messages')
