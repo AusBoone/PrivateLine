@@ -19,8 +19,6 @@ import { arrayBufferToBase64, base64ToArrayBuffer } from '../utils/encoding';
 import { loadKeyMaterial } from '../utils/secureStore';
 import { setupWebPush } from '../utils/push';
 
-const USERS = ['alice', 'bob', 'carol'];
-
 // Chat groups loaded from the backend
 // Each has {id, name}
 
@@ -220,8 +218,9 @@ function Chat() {
   const [socket, setSocket] = useState(null);
   const [privateKey, setPrivateKey] = useState(null);
   const [signKey, setSignKey] = useState(null);
-  const [recipient, setRecipient] = useState('alice');
+  const [recipient, setRecipient] = useState('');
   const [groups, setGroups] = useState([]);
+  const [users, setUsers] = useState([]);
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [file, setFile] = useState(null);
 
@@ -320,6 +319,20 @@ function Chat() {
         if (s) s.disconnect();
       };
     }, [selectedGroup, recipient]);
+
+    useEffect(() => {
+      async function fetchUsers() {
+        try {
+          const resp = await api.get('/api/users');
+          if (resp.status === 200 && Array.isArray(resp.data.users)) {
+            setUsers(resp.data.users);
+          }
+        } catch (e) {
+          console.error('Failed to fetch users', e);
+        }
+      }
+      fetchUsers();
+    }, []);
 
     const deleteMessage = async (id) => {
       try {
@@ -420,7 +433,7 @@ function Chat() {
             <ListItem>
               <ListItemText primary="Conversations" />
             </ListItem>
-            {USERS.map((user) => (
+            {users.map((user) => (
               <ListItem
                 button
                 className={`conversation-item${!selectedGroup && recipient === user ? ' active' : ''}`}

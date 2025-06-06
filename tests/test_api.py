@@ -458,3 +458,19 @@ def test_message_delete_and_read(client):
 
     resp = client.get('/api/messages', headers=headers)
     assert resp.get_json()['messages'] == []
+
+
+def test_users_endpoint(client):
+    register_user(client, 'alice')
+    register_user(client, 'bob')
+    token = login_user(client, 'alice').get_json()['access_token']
+    headers = {'Authorization': f'Bearer {token}'}
+
+    resp = client.get('/api/users', headers=headers)
+    assert resp.status_code == 200
+    names = resp.get_json()['users']
+    assert 'alice' in names and 'bob' in names
+
+    resp = client.get('/api/users?q=bo', headers=headers)
+    assert resp.status_code == 200
+    assert resp.get_json()['users'] == ['bob']

@@ -220,6 +220,19 @@ class PublicKey(Resource):
         return {"public_key": user.public_key_pem}
 
 
+class Users(Resource):
+    """Return a list of usernames, optionally filtered by a search query."""
+
+    @jwt_required()
+    def get(self):
+        q = request.args.get("q")
+        query = User.query
+        if q:
+            query = query.filter(User.username.contains(q))
+        users = [u.username for u in query.all()]
+        return {"users": users}
+
+
 class Groups(Resource):
     """Create or list chat groups."""
 
