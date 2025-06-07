@@ -12,6 +12,16 @@ After launching the app you will be greeted with a short onboarding flow describ
 
 The main interface uses a tab bar with sections for Chats and Settings. Credentials are protected with biometrics and you may revoke all server sessions from the Settings tab.
 
+## Running Tests
+
+Run the Swift package tests with:
+
+```bash
+xcodebuild -scheme PrivateLine-Package test
+```
+
+You can also open the project in Xcode and choose **Product → Test** from the menu.
+
 ## New Features
 
 - Optional dark mode toggle in Settings for a modern appearance.
