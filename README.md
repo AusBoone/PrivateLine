@@ -133,9 +133,11 @@ pip install gunicorn gevent
 gunicorn -k gevent -w 1 backend.app:app
 ```
 
-Before starting the server, apply database migrations so your schema is up to date:
+Before starting the server, apply database migrations so your schema is up to date. If the
+`migrations/` directory has not been created yet, initialize it first:
 
 ```bash
+flask db init   # only needed once
 flask db upgrade
 ```
 
