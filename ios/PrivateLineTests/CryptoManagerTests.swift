@@ -1,3 +1,4 @@
+// Unit tests for CryptoManager verifying symmetric and group encryption helpers.
 import XCTest
 @testable import PrivateLine
 

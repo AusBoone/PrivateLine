@@ -1,3 +1,6 @@
+// Unit tests covering the Chat component's interaction with the API and
+// WebSocket. Network requests are mocked so only the component behaviour is
+// verified.
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import Chat from '../Chat';
 import api from '../../api';

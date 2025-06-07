@@ -45,6 +45,7 @@ socketio = SocketIO(app, cors_allowed_origins=os.environ.get("SOCKETIO_ORIGINS",
 # Initialize rate limiting with a custom key function that prefers the
 # authenticated user id and falls back to the client's IP address.
 def rate_limit_key():
+    """Return a string used for rate limit tracking for the current request."""
     try:
         verify_jwt_in_request(optional=True)
         identity = get_jwt_identity()
@@ -82,6 +83,7 @@ token_blocklist = set()
 
 @jwt.token_in_blocklist_loader
 def token_in_blocklist_callback(jwt_header, jwt_payload):
+    """Check whether the given JWT has been revoked."""
     return jwt_payload.get("jti") in token_blocklist
 
 # Import resources after initializing app components to avoid circular imports
@@ -108,6 +110,7 @@ from .resources import (
 # Reject WebSocket connections that do not provide a valid JWT.
 @socketio.on("connect")
 def socket_connect():
+    """Join rooms for the authenticated user when a WebSocket connects."""
     try:
         verify_jwt_in_request()
         user_id = get_jwt_identity()

@@ -1,3 +1,4 @@
+"""SQLAlchemy models for PrivateLine."""
 from .app import db
 from datetime import datetime
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -8,13 +9,14 @@ from cryptography.hazmat.backends import default_backend
 from base64 import b64encode
 import os
 
-"""
-When a new user is registered, a public-private key pair is generated.
-The public key is stored in the User model, and the private key is sent to the user.
-
-See 'Register' resource in 'resources.py'
-"""
 class User(db.Model):
+    """Database representation of an application user.
+
+    When a new user registers, a public/private RSA key pair is generated. The
+    public key is stored in this model and the encrypted private key is returned
+    to the client for safekeeping (see the :class:`Register` resource for
+    details).
+    """
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(64), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
@@ -44,6 +46,7 @@ class User(db.Model):
 
 
 class Group(db.Model):
+    """A chat group used for group messaging."""
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(64), unique=True, nullable=False)
     aes_key = db.Column(
@@ -54,18 +57,21 @@ class Group(db.Model):
 
 
 class GroupMember(db.Model):
+    """Association table linking users to groups."""
     id = db.Column(db.Integer, primary_key=True)
     group_id = db.Column(db.Integer, db.ForeignKey('group.id'), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
 
 class File(db.Model):
+    """Binary file uploaded by a user and stored encrypted."""
     id = db.Column(db.Integer, primary_key=True)
     filename = db.Column(db.String(256), nullable=False)
     data = db.Column(db.LargeBinary, nullable=False)
 
 
 class Message(db.Model):
+    """Encrypted chat message exchanged between users or groups."""
     id = db.Column(db.Integer, primary_key=True)
     content = db.Column(db.String(1000), nullable=False)
     nonce = db.Column(db.String(24), nullable=False)
@@ -85,6 +91,7 @@ class Message(db.Model):
 
 
 class PinnedKey(db.Model):
+    """Fingerprint of a user's public key pinned by another user."""
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     username = db.Column(db.String(64), nullable=False)

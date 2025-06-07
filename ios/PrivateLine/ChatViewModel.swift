@@ -2,6 +2,8 @@ import Foundation
 import Combine
 
 @MainActor
+/// State container for ``ChatView`` handling message fetching, sending and
+/// WebSocket updates.
 final class ChatViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var input = ""
@@ -18,6 +20,7 @@ final class ChatViewModel: ObservableObject {
         self.api = api
     }
 
+    /// Fetch messages from the server and establish the WebSocket connection.
     func load() async {
         // Load cached messages first for offline support
         messages = MessageStore.load()
@@ -41,6 +44,7 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    /// Encrypt and send the current input to the selected recipient or group.
     func send() async {
         do {
             var fileId: Int? = nil
@@ -62,6 +66,7 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    /// Persist cached messages and close the WebSocket connection.
     func disconnect() {
         socket.disconnect()
         MessageStore.save(messages)

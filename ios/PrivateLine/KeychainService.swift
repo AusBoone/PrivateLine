@@ -37,6 +37,7 @@ struct KeychainService {
         return data
     }
 
+    /// Persist the JWT token returned by the backend in the keychain.
     static func saveToken(_ token: String) {
         if let data = token.data(using: .utf8) {
             save(tokenKey, data: data)
@@ -51,6 +52,7 @@ struct KeychainService {
         return String(data: data, encoding: .utf8)
     }
 
+    /// Remove the stored token from the keychain.
     static func removeToken() {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,

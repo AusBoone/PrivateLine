@@ -1,5 +1,10 @@
 import api from '../api';
 import { urlB64ToUint8Array } from './encoding';
+/**
+ * Attempt to register the browser for push notifications and send the
+ * resulting subscription to the backend. When unsupported or denied, the
+ * function exits silently.
+ */
 
 export async function setupWebPush() {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
