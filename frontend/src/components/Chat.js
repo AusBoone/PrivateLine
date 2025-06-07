@@ -259,26 +259,12 @@ function Chat() {
             : await api.get('/api/messages');
           if (resp.status === 200 && Array.isArray(resp.data.messages)) {
             const decrypted = await Promise.all(
-              resp.data.messages.map(async (m) => {
-                let text = m.content;
-                if (selectedGroup) {
-                  try {
-                    text = await decryptGroupMessage(m.content, selectedGroup);
-                  } catch (e) {
-                    console.error('Failed to decrypt group message', e);
-                  }
-                } else if (key) {
-                  try {
-                    text = await decryptMessage(key, m.content);
-                  } catch (e) {
-                    console.error('Failed to decrypt message', e);
-                  }
-                }
-                if (!m.read) {
-                  markRead(m.id);
-                }
-                return { id: m.id, text, type: 'received', read: m.read };
-              })
+              resp.data.messages.map(async (m) => ({
+                id: m.id,
+                text: m.content,
+                type: 'received',
+                read: m.read,
+              }))
             );
             setMessages(decrypted);
           }
