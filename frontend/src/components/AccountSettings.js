@@ -3,13 +3,10 @@ import React, { useState } from 'react';
 import { Box, Button, TextField, Typography, Snackbar, Alert } from '@mui/material';
 import api from '../api';
 
-/*
-Adds a form to update the email and password. 
-When the form is submitted, it sends a request to the server with 
-the new email, current password, and new password. 
-If the update is successful, it handles the response accordingly, 
-like showing a success message or redirecting the user to another page.
-*/
+/**
+ * AccountSettings component exposes a simple form for updating the user's
+ * email or password. On success a brief snackbar notification is shown.
+ */
 function AccountSettings() {
   const [email, setEmail] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');

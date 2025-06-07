@@ -1,3 +1,5 @@
+"""Integration tests exercising the PrivateLine REST API."""
+
 import json
 import os
 import base64
@@ -19,6 +21,7 @@ from backend.models import User, Message
 
 @pytest.fixture
 def client():
+    """Create a test client with an in-memory database."""
     app.config['TESTING'] = True
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
     with app.app_context():
@@ -30,6 +33,7 @@ def client():
 
 
 def register_user(client, username='alice'):
+    """Helper to register a user in tests."""
     data = {
         'username': username,
         'email': f'{username}@example.com',
@@ -39,12 +43,14 @@ def register_user(client, username='alice'):
 
 
 def login_user(client, username='alice'):
+    """Helper to log in a user and return the response."""
     return client.post('/api/login', json={
         'username': username,
         'password': 'secret',
     })
 
 def decrypt_private_key(resp):
+    """Return a private key object decrypted from the registration response."""
     from cryptography.hazmat.primitives import serialization
     data = resp.get_json()
     salt = b64decode(data['salt'])
@@ -62,6 +68,7 @@ def decrypt_private_key(resp):
     return serialization.load_pem_private_key(pem, password=None)
 
 def sign_content(private_key, content):
+    """Return a base64 signature of ``content`` using ``private_key``."""
     from cryptography.hazmat.primitives.asymmetric import padding as asympad
     sig = private_key.sign(
         content.encode(),

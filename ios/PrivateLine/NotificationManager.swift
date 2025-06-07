@@ -17,6 +17,8 @@ enum NotificationManager {
     }
 
     /// Send the APNs device token to the backend so push notifications can be delivered.
+    ///
+    /// - Parameter deviceToken: Binary token provided by APNs during registration.
     static func registerDeviceToken(_ deviceToken: Data) {
         let tokenString = deviceToken.map { String(format: "%02x", $0) }.joined()
         guard let auth = KeychainService.loadToken() else { return }

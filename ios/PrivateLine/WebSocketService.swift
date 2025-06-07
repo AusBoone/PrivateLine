@@ -10,6 +10,7 @@ class WebSocketService: ObservableObject {
         self.session = session
     }
 
+    /// Establish the WebSocket connection using ``token`` for authentication.
     func connect(token: String) {
         guard let urlString = Bundle.main.object(forInfoDictionaryKey: "WebSocketURL") as? String,
               let url = URL(string: urlString) else { return }
@@ -20,6 +21,7 @@ class WebSocketService: ObservableObject {
         listen()
     }
 
+    /// Continuously receive messages from the socket and append them to ``messages``.
     private func listen() {
         task?.receive { [weak self] result in
             switch result {
@@ -49,6 +51,7 @@ class WebSocketService: ObservableObject {
         }
     }
 
+    /// Close the WebSocket connection.
     func disconnect() {
         task?.cancel(with: .goingAway, reason: nil)
     }

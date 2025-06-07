@@ -1,3 +1,4 @@
+"""REST API resources for PrivateLine."""
 from flask_restful import Resource, reqparse
 from flask import request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -103,6 +104,7 @@ class Register(Resource):
     """Create a new user and return the encrypted private key."""
 
     def post(self):
+        """Handle POST requests for user registration."""
         # Accept both JSON and form-encoded input
         data = request.get_json(silent=True)
         if not data:
@@ -194,6 +196,7 @@ class Login(Resource):
     """Authenticate a user and return a JWT access token."""
 
     def post(self):
+        """Authenticate credentials and issue an access token."""
         data = request.get_json() or {}
 
         if 'username' not in data or 'password' not in data:

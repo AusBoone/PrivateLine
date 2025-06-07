@@ -1,3 +1,5 @@
+// Tests for the navigation bar ensuring token revocation and redirects work
+// correctly when the user logs out.
 import { render, fireEvent, waitFor } from '@testing-library/react';
 import { Router } from 'react-router-dom';
 import { createMemoryHistory } from 'history';

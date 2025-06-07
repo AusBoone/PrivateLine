@@ -210,7 +210,12 @@ async function decryptFileData(buffer, groupId) {
   return new Uint8Array(plain);
 }
 
-// React functional component for the chat interface
+/**
+ * Chat component implementing the end-to-end encrypted conversation UI.
+ *
+ * The component handles loading messages, connecting to the WebSocket for
+ * realtime updates and performing all encryption/decryption in the browser.
+ */
 function Chat() {
     // State variable to manage the message input field
     const [message, setMessage] = useState('');

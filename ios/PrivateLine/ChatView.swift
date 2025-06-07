@@ -1,5 +1,8 @@
 import SwiftUI
 
+/// SwiftUI view displaying conversations and allowing the user to send
+/// encrypted messages. It uses ``ChatViewModel`` for all data handling.
+
 struct ChatView: View {
     @StateObject var viewModel: ChatViewModel
     @State private var showPicker = false

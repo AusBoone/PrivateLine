@@ -1,3 +1,5 @@
+// Tests for the login form covering success and error flows. The API layer and
+// secure store helpers are mocked to avoid side effects.
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { Router } from 'react-router-dom';
 import { createMemoryHistory } from 'history';

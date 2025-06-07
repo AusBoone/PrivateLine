@@ -1,3 +1,5 @@
+// Basic sanity checks for the registration form. It verifies that successful
+// registrations store key material locally and that API errors are shown.
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { Router } from 'react-router-dom';
 import { createMemoryHistory } from 'history';

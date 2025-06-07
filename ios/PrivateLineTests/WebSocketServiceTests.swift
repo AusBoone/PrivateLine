@@ -1,3 +1,4 @@
+// Tests for WebSocketService covering connection and disconnection logic.
 import XCTest
 @testable import PrivateLine
 
