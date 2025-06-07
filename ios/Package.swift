@@ -10,7 +10,7 @@ let package = Package(
         .library(name: "PrivateLine", targets: ["PrivateLine"]),
     ],
     targets: [
-        .target(name: "PrivateLine", path: "PrivateLine"),
+        .target(name: "PrivateLine", path: "PrivateLine", resources: [.process("Info.plist")]),
         .testTarget(name: "PrivateLineTests", dependencies: ["PrivateLine"], path: "PrivateLineTests"),
     ]
 )
