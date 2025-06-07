@@ -52,7 +52,7 @@ To run the application, follow these steps:
    * Optional `SOCKETIO_ORIGINS` to restrict WebSocket origins.
    * Optional push notification settings: `APNS_CERT`, `APNS_TOPIC`,
      `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`.
-3. Install backend dependencies with `pip install -r backend/requirements.txt`.
+3. Install backend dependencies with `pip install -r requirements.txt`.
 4. Install frontend dependencies with `npm install` inside the `frontend` directory.
 5. Start the backend with `python backend/app.py` and the frontend with `npm start`.
 6. Open a browser and navigate to the frontend's URL to use the application.
@@ -72,7 +72,7 @@ When running with Docker, set `REACT_APP_API_URL=http://backend:5000` in your `.
 Backend unit tests use **pytest**. Install the Python dependencies first:
 
 ```bash
-pip install -r backend/requirements.txt
+pip install -r requirements.txt
 ```
 
 Then run all backend tests from the repository root:
