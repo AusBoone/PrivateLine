@@ -246,11 +246,13 @@ class Groups(Resource):
 
     @jwt_required()
     def get(self):
+        """Return all available groups."""
         groups = Group.query.all()
         return {"groups": [{"id": g.id, "name": g.name} for g in groups]}
 
     @jwt_required()
     def post(self):
+        """Create a new group owned by the requester."""
         data = request.get_json() or {}
         name = data.get("name")
         if not name:
@@ -273,6 +275,7 @@ class GroupKey(Resource):
 
     @jwt_required()
     def get(self, group_id):
+        """Return the current base64-encoded AES key for ``group_id``."""
         uid = int(get_jwt_identity())
         if not GroupMember.query.filter_by(group_id=group_id, user_id=uid).first():
             return {"message": "Not a member"}, 403
@@ -283,6 +286,7 @@ class GroupKey(Resource):
 
     @jwt_required()
     def put(self, group_id):
+        """Rotate and return a new AES key for ``group_id``."""
         uid = int(get_jwt_identity())
         if not GroupMember.query.filter_by(group_id=group_id, user_id=uid).first():
             return {"message": "Not a member"}, 403
@@ -305,6 +309,7 @@ class GroupMessages(Resource):
 
     @jwt_required()
     def get(self, group_id):
+        """Return all messages for ``group_id`` decrypted with the server key."""
         uid = int(get_jwt_identity())
         if not GroupMember.query.filter_by(group_id=group_id, user_id=uid).first():
             return {"message": "Not a member"}, 403
@@ -336,6 +341,7 @@ class GroupMessages(Resource):
 
     @jwt_required()
     def post(self, group_id):
+        """Store an encrypted group message and notify members."""
         uid = int(get_jwt_identity())
         if not GroupMember.query.filter_by(group_id=group_id, user_id=uid).first():
             return {"message": "Not a member"}, 403
@@ -358,6 +364,9 @@ class GroupMessages(Resource):
             )
         except Exception:
             return {"message": "Signature verification failed."}, 400
+        # The server encrypts the already encrypted payload once more before
+        # storing it so that it remains confidential even if the database is
+        # compromised. AES-GCM provides integrity and authenticity.
         nonce = os.urandom(12)
         ciphertext = aesgcm.encrypt(nonce, client_ciphertext, None)
         m = Message(
@@ -379,11 +388,14 @@ class FileUpload(Resource):
 
     @jwt_required()
     def post(self):
+        """Persist an uploaded file encrypted with AES-GCM."""
         if 'file' not in request.files:
             return {"message": "file required"}, 400
         f = request.files['file']
         data = f.read()
         nonce = os.urandom(12)
+        # Encrypt the raw bytes using the server's symmetric key before writing
+        # to the database so that file contents remain confidential at rest.
         ciphertext = aesgcm.encrypt(nonce, data, None)
         stored = nonce + ciphertext
         file_rec = File(filename=f.filename, data=stored)
@@ -397,6 +409,7 @@ class FileDownload(Resource):
 
     @jwt_required()
     def get(self, file_id):
+        """Decrypt and return the file if the requester is authorized."""
         uid = int(get_jwt_identity())
         f = db.session.get(File, file_id)
         if not f:
@@ -572,6 +585,7 @@ class MessageResource(Resource):
 
     @jwt_required()
     def delete(self, message_id):
+        """Remove a message authored by the current user."""
         uid = int(get_jwt_identity())
         msg = db.session.get(Message, message_id)
         if not msg:
@@ -588,6 +602,7 @@ class MessageRead(Resource):
 
     @jwt_required()
     def post(self, message_id):
+        """Mark the specified message as read if the user is allowed."""
         uid = int(get_jwt_identity())
         msg = db.session.get(Message, message_id)
         if not msg:
@@ -607,6 +622,7 @@ class PinnedKeys(Resource):
 
     @jwt_required()
     def get(self):
+        """Return all pinned key fingerprints for the current user."""
         user_id = int(get_jwt_identity())
         keys = PinnedKey.query.filter_by(user_id=user_id).all()
         return {
@@ -615,6 +631,7 @@ class PinnedKeys(Resource):
 
     @jwt_required()
     def post(self):
+        """Create or update a pinned key fingerprint."""
         data = request.get_json(silent=True) or request.form.to_dict()
         if not data or "username" not in data or "fingerprint" not in data:
             return {"message": "Username and fingerprint are required."}, 400
@@ -639,6 +656,7 @@ class PushTokenResource(Resource):
 
     @jwt_required()
     def post(self):
+        """Save a Web or APNs token so push notifications can be sent."""
         data = request.get_json() or {}
         token = data.get("token")
         if not token:
@@ -664,6 +682,7 @@ class AccountSettings(Resource):
 
     @jwt_required()
     def put(self):
+        """Change email or password for the logged in user."""
         data = request.get_json() or {}
         user_id = int(get_jwt_identity())
         user = db.session.get(User, user_id)
@@ -708,6 +727,7 @@ class RefreshToken(Resource):
 
     @jwt_required()
     def post(self):
+        """Return a freshly minted token for the current user."""
         user_id = get_jwt_identity()
         new_token = create_access_token(identity=str(user_id))
         return {"access_token": new_token}, 200
@@ -718,6 +738,7 @@ class RevokeToken(Resource):
 
     @jwt_required()
     def post(self):
+        """Invalidate the calling JWT by adding its jti to the blocklist."""
         jti = get_jwt()["jti"]
         token_blocklist.add(jti)
         return {"message": "Token revoked"}, 200

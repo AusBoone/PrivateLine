@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 
 class AppDelegate: NSObject, UIApplicationDelegate {
+    /// Forward the APNs token to ``NotificationManager`` when registration succeeds.
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         NotificationManager.registerDeviceToken(deviceToken)
     }
