@@ -36,7 +36,8 @@ class APIService: ObservableObject {
         }
     }
 
-    init() {
+    /// Create the service using ``session`` if provided, otherwise a pinned session.
+    init(session: URLSession? = nil) {
         if let urlString = Bundle.main.object(forInfoDictionaryKey: "BackendBaseURL") as? String,
            let url = URL(string: urlString) {
             baseURL = url
@@ -44,9 +45,13 @@ class APIService: ObservableObject {
             baseURL = URL(string: "http://localhost:5000/api")!
         }
 
-        // Configure pinned session
-        let config = URLSessionConfiguration.default
-        session = URLSession(configuration: config, delegate: PinningDelegate(), delegateQueue: nil)
+        // Configure pinned session unless one is injected for testing
+        if let s = session {
+            self.session = s
+        } else {
+            let config = URLSessionConfiguration.default
+            self.session = URLSession(configuration: config, delegate: PinningDelegate(), delegateQueue: nil)
+        }
 
         // Attempt to load the stored token, prompting for Face ID/Touch ID.
         let context = LAContext()
