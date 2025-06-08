@@ -11,6 +11,8 @@ struct Message: Identifiable, Decodable {
 }
 
 struct Group: Identifiable, Decodable {
+    /// Unique identifier for the group.
     let id: Int
+    /// Human readable group name.
     let name: String
 }

@@ -2,10 +2,14 @@ import Foundation
 
 /// Handles real-time message updates using URLSession WebSocket.
 class WebSocketService: ObservableObject {
+    /// Underlying WebSocket task.
     private var task: URLSessionWebSocketTask?
+    /// URLSession used for creating the task. Injectable for testing.
     private let session: URLSession
+    /// Messages received from the server.
     @Published var messages: [Message] = []
 
+    /// Create the service with an optional custom ``URLSession``.
     init(session: URLSession = .shared) {
         self.session = session
     }

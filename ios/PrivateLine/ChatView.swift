@@ -4,11 +4,14 @@ import SwiftUI
 /// encrypted messages. It uses ``ChatViewModel`` for all data handling.
 
 struct ChatView: View {
+    /// Object that manages message data and network calls.
     @StateObject var viewModel: ChatViewModel
+    /// Tracks whether the file picker modal is visible.
     @State private var showPicker = false
 
     var body: some View {
         VStack {
+            // Picker allowing the user to switch between direct and group chats.
             Picker("Conversation", selection: Binding(
                 get: { viewModel.selectedGroup == nil ? viewModel.recipient : "g\(viewModel.selectedGroup!)" },
                 set: { val in
@@ -28,6 +31,7 @@ struct ChatView: View {
                 }
             }
             .pickerStyle(MenuPickerStyle())
+            // Show decrypted chat messages with read receipts and attachments.
             List(viewModel.messages) { msg in
                 HStack {
                     Text(msg.content)
@@ -42,6 +46,7 @@ struct ChatView: View {
                 }
                     .accessibilityLabel("Message: \(msg.content)")
             }
+            // Input field, optional attachment picker and send button.
             HStack {
                 TextField("Message", text: $viewModel.input)
                     .textFieldStyle(RoundedBorderTextFieldStyle())

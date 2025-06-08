@@ -4,6 +4,7 @@ import LocalAuthentication
 
 /// Simple helper for storing and retrieving values from the Keychain.
 struct KeychainService {
+    /// Keychain identifier storing the JWT token.
     private static let tokenKey = "PrivateLineToken"
 
     /// Generic helper to save arbitrary data in the keychain under ``account``.
