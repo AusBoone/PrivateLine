@@ -143,6 +143,7 @@ class APIService: ObservableObject {
         }
     }
 
+    /// Retrieve and decrypt all messages for the given group.
     func fetchGroupMessages(_ id: Int) async throws -> [Message] {
         guard let token = token else { return [] }
         _ = try await groupKey(for: id)
@@ -160,6 +161,7 @@ class APIService: ObservableObject {
         }
     }
 
+    /// Fetch the list of available chat groups from the backend.
     func fetchGroups() async throws -> [Group] {
         guard let token = token else { return [] }
         var request = URLRequest(url: baseURL.appendingPathComponent("groups"))
@@ -171,6 +173,7 @@ class APIService: ObservableObject {
         return gs
     }
 
+    /// Encrypt ``content`` with the group key and POST it to the server.
     func sendGroupMessage(_ content: String, groupId: Int, fileId: Int? = nil) async throws {
         guard let token = token else { throw URLError(.userAuthenticationRequired) }
         _ = try await groupKey(for: groupId)
@@ -188,6 +191,7 @@ class APIService: ObservableObject {
         _ = try await session.data(for: request)
     }
 
+    /// Encrypt ``data`` and upload it as ``filename``.
     func uploadFile(data: Data, filename: String) async throws -> Int? {
         guard let token = token else { return nil }
         var request = URLRequest(url: baseURL.appendingPathComponent("files"))
@@ -210,6 +214,7 @@ class APIService: ObservableObject {
         return nil
     }
 
+    /// Download and decrypt a previously uploaded file.
     func downloadFile(id: Int) async throws -> Data {
         guard let token = token else { throw URLError(.userAuthenticationRequired) }
         var request = URLRequest(url: baseURL.appendingPathComponent("files/\(id)"))
@@ -273,6 +278,7 @@ class APIService: ObservableObject {
         _ = try await session.data(for: request)
     }
 
+    /// Remove a message from the server.
     func deleteMessage(id: Int) async throws {
         guard let token = token else { throw URLError(.userAuthenticationRequired) }
         var request = URLRequest(url: baseURL.appendingPathComponent("messages/\(id)"))
@@ -281,6 +287,7 @@ class APIService: ObservableObject {
         _ = try await session.data(for: request)
     }
 
+    /// Notify the backend that a message has been read.
     func markMessageRead(id: Int) async throws {
         guard let token = token else { throw URLError(.userAuthenticationRequired) }
         var request = URLRequest(url: baseURL.appendingPathComponent("messages/\(id)/read"))
@@ -289,6 +296,7 @@ class APIService: ObservableObject {
         _ = try await session.data(for: request)
     }
 
+    /// Clear the stored token and authentication state.
     func logout() {
         token = nil
         isAuthenticated = false

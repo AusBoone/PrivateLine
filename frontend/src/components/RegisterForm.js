@@ -18,6 +18,10 @@ function RegisterForm() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
+  /**
+   * Submit registration details to the server and persist returned key material.
+   * @param {Event} event - Form submission event.
+   */
   const handleSubmit = async (event) => {
     event.preventDefault();
 

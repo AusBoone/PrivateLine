@@ -145,6 +145,7 @@ enum CryptoManager {
         rsaPrivateKey = try importPrivateKeyPEM(pem)
     }
 
+    /// Derive a 256-bit key from ``password`` and ``salt`` using PBKDF2.
     private static func deriveKey(password: String, salt: Data) throws -> SymmetricKey {
         var derived = Data(count: 32)
         let pwdData = password.data(using: .utf8)!
@@ -162,6 +163,7 @@ enum CryptoManager {
         return SymmetricKey(data: derived)
     }
 
+    /// Convert a PEM encoded RSA private key into ``SecKey`` form.
     private static func importPrivateKeyPEM(_ pem: String) throws -> SecKey {
         let b64 = pem
             .replacingOccurrences(of: "-----BEGIN PRIVATE KEY-----", with: "")

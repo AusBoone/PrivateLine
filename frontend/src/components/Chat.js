@@ -126,6 +126,11 @@ async function decryptMessage(privateKey, encryptedMessage) {
 
 const groupKeyCache = new Map();
 
+/**
+ * Retrieve and cache the AES key for a group from the backend.
+ * @param {number} groupId - Identifier of the group.
+ * @returns {Promise<CryptoKey>} Imported AES-GCM key.
+ */
 async function fetchGroupKey(groupId) {
   let key = groupKeyCache.get(groupId);
   if (key) return key;
@@ -144,6 +149,12 @@ async function fetchGroupKey(groupId) {
   throw new Error('failed to fetch group key');
 }
 
+/**
+ * Encrypt text using the shared group key and return base64 ciphertext.
+ * @param {string} message - Plaintext message.
+ * @param {number} groupId - Group identifier.
+ * @returns {Promise<string>} Base64 encoded encrypted payload.
+ */
 async function encryptGroupMessage(message, groupId) {
   const key = await fetchGroupKey(groupId);
   const iv = window.crypto.getRandomValues(new Uint8Array(12));
@@ -159,6 +170,12 @@ async function encryptGroupMessage(message, groupId) {
   return arrayBufferToBase64(combined.buffer);
 }
 
+/**
+ * Decrypt a base64 encoded group message using the cached key.
+ * @param {string} b64 - Base64 ciphertext.
+ * @param {number} groupId - Group identifier.
+ * @returns {Promise<string>} Decrypted plaintext.
+ */
 async function decryptGroupMessage(b64, groupId) {
   const key = await fetchGroupKey(groupId);
   const data = base64ToArrayBuffer(b64);
@@ -172,8 +189,10 @@ async function decryptGroupMessage(b64, groupId) {
   return new TextDecoder().decode(plain);
 }
 
-// Encrypt a File/Blob using the shared group key. The returned Blob contains
-// the random IV prepended to the ciphertext so that it can be decrypted later.
+/**
+ * Encrypt a File/Blob using the group key. The returned blob contains the IV
+ * prepended so it can later be decrypted.
+ */
 async function encryptFileBlob(blob, groupId) {
   if (groupId == null) {
     return blob;
@@ -192,8 +211,9 @@ async function encryptFileBlob(blob, groupId) {
   return new Blob([combined], { type: 'application/octet-stream' });
 }
 
-// Decrypt data downloaded from the server that was encrypted with
-// ``encryptFileBlob``.
+/**
+ * Decrypt binary data previously encrypted with ``encryptFileBlob``.
+ */
 async function decryptFileData(buffer, groupId) {
   if (groupId == null) {
     return new Uint8Array(buffer);
