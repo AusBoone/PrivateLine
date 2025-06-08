@@ -322,7 +322,9 @@ class APIService: ObservableObject {
                 return
             }
 
-            if serverCert == pinnedCert {
+            let serverData = SecCertificateCopyData(serverCert) as Data
+            let pinnedCertData = SecCertificateCopyData(pinnedCert) as Data
+            if serverData == pinnedCertData {
                 completionHandler(.useCredential, URLCredential(trust: trust))
             } else {
                 completionHandler(.cancelAuthenticationChallenge, nil)
