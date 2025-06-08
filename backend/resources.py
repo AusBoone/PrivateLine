@@ -575,7 +575,10 @@ class MessageRead(Resource):
         msg = db.session.get(Message, message_id)
         if not msg:
             return {"message": "Not found"}, 404
-        if msg.recipient_id != uid and msg.group_id is None:
+        if msg.group_id is not None:
+            if not GroupMember.query.filter_by(group_id=msg.group_id, user_id=uid).first():
+                return {"message": "Forbidden"}, 403
+        elif msg.recipient_id != uid:
             return {"message": "Forbidden"}, 403
         msg.read = True
         db.session.commit()

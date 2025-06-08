@@ -476,6 +476,40 @@ def test_message_delete_and_read(client):
     assert resp.get_json()['messages'] == []
 
 
+def test_group_message_read_requires_membership(client):
+    reg_a = register_user(client, 'alice')
+    pk_a = decrypt_private_key(reg_a)
+    register_user(client, 'bob')
+    register_user(client, 'carol')
+
+    token_a = login_user(client, 'alice').get_json()['access_token']
+    headers_a = {'Authorization': f'Bearer {token_a}'}
+    resp = client.post('/api/groups', json={'name': 'grp'}, headers=headers_a)
+    assert resp.status_code == 201
+    gid = resp.get_json()['id']
+
+    from backend.models import GroupMember, User
+    with app.app_context():
+        bob_id = User.query.filter_by(username='bob').first().id
+        db.session.add(GroupMember(group_id=gid, user_id=bob_id))
+        db.session.commit()
+
+    b64 = base64.b64encode(b'hey').decode()
+    sig = sign_content(pk_a, b64)
+    resp = client.post(
+        f'/api/groups/{gid}/messages',
+        data={'content': b64, 'signature': sig},
+        headers=headers_a,
+    )
+    assert resp.status_code == 201
+    msg_id = resp.get_json()['id']
+
+    token_carol = login_user(client, 'carol').get_json()['access_token']
+    headers_c = {'Authorization': f'Bearer {token_carol}'}
+    resp = client.post(f'/api/messages/{msg_id}/read', headers=headers_c)
+    assert resp.status_code == 403
+
+
 def test_users_endpoint(client):
     register_user(client, 'alice')
     register_user(client, 'bob')
