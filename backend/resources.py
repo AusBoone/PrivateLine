@@ -397,9 +397,26 @@ class FileDownload(Resource):
 
     @jwt_required()
     def get(self, file_id):
+        uid = int(get_jwt_identity())
         f = db.session.get(File, file_id)
         if not f:
             return {"message": "Not found"}, 404
+
+        # Verify the requesting user is associated with a message that
+        # references this file either directly or via group membership.
+        msgs = Message.query.filter_by(file_id=file_id).all()
+        authorized = False
+        for msg in msgs:
+            if msg.group_id:
+                if GroupMember.query.filter_by(group_id=msg.group_id, user_id=uid).first():
+                    authorized = True
+                    break
+            elif msg.sender_id == uid or msg.recipient_id == uid:
+                authorized = True
+                break
+
+        if not authorized:
+            return {"message": "Forbidden"}, 403
         nonce = f.data[:12]
         ciphertext = f.data[12:]
         plaintext = aesgcm.decrypt(nonce, ciphertext, None)

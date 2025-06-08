@@ -436,19 +436,47 @@ def test_group_key_distribution(client):
 
 
 def test_file_upload_download(client):
-    register_user(client, 'alice')
+    reg = register_user(client, 'alice')
+    pk = decrypt_private_key(reg)
     token = login_user(client, 'alice').get_json()['access_token']
     headers = {'Authorization': f'Bearer {token}'}
-    data = {'file': (io.BytesIO(b'hello'), 'hello.txt')}
     from werkzeug.datastructures import FileStorage
     fs = FileStorage(stream=io.BytesIO(b'hello'), filename='hello.txt')
-    data = {'file': fs}
-    resp = client.post('/api/files', data=data, headers=headers, content_type='multipart/form-data')
+    resp = client.post('/api/files', data={'file': fs}, headers=headers, content_type='multipart/form-data')
     assert resp.status_code == 201
     fid = resp.get_json()['file_id']
+
+    b64 = base64.b64encode(b'hi').decode()
+    sig = sign_content(pk, b64)
+    client.post('/api/messages', data={'content': b64, 'recipient': 'alice', 'file_id': fid, 'signature': sig}, headers=headers)
+
     resp = client.get(f'/api/files/{fid}', headers=headers)
     assert resp.status_code == 200
     assert resp.data == b'hello'
+
+
+def test_file_download_authorization(client):
+    reg_a = register_user(client, 'alice')
+    pk_a = decrypt_private_key(reg_a)
+    register_user(client, 'bob')
+    register_user(client, 'carol')
+
+    token_a = login_user(client, 'alice').get_json()['access_token']
+    headers_a = {'Authorization': f'Bearer {token_a}'}
+
+    from werkzeug.datastructures import FileStorage
+    fs = FileStorage(stream=io.BytesIO(b'secret'), filename='secret.txt')
+    resp = client.post('/api/files', data={'file': fs}, headers=headers_a, content_type='multipart/form-data')
+    fid = resp.get_json()['file_id']
+
+    b64 = base64.b64encode(b'hi').decode()
+    sig = sign_content(pk_a, b64)
+    client.post('/api/messages', data={'content': b64, 'recipient': 'bob', 'file_id': fid, 'signature': sig}, headers=headers_a)
+
+    token_c = login_user(client, 'carol').get_json()['access_token']
+    headers_c = {'Authorization': f'Bearer {token_c}'}
+    resp = client.get(f'/api/files/{fid}', headers=headers_c)
+    assert resp.status_code == 403
 
 
 def test_message_delete_and_read(client):
