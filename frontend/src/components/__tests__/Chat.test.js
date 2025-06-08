@@ -94,7 +94,7 @@ it.skip('uses selected recipient when sending a message', async () => {
   fireEvent.click(screen.getByText('bob'));
 
   api.get.mockResolvedValueOnce({ status: 200, data: { public_key: 'KEY' } });
-  api.post.mockResolvedValueOnce({ status: 201 });
+  api.post.mockResolvedValueOnce({ status: 201, data: { id: 1 } });
 
   fireEvent.change(screen.getByPlaceholderText('Type your message'), {
     target: { value: 'hi' },

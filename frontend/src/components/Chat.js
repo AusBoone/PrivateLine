@@ -406,7 +406,17 @@ function Chat() {
         const response = await api.post(url, formData);
 
         if (response.status === 201) {
-          setMessages([...messages, { id: Date.now(), text: message, type: 'sent', file_id: formData.get('file_id'), read: true }]);
+          const newId = response.data && response.data.id;
+          setMessages([
+            ...messages,
+            {
+              id: newId || Date.now(),
+              text: message,
+              type: 'sent',
+              file_id: formData.get('file_id'),
+              read: true,
+            },
+          ]);
           setMessage('');
           setFile(null);
         }

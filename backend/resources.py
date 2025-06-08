@@ -371,7 +371,7 @@ class GroupMessages(Resource):
         db.session.add(m)
         db.session.commit()
         socketio.emit("new_message", {"content": data["content"], "group_id": group_id}, to=str(group_id))
-        return {"message": "sent"}, 201
+        return {"message": "sent", "id": m.id}, 201
 
 
 class FileUpload(Resource):
@@ -547,7 +547,7 @@ class Messages(Resource):
                 if m.user_id != current_user_id:
                     send_push_notifications(m.user_id, "New group message")
 
-        return {"message": "Message sent successfully."}, 201
+        return {"message": "Message sent successfully.", "id": new_message.id}, 201
 
 
 class MessageResource(Resource):
