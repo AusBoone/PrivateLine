@@ -28,3 +28,22 @@ You can also open the project in Xcode and choose **Product → Test** from the 
 - Push notification registration via `NotificationManager` so upcoming
   versions can alert users to new messages.
 
+## Push Notifications
+
+`NotificationManager` requests permission from `UNUserNotificationCenter` when
+the app launches. On success `UIApplication.shared.registerForRemoteNotifications()`
+obtains the APNs device token which is forwarded from `AppDelegate` to
+`NotificationManager.registerDeviceToken`. That method sends the token in
+hexadecimal form to the backend's `/api/push-token` endpoint using the logged-in
+user's bearer token.
+
+For notifications to be delivered the backend must be started with two
+environment variables:
+
+* `APNS_CERT` – path to your `.pem` APNs certificate.
+* `APNS_TOPIC` – the bundle identifier of this app.
+
+With these set, you can test push notifications by sending a message to a user
+while the app is in the background on a device or simulator that supports push
+delivery. The backend will use the stored token to send an alert via APNs.
+
