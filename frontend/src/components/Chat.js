@@ -315,7 +315,10 @@ function Chat() {
               console.error('Failed to decrypt incoming message', e);
             }
           }
-          if ((payload.group_id && payload.group_id === selectedGroup) || (!payload.group_id && !selectedGroup && payload.recipient_id == null)) {
+          if (
+            (payload.group_id && payload.group_id === selectedGroup) ||
+            (!payload.group_id && !selectedGroup && payload.recipient_id === recipient)
+          ) {
             setMessages((prev) => [
               ...prev,
               { id: Date.now(), text, type: 'received', file_id: payload.file_id, read: true },
