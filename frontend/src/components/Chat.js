@@ -264,12 +264,32 @@ function Chat() {
             : await api.get('/api/messages');
           if (resp.status === 200 && Array.isArray(resp.data.messages)) {
             const decrypted = await Promise.all(
-              resp.data.messages.map(async (m) => ({
-                id: m.id,
-                text: m.content,
-                type: 'received',
-                read: m.read,
-              }))
+              resp.data.messages.map(async (m) => {
+                let text = m.content;
+                if (selectedGroup || m.group_id) {
+                  try {
+                    text = await decryptGroupMessage(
+                      m.content,
+                      selectedGroup || m.group_id
+                    );
+                  } catch (e) {
+                    console.error('Failed to decrypt group message', e);
+                  }
+                } else if (privateKey) {
+                  try {
+                    text = await decryptMessage(privateKey, m.content);
+                  } catch (e) {
+                    console.error('Failed to decrypt message', e);
+                  }
+                }
+                return {
+                  id: m.id,
+                  text,
+                  type: 'received',
+                  file_id: m.file_id,
+                  read: m.read,
+                };
+              })
             );
             setMessages(decrypted);
           }
