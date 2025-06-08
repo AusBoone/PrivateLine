@@ -1,0 +1,29 @@
+import XCTest
+@testable import PrivateLine
+
+extension Message: Equatable {}
+
+final class MessageStoreTests: XCTestCase {
+    let fileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("messages.json")
+
+    override func setUpWithError() throws {
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+
+    func testSaveLoadRoundTrip() throws {
+        let messages = [
+            Message(id: 1, content: "Hi", file_id: nil, read: true),
+            Message(id: 2, content: "Bye", file_id: nil, read: false)
+        ]
+        MessageStore.save(messages)
+        sleep(1)
+        let loaded = MessageStore.load()
+        XCTAssertEqual(loaded, messages)
+    }
+}
