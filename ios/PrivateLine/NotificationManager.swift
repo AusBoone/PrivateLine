@@ -9,6 +9,7 @@ enum NotificationManager {
     static func requestAuthorization() {
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+            // Only register with APNs if the user granted permission
             guard granted else { return }
             DispatchQueue.main.async {
                 UIApplication.shared.registerForRemoteNotifications()
@@ -20,6 +21,7 @@ enum NotificationManager {
     ///
     /// - Parameter deviceToken: Binary token provided by APNs during registration.
     static func registerDeviceToken(_ deviceToken: Data) {
+        // Convert binary token to hex string
         let tokenString = deviceToken.map { String(format: "%02x", $0) }.joined()
         guard let auth = KeychainService.loadToken() else { return }
         guard let urlString = Bundle.main.object(forInfoDictionaryKey: "BackendBaseURL") as? String,
@@ -30,6 +32,7 @@ enum NotificationManager {
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
         let body = ["token": tokenString, "platform": "ios"]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        // Fire and forget the registration request
         URLSession.shared.dataTask(with: request).resume()
     }
 }

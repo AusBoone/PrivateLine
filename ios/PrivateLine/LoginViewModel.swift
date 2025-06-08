@@ -30,6 +30,7 @@ final class LoginViewModel: ObservableObject {
             return
         }
         do {
+            // Forward credentials to the API service
             try await api.login(username: username, password: password)
         } catch {
             errorMessage = "Login failed: \(error.localizedDescription)"
@@ -43,6 +44,7 @@ final class LoginViewModel: ObservableObject {
             return
         }
         do {
+            // Send the registration request to the backend
             try await api.register(username: username, email: email, password: password)
             isRegistering = false
         } catch {

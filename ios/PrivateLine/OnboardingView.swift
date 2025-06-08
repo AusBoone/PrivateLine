@@ -14,11 +14,13 @@ struct OnboardingView: View {
             Text("All messages are encrypted locally before being sent. Your privacy is our priority.")
                 .multilineTextAlignment(.center)
                 .padding()
+            // Display the user's key fingerprint for verification
             if let fp = fingerprint {
                 Text("Your key fingerprint: \(fp)")
                     .font(.footnote)
                     .padding()
             }
+            // Dismiss the onboarding screen
             Button("Get Started") {
                 hasSeen = true
             }

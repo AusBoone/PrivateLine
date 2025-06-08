@@ -75,6 +75,7 @@ class APIService: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Encode credentials as JSON body
         request.httpBody = try JSONEncoder().encode(["username": username, "password": password])
         do {
             let (data, _) = try await session.data(for: request)
@@ -82,10 +83,12 @@ class APIService: ObservableObject {
                   let token = json["access_token"] as? String else {
                 throw URLError(.badServerResponse)
             }
+           // Reset failure counter and unlock the private key
            loginFailures = 0
            try? CryptoManager.loadPrivateKey(password: password)
             self.token = token
             do {
+                // Retrieve pinned key fingerprints for certificate validation
                 var request = URLRequest(url: self.baseURL.appendingPathComponent("pinned_keys"))
                 request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 let (pkData, _) = try await self.session.data(for: request)
@@ -96,6 +99,7 @@ class APIService: ObservableObject {
             } catch {
                 self.pinnedKeys = [:]
             }
+            // Update UI state on the main thread
             DispatchQueue.main.async {
                 self.isAuthenticated = true
             }
@@ -114,6 +118,7 @@ class APIService: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        // Encode the form fields as URL encoded parameters
         let body = ["username": username, "email": email, "password": password]
         request.httpBody = body.map { "\($0)=\($1)" }.joined(separator: "&").data(using: .utf8)
         let (data, response) = try await session.data(for: request)
@@ -125,6 +130,7 @@ class APIService: ObservableObject {
            let salt = json["salt"],
            let nonce = json["nonce"] {
             let fp = json["fingerprint"]
+            // Store the encrypted private key material for later use
             CryptoManager.storeKeyMaterial(.init(encrypted_private_key: enc, salt: salt, nonce: nonce, fingerprint: fp))
             if let fp = fp {
                 print("Fingerprint: \(fp)")
@@ -256,6 +262,7 @@ class APIService: ObservableObject {
         let (data, _) = try await session.data(for: request)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: String],
               let key = json["key"] else { throw URLError(.badServerResponse) }
+        // Cache the returned AES key for future use
         groupKeys[groupId] = key
         CryptoManager.storeGroupKey(key, groupId: groupId)
         return key
@@ -272,6 +279,7 @@ class APIService: ObservableObject {
             let fp = CryptoManager.fingerprint(of: publicKeyPem)
             guard fp == expected else { throw URLError(.secureConnectionFailed) }
         }
+        // Encrypt the plaintext with the recipient's key
         let encrypted = try CryptoManager.encryptRSA(content, publicKeyPem: publicKeyPem)
         let b64 = encrypted.base64EncodedString()
         let sig = try CryptoManager.signMessage(b64).base64EncodedString()

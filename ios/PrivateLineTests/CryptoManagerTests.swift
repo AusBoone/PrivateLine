@@ -7,6 +7,7 @@ import CommonCrypto
 
 final class CryptoManagerTests: XCTestCase {
     func testEncryptDecryptMessage() throws {
+        // Symmetric encryption roundtrip should restore the original string
         let message = "Hello, world!"
         let encrypted = try CryptoManager.encryptMessage(message)
         let decrypted = try CryptoManager.decryptMessage(encrypted)
@@ -14,6 +15,7 @@ final class CryptoManagerTests: XCTestCase {
     }
 
     func testGroupEncryptionRoundtrip() throws {
+        // Messages encrypted with a group key should decrypt with the same key
         let key = Data(repeating: 1, count: 32).base64EncodedString()
         CryptoManager.storeGroupKey(key, groupId: 1)
         let encrypted = try CryptoManager.encryptGroupMessage("hi", groupId: 1)

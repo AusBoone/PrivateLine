@@ -11,6 +11,7 @@ enum MessageStore {
 
     /// Load cached messages from disk.
     static func load() -> [Message] {
+        // Attempt to read the cached JSON file
         guard let data = try? Data(contentsOf: fileURL),
               let msgs = try? JSONDecoder().decode([Message].self, from: data) else {
             return []
@@ -22,6 +23,7 @@ enum MessageStore {
     static func save(_ messages: [Message]) {
         DispatchQueue.global(qos: .background).async {
             if let data = try? JSONEncoder().encode(messages) {
+                // Write JSON to disk in the background
                 try? data.write(to: fileURL)
             }
         }

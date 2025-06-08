@@ -6,7 +6,9 @@ struct Message: Identifiable, Decodable {
     let id: Int
     /// Decrypted text content.
     let content: String
+    /// Optional id referencing an uploaded attachment
     let file_id: Int?
+    /// Whether the message has been read by the recipient
     let read: Bool?
 }
 

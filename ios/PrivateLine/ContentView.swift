@@ -11,9 +11,11 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
+            // Show onboarding once for new installs
             if !hasSeenOnboarding {
                 OnboardingView()
             } else if api.isAuthenticated {
+                // Main tab interface after login
                 TabView {
                     ChatView(viewModel: ChatViewModel(api: api))
                         .tabItem {
@@ -26,10 +28,12 @@ struct ContentView: View {
                 }
                 .navigationTitle("PrivateLine")
             } else {
+                // Prompt the user to log in or register
                 LoginView(viewModel: LoginViewModel(api: api))
                     .navigationTitle("PrivateLine")
             }
         }
+        // Respect the user's dark mode preference
         .preferredColorScheme(isDarkMode ? .dark : .light)
     }
 }

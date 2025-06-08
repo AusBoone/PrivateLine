@@ -67,6 +67,7 @@ final class APIServicesTests: XCTestCase {
     }
 
     func testLoginParsesToken() async throws {
+        // Successful login should set authToken and isAuthenticated
         enqueue(json: "{\"access_token\":\"abc\"}")
         enqueue(json: "{\"pinned_keys\":[]}")
         try await api.login(username: "a", password: password)
@@ -77,6 +78,7 @@ final class APIServicesTests: XCTestCase {
     }
 
     func testFetchMessagesDecrypts() async throws {
+        // Ensure encrypted messages are decrypted correctly
         let fp = CryptoManager.fingerprint(of: publicPem)
         enqueue(json: "{\"access_token\":\"tok\"}")
         enqueue(json: "{\"pinned_keys\":[{\"username\":\"bob\",\"fingerprint\":\"\(fp)\"}]}")
@@ -88,6 +90,7 @@ final class APIServicesTests: XCTestCase {
     }
 
     func testSendMessageUsesPinnedKey() async throws {
+        // Outgoing messages must use the pinned fingerprint
         let fp = CryptoManager.fingerprint(of: publicPem)
         enqueue(json: "{\"access_token\":\"tok\"}")
         enqueue(json: "{\"pinned_keys\":[{\"username\":\"bob\",\"fingerprint\":\"\(fp)\"}]}")
@@ -99,6 +102,7 @@ final class APIServicesTests: XCTestCase {
     }
 
     func testRefreshTokenUpdatesState() async throws {
+        // Refresh endpoint should replace the stored token
         enqueue(json: "{\"access_token\":\"t\"}")
         enqueue(json: "{\"pinned_keys\":[]}")
         try await api.login(username: "a", password: password)
@@ -108,6 +112,7 @@ final class APIServicesTests: XCTestCase {
     }
 
     func testPinningDelegateAcceptsMatchingCert() throws {
+        // Verify that the custom URLSessionDelegate accepts a pinned certificate
         let base64 = "MIIDCTCCAfGgAwIBAgIUQ4ts0UuXVBAe4Ao+YQYGUlGetikwDQYJKoZIhvcNAQELBQAwFDESMBAGA1UEAwwJVGVzdCBDZXJ0MB4XDTI1MDYwODAyMzYzNFoXDTI1MDYwOTAyMzYzNFowFDESMBAGA1UEAwwJVGVzdCBDZXJ0MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnN3zYWtPN7AHCv4pj8XU7frxqV62QsXV/2WY165aCusP/d/r7zcK6LHr5AAm237cruxdiq72+AHsGuMMFY34BfQIHBujP3mfRU7lwuafW+jRPdBgsvG/GhVqAqZd4nx1a07kytDOuaw0TTZVIcSDg12uiNRto/QTP1ryXxT9o4tmmyQKcficRzC5hIj5QkNIGb6gFKhkZoirU8FK7ew6S+UCjjzrOvo7V5owGvqxkkZ4DcVs4TI1FILTXET7mQdN7FZCIzEQbKDsghSfOa2CBUBJHLzgFKwBYyFc2QEZBEiY3pWxR50xCo3XG56J/8Yw3mWDExQCinFY+lEu3o1Q3wIDAQABo1MwUTAdBgNVHQ4EFgQU9RUwc5f8zi+HNTnr3f14RQ9wWbIwHwYDVR0jBBgwFoAU9RUwc5f8zi+HNTnr3f14RQ9wWbIwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAdqa0cv7N5ZtS5OnVgG/8LRNyAcBqFNTt871kRjq84hDaHSE1QIrJXXVor1fqel+0oz75IEFBD9JJbOrP+MI8Ubl3kNEg24UK7XKesfNYv9XQUw1JtCxbl0opOWGTkvi+o/X3LQFuopvV/xy1Zh5Q2BMTkG67fS2eXNPXpuBbdoe3uMlmTVKqQYGTNwk0vDvkWsgUM1zJz1wG64b9dk3HEkn/+6incanPLWS+isFEFE+OqtJ2tpY+VOlprHLAmBkUWp+A57+l+9csvKW9R29GvJzTprrjBfQ9iFP+COzE4jFfxzb8xRO6LC/9bejXN3YX5TJDjMRescIpdrybL+br/w=="
         let derData = Data(base64Encoded: base64)!
         let pinnedURL = URL(fileURLWithPath: Bundle.main.bundlePath).appendingPathComponent("server.cer")
