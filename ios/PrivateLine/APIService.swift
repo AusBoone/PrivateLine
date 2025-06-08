@@ -171,7 +171,7 @@ class APIService: ObservableObject {
         return gs
     }
 
-    func sendGroupMessage(_ content: String, groupId: Int) async throws {
+    func sendGroupMessage(_ content: String, groupId: Int, fileId: Int? = nil) async throws {
         guard let token = token else { throw URLError(.userAuthenticationRequired) }
         _ = try await groupKey(for: groupId)
         var request = URLRequest(url: baseURL.appendingPathComponent("groups/\(groupId)/messages"))
@@ -180,7 +180,11 @@ class APIService: ObservableObject {
         let encrypted = try CryptoManager.encryptGroupMessage(content, groupId: groupId)
         let b64 = encrypted.base64EncodedString()
         let sig = try CryptoManager.signMessage(b64).base64EncodedString()
-        request.httpBody = "content=\(b64)&group_id=\(groupId)&signature=\(sig)".data(using: .utf8)
+        var body = "content=\(b64)&group_id=\(groupId)&signature=\(sig)"
+        if let id = fileId {
+            body.append("&file_id=\(id)")
+        }
+        request.httpBody = body.data(using: .utf8)
         _ = try await session.data(for: request)
     }
 
@@ -248,7 +252,7 @@ class APIService: ObservableObject {
     }
 
     /// Send a single message to ``recipient``.
-    func sendMessage(_ content: String, to recipient: String) async throws {
+    func sendMessage(_ content: String, to recipient: String, fileId: Int? = nil) async throws {
         guard let token = token else { throw URLError(.userAuthenticationRequired) }
         var request = URLRequest(url: baseURL.appendingPathComponent("messages"))
         request.httpMethod = "POST"
@@ -261,7 +265,11 @@ class APIService: ObservableObject {
         let encrypted = try CryptoManager.encryptRSA(content, publicKeyPem: publicKeyPem)
         let b64 = encrypted.base64EncodedString()
         let sig = try CryptoManager.signMessage(b64).base64EncodedString()
-        request.httpBody = "content=\(b64)&signature=\(sig)".data(using: .utf8)
+        var body = "content=\(b64)&signature=\(sig)&recipient=\(recipient)"
+        if let id = fileId {
+            body.append("&file_id=\(id)")
+        }
+        request.httpBody = body.data(using: .utf8)
         _ = try await session.data(for: request)
     }
 

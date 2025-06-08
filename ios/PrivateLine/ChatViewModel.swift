@@ -53,9 +53,9 @@ final class ChatViewModel: ObservableObject {
                 attachment = nil
             }
             if let gid = selectedGroup {
-                try await api.sendGroupMessage(input, groupId: gid)
+                try await api.sendGroupMessage(input, groupId: gid, fileId: fileId)
             } else {
-                try await api.sendMessage(input, to: recipient)
+                try await api.sendMessage(input, to: recipient, fileId: fileId)
             }
             let msg = Message(id: Int(Date().timeIntervalSince1970), content: input, file_id: fileId, read: true)
             messages.append(msg)
