@@ -18,7 +18,9 @@ private func configureNotifications() {
 /// Application entry point.
 @main
 struct PrivateLineApp: App {
+    /// Bridge UIKit delegate methods for push notifications.
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    /// Perform one-time configuration when the app starts.
     init() {
         configureNotifications()
     }

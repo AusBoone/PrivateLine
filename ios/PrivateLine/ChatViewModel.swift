@@ -5,17 +5,27 @@ import Combine
 /// State container for ``ChatView`` handling message fetching, sending and
 /// WebSocket updates.
 final class ChatViewModel: ObservableObject {
+    /// Decrypted messages currently displayed in the chat view.
     @Published var messages: [Message] = []
+    /// Text typed by the user before sending.
     @Published var input = ""
+    /// Username of the current direct message recipient.
     @Published var recipient = "bob"
+    /// Available chat groups pulled from the backend.
     @Published var groups: [Group] = []
+    /// Identifier of the selected group chat, if any.
     @Published var selectedGroup: Int? = nil
+    /// Binary data for an optional file attachment.
     @Published var attachment: Data? = nil
 
+    /// Backend API wrapper used for all network operations.
     let api: APIService
+    /// WebSocket service providing real-time updates.
     private let socket = WebSocketService()
+    /// Subscriptions to updates from ``socket``.
     private var cancellables = Set<AnyCancellable>()
 
+    /// Create a new view model using an ``APIService`` instance.
     init(api: APIService) {
         self.api = api
     }

@@ -2,7 +2,9 @@ import SwiftUI
 
 /// Simple introductory screen explaining privacy benefits.
 struct OnboardingView: View {
+    /// Tracks whether the onboarding screen has been dismissed.
     @AppStorage("hasSeenOnboarding") private var hasSeen = false
+    /// Fingerprint of the user's public key shown for verification.
     private let fingerprint = CryptoManager.fingerprint()
 
     var body: some View {

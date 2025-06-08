@@ -1,10 +1,13 @@
 import SwiftUI
 
+/// View presenting login and registration forms.
 struct LoginView: View {
+    /// Source of truth for authentication fields and actions.
     @StateObject var viewModel: LoginViewModel
 
     var body: some View {
         VStack(spacing: 12) {
+            // Toggle between registration and login forms.
             if viewModel.isRegistering {
                 TextField("Username", text: $viewModel.username)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -26,6 +29,7 @@ struct LoginView: View {
                 }
                 Button("Create Account") { viewModel.isRegistering = true }
             }
+            // Display backend error messages inline.
             if let error = viewModel.errorMessage {
                 Text(error).foregroundColor(.red)
                     .accessibilityLabel("Error: \(error)")

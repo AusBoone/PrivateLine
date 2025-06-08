@@ -3,6 +3,7 @@ import Foundation
 /// Simple persistence layer for caching messages locally on disk.
 /// This is not a full database but provides minimal offline support.
 enum MessageStore {
+    /// Location of the JSON file used for caching messages.
     private static var fileURL: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("messages.json")

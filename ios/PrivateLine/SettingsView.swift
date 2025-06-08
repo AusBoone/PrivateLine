@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Simple settings screen allowing logout and session revocation.
 struct SettingsView: View {
+    /// API service instance for performing logout and revocation calls.
     @ObservedObject var api: APIService
     /// Persisted user preference controlling the color scheme.
     @AppStorage("isDarkMode") private var isDarkMode = false
