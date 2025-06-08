@@ -240,7 +240,6 @@ function Chat() {
     // State variable to manage the message input field
     const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
-  const [socket, setSocket] = useState(null);
   const [privateKey, setPrivateKey] = useState(null);
   const [signKey, setSignKey] = useState(null);
   const [recipient, setRecipient] = useState('');
@@ -318,7 +317,6 @@ function Chat() {
         }
 
         s = io(process.env.REACT_APP_API_URL || 'http://localhost:5000');
-        setSocket(s);
 
         s.on('new_message', async (payload) => {
           let text = payload.content;
@@ -374,14 +372,6 @@ function Chat() {
         setMessages((prev) => prev.filter((m) => m.id !== id));
       } catch (e) {
         console.error('Delete failed', e);
-      }
-    };
-
-    const markRead = async (id) => {
-      try {
-        await api.post(`/api/messages/${id}/read`);
-      } catch (e) {
-        // ignore
       }
     };
 
@@ -468,7 +458,6 @@ function Chat() {
       }
     };
 
-    // ... (add other Chat component logic, like fetching and displaying messages)
 
     return (
       <Box sx={{ display: 'flex', height: 'calc(100vh - 64px)' }}>
