@@ -1,3 +1,5 @@
+// Navigation bar component providing navigation links, logout handling and a
+// dark/light theme toggle across the app.
 import React from 'react';
 import { Link, useHistory } from 'react-router-dom';
 import api from '../api';
@@ -14,6 +16,14 @@ import Brightness7Icon from '@mui/icons-material/Brightness7';
 function NavigationBar({ onToggleTheme, currentTheme }) {
   const history = useHistory();
 
+  /**
+   * Log out the current user by revoking the refresh token and clearing any
+   * client-side storage related to authentication. The user is redirected back
+   * to the login page once cleanup completes.
+   *
+   * @async
+   * @returns {Promise<void>} resolves when the logout process has finished
+   */
   const handleLogout = async () => {
     try {
       await api.post('/api/revoke');
@@ -33,6 +43,7 @@ function NavigationBar({ onToggleTheme, currentTheme }) {
         <Typography variant="h6" sx={{ flexGrow: 1 }}>
           PrivateLine
         </Typography>
+        {/* Main navigation links */}
         <Button color="inherit" component={Link} to="/login">
           Login
         </Button>
@@ -48,6 +59,7 @@ function NavigationBar({ onToggleTheme, currentTheme }) {
         <Button color="inherit" onClick={handleLogout}>
           Logout
         </Button>
+        {/* Switch between light and dark themes */}
         <IconButton color="inherit" onClick={onToggleTheme} sx={{ ml: 1 }}>
           {currentTheme === 'dark' ? <Brightness7Icon /> : <Brightness4Icon />}
         </IconButton>
