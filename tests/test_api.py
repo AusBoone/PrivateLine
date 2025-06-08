@@ -1,6 +1,5 @@
 """Integration tests exercising the PrivateLine REST API."""
 
-import json
 import os
 import base64
 import io
