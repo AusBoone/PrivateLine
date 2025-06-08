@@ -6,7 +6,7 @@ import SwiftUI
 struct ChatView: View {
     /// Object that manages message data and network calls.
     @StateObject var viewModel: ChatViewModel
-    /// Tracks whether the file picker modal is visible.
+    /// Tracks whether the file picker modal is visible when attaching files.
     @State private var showPicker = false
 
     var body: some View {
@@ -21,11 +21,14 @@ struct ChatView: View {
                         viewModel.selectedGroup = nil
                         viewModel.recipient = val
                     }
+                    // Reload messages for the newly selected conversation
                     Task { await viewModel.load() }
                 })) {
+                // Hardcoded demo users for direct chats
                 ForEach(["alice","bob","carol"], id: \ .self) { u in
                     Text(u).tag(u)
                 }
+                // Dynamically loaded group conversations
                 ForEach(viewModel.groups) { g in
                     Text(g.name).tag("g\(g.id)")
                 }
@@ -41,6 +44,7 @@ struct ChatView: View {
                             .foregroundColor(.gray)
                     }
                     if let fid = msg.file_id {
+                        // Download link for an optional file attachment
                         Link("attachment", destination: URL(string: "\(viewModel.api.baseURLString)/files/\(fid)")!)
                     }
                 }
@@ -48,8 +52,10 @@ struct ChatView: View {
             }
             // Input field, optional attachment picker and send button.
             HStack {
+                // Text field bound to the view model's input
                 TextField("Message", text: $viewModel.input)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
+                // Optional attachment picker presented modally
                 Button("Attach") {
                     showPicker = true
                 }
@@ -58,15 +64,19 @@ struct ChatView: View {
                         viewModel.attachment = data
                     }
                 }
+                // Tapping the send icon encrypts and uploads the message
                 Button(action: { Task { await viewModel.send() } }) {
                     Image(systemName: "paperplane.fill")
                 }
                 .accessibilityLabel("Send message")
             }
         }
+        // Load initial messages and connect the WebSocket when shown
         .onAppear { Task { await viewModel.load() } }
+        // Persist state and close the socket when the view disappears
         .onDisappear { viewModel.disconnect() }
         .padding()
+        // Animate list updates when new messages arrive
         .animation(.default, value: viewModel.messages)
     }
 }

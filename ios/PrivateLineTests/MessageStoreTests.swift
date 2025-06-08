@@ -17,6 +17,7 @@ final class MessageStoreTests: XCTestCase {
     }
 
     func testSaveLoadRoundTrip() throws {
+        // Persist messages then verify they round-trip correctly
         let messages = [
             Message(id: 1, content: "Hi", file_id: nil, read: true),
             Message(id: 2, content: "Bye", file_id: nil, read: false)

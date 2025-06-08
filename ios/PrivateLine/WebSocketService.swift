@@ -20,8 +20,10 @@ class WebSocketService: ObservableObject {
               let url = URL(string: urlString) else { return }
         var request = URLRequest(url: url)
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        // Create and start the WebSocket task
         task = session.webSocketTask(with: request)
         task?.resume()
+        // Begin listening for incoming messages
         listen()
     }
 
@@ -37,6 +39,7 @@ class WebSocketService: ObservableObject {
                    let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let b64 = payload["content"] as? String {
                     var plaintext: String?
+                    // Decrypt depending on whether this is a group message
                     if let gid = payload["group_id"] as? Int, let ct = Data(base64Encoded: b64) {
                         plaintext = try? CryptoManager.decryptGroupMessage(ct, groupId: gid)
                     } else {
@@ -51,6 +54,7 @@ class WebSocketService: ObservableObject {
                     }
                 }
             }
+            // Continue listening for the next message
             self?.listen()
         }
     }

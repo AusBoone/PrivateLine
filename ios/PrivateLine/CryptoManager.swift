@@ -64,6 +64,7 @@ enum CryptoManager {
     static func encryptMessage(_ message: String) throws -> Data {
         let key = try key()
         let data = Data(message.utf8)
+        // Encrypt and authenticate the data using AES-GCM
         let sealed = try AES.GCM.seal(data, using: key)
         guard let combined = sealed.combined else {
             throw CocoaError(.coderValueNotFound)
@@ -74,6 +75,7 @@ enum CryptoManager {
     /// Decrypt ciphertext previously produced by ``encryptMessage``.
     static func decryptMessage(_ data: Data) throws -> String {
         let key = try key()
+        // Open the sealed box and verify authenticity
         let sealed = try AES.GCM.SealedBox(combined: data)
         let decrypted = try AES.GCM.open(sealed, using: key)
         return String(decoding: decrypted, as: UTF8.self)
@@ -222,6 +224,7 @@ enum CryptoManager {
         guard let key = rsaPrivateKey else { throw CocoaError(.coderValueNotFound) }
         let data = message.data(using: .utf8)!
         var error: Unmanaged<CFError>?
+        // Produce a PSS signature over the UTF-8 bytes
         guard let sig = SecKeyCreateSignature(key, .rsaSignatureMessagePSSSHA256, data as CFData, &error) as Data? else {
             throw error!.takeRetainedValue() as Error
         }
@@ -234,6 +237,7 @@ enum CryptoManager {
             .replacingOccurrences(of: "-----BEGIN PUBLIC KEY-----", with: "")
             .replacingOccurrences(of: "-----END PUBLIC KEY-----", with: "")
             .replacingOccurrences(of: "\n", with: "")
+        // Compute the SHA256 hash of the DER data
         let data = Data(base64Encoded: b64) ?? Data()
         let hash = SHA256.hash(data: data)
         return hash.compactMap { String(format: "%02x", $0) }.joined()

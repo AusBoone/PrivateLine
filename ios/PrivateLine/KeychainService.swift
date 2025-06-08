@@ -14,6 +14,7 @@ struct KeychainService {
             kSecAttrAccount as String: account,
             kSecValueData as String: data
         ]
+        // Remove any existing item then store the new data
         SecItemDelete(query as CFDictionary)
         SecItemAdd(query as CFDictionary, nil)
     }
@@ -31,6 +32,7 @@ struct KeychainService {
         }
 
         var item: AnyObject?
+        // Attempt to read the value from the keychain
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         guard status == errSecSuccess, let data = item as? Data else {
             return nil
@@ -41,6 +43,7 @@ struct KeychainService {
     /// Persist the JWT token returned by the backend in the keychain.
     static func saveToken(_ token: String) {
         if let data = token.data(using: .utf8) {
+            // Store the token string as UTF-8 data
             save(tokenKey, data: data)
         }
     }
@@ -50,6 +53,7 @@ struct KeychainService {
         guard let data = loadData(account: tokenKey, context: context) else {
             return nil
         }
+        // Convert the data back to a String
         return String(data: data, encoding: .utf8)
     }
 
@@ -59,6 +63,7 @@ struct KeychainService {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: tokenKey
         ]
+        // Delete the keychain entry
         SecItemDelete(query as CFDictionary)
     }
 }

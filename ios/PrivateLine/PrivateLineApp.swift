@@ -12,6 +12,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 /// In a production application the device token would be sent
 /// to the backend so that APNs can deliver new message alerts.
 private func configureNotifications() {
+    // Ask the user for permission to send push notifications
     NotificationManager.requestAuthorization()
 }
 
@@ -22,6 +23,7 @@ struct PrivateLineApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
     /// Perform one-time configuration when the app starts.
     init() {
+        // Configure push notifications right away
         configureNotifications()
     }
     var body: some Scene {

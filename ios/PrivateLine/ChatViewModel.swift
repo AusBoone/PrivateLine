@@ -35,16 +35,22 @@ final class ChatViewModel: ObservableObject {
         // Load cached messages first for offline support
         messages = MessageStore.load()
         do {
+            // Retrieve available chat groups
             groups = try await api.fetchGroups()
+            // Fetch either direct or group conversation history
             let fetched = try await (selectedGroup != nil ? api.fetchGroupMessages(selectedGroup!) : api.fetchMessages())
             messages = fetched
+            // Mark unread messages as read on the server
             for msg in fetched where msg.read != true && (msg.id != 0) {
                 try? await api.markMessageRead(id: msg.id)
             }
+            // Persist the updated history locally
             MessageStore.save(fetched)
+            // Establish WebSocket connection for real-time updates
             if let token = api.authToken {
                 socket.connect(token: token)
             }
+            // Update local messages whenever new ones arrive
             socket.$messages.sink { [weak self] msgs in
                 self?.messages = msgs
                 MessageStore.save(msgs)
@@ -59,14 +65,18 @@ final class ChatViewModel: ObservableObject {
         do {
             var fileId: Int? = nil
             if let data = attachment {
+                // Upload attachment first so the returned id can be included
                 fileId = try await api.uploadFile(data: data, filename: "file")
                 attachment = nil
             }
             if let gid = selectedGroup {
+                // Send to the selected group chat
                 try await api.sendGroupMessage(input, groupId: gid, fileId: fileId)
             } else {
+                // Send a direct message
                 try await api.sendMessage(input, to: recipient, fileId: fileId)
             }
+            // Optimistically append the sent message locally
             let msg = Message(id: Int(Date().timeIntervalSince1970), content: input, file_id: fileId, read: true)
             messages.append(msg)
             MessageStore.save(messages)
@@ -78,6 +88,7 @@ final class ChatViewModel: ObservableObject {
 
     /// Persist cached messages and close the WebSocket connection.
     func disconnect() {
+        // Tear down the socket and store the latest messages
         socket.disconnect()
         MessageStore.save(messages)
     }
