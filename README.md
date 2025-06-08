@@ -93,7 +93,17 @@ npm test
 The tests exercise the Flask API endpoints as well as the React components.
 
 ## iOS Client
-A minimal SwiftUI client is located in the `ios/` directory. Open it with Xcode and run the app while the backend is running locally.
+A minimal SwiftUI client is located in the `ios/` directory. See
+[ios/README.md](ios/README.md) for detailed setup instructions.
+
+- Update `Info.plist` so the `BackendBaseURL` and `WebSocketURL` keys point at
+  your server if it does not run on `localhost`.
+- Run the Swift package tests with
+  `xcodebuild -scheme PrivateLine-Package test` or choose **Product → Test** in
+  Xcode.
+- To receive push notifications, start the backend with `APNS_CERT` and
+  `APNS_TOPIC`. The app's `NotificationManager` will register its APNs token by
+  calling `/api/push-token` after a user signs in.
 
 ## Push Notifications
 The backend can notify offline clients via Apple Push Notification service (APNs)

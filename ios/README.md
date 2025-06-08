@@ -1,11 +1,14 @@
 # iOS Client (SwiftUI)
 
 This directory contains a lightweight SwiftUI client for the PrivateLine backend. It now persists credentials in the Keychain with Face ID/Touch ID protection, caches messages for offline viewing and encrypts outgoing messages locally using CryptoKit.
+See the [project README](../README.md) for backend configuration and environment
+variables.
 
 ## Getting Started
 
 1. Open the `ios` folder in Xcode.
-2. Modify `Info.plist` if your backend does not run on `localhost`. The keys `BackendBaseURL` and `WebSocketURL` control the REST and WebSocket endpoints.
+2. Open `Info.plist` and change the string values of `BackendBaseURL` and
+   `WebSocketURL` if your backend does not run on `localhost`.
 3. Build and run the app in the iOS simulator.
 
 After launching the app you will be greeted with a short onboarding flow describing encryption and privacy. You can then create an account or log in. Messages are loaded from local storage first and updated in real time via WebSockets.
