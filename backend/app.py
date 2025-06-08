@@ -12,7 +12,6 @@ from flask_jwt_extended import (
     JWTManager,
     get_jwt_identity,
     verify_jwt_in_request,
-    get_jwt,
 )
 from flask_socketio import SocketIO, disconnect, join_room
 from dotenv import load_dotenv
