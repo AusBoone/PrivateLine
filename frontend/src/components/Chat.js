@@ -19,10 +19,18 @@ import { arrayBufferToBase64, base64ToArrayBuffer } from '../utils/encoding';
 import { loadKeyMaterial } from '../utils/secureStore';
 import { setupWebPush } from '../utils/push';
 
-// Chat groups loaded from the backend
-// Each has {id, name}
+// Chat groups loaded from the backend. Each entry contains
+// an ``id`` and ``name`` used to populate the sidebar.
 
 
+/**
+ * Convert a PEM encoded private key into a CryptoKey for use with the
+ * Web Crypto API.
+ *
+ * @param {string} pem - PEM formatted key material.
+ * @param {string} [usage='decrypt'] - Key usage, either 'decrypt' or 'sign'.
+ * @returns {Promise<CryptoKey>} Imported key ready for cryptographic ops.
+ */
 function pemToCryptoKey(pem, usage = 'decrypt') {
   const b64 = pem
     .replace('-----BEGIN PRIVATE KEY-----', '')
@@ -41,6 +49,12 @@ function pemToCryptoKey(pem, usage = 'decrypt') {
   );
 }
 
+/**
+ * Compute the SHA-256 fingerprint of a PEM encoded public key.
+ *
+ * @param {string} pem - PEM formatted public key.
+ * @returns {Promise<string>} Hex formatted fingerprint.
+ */
 async function fingerprintPem(pem) {
   const b64 = pem
     .replace('-----BEGIN PUBLIC KEY-----', '')
@@ -366,6 +380,11 @@ function Chat() {
       fetchUsers();
     }, []);
 
+    /**
+     * Delete ``id`` from the backend and remove it from local state.
+     *
+     * @param {number} id - Message identifier.
+     */
     const deleteMessage = async (id) => {
       try {
         await api.delete(`/api/messages/${id}`);
@@ -375,6 +394,10 @@ function Chat() {
       }
     };
 
+    /**
+     * Encrypt and send the current message to either the selected user or
+     * group. Attachments are uploaded first and referenced by ID.
+     */
     const handleSubmit = async (event) => {
       event.preventDefault();
 
