@@ -89,6 +89,15 @@ def test_login_invalid_credentials(client):
     assert resp.status_code == 401
 
 
+def test_register_duplicate_email(client):
+    register_user(client, 'alice')
+    resp = client.post(
+        '/api/register',
+        data={'username': 'bob', 'email': 'alice@example.com', 'password': 'secret'},
+    )
+    assert resp.status_code == 400
+
+
 def test_register_and_login(client):
     resp = register_user(client)
     assert resp.status_code == 201

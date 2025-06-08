@@ -119,10 +119,15 @@ class Register(Resource):
         if '@' not in data['email']:
             return {"message": "Invalid email address."}, 400
 
-        # Check if the user already exists
+        # Check if the username is already taken
         user = User.query.filter_by(username=data['username']).first()
         if user:
             return {"message": "A user with that username already exists."}, 400
+
+        # Check if the email is already registered
+        user = User.query.filter_by(email=data['email']).first()
+        if user:
+            return {"message": "A user with that email already exists."}, 400
 
         if len(data['password']) < 6:
             return {"message": "Password must be at least 6 characters."}, 400
