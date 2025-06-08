@@ -17,7 +17,7 @@ from cryptography.hazmat.backends import default_backend
 os.environ.setdefault("AES_KEY", base64.b64encode(os.urandom(32)).decode())
 
 from backend.app import app, db
-from backend.models import User, Message
+from backend.models import User
 
 @pytest.fixture
 def client():
@@ -460,7 +460,7 @@ def test_message_delete_and_read(client):
     sig = sign_content(pk, b64)
     resp = client.post('/api/messages', data={'content': b64, 'recipient': 'alice', 'signature': sig}, headers=headers)
     assert resp.status_code == 201
-    msg_id = Message.query.first().id
+    msg_id = resp.get_json()['id']
 
     resp = client.post(f'/api/messages/{msg_id}/read', headers=headers)
     assert resp.status_code == 200
