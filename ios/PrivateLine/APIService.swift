@@ -108,6 +108,7 @@ class APIService: ObservableObject {
         let url = baseURL.appendingPathComponent("register")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         let body = ["username": username, "email": email, "password": password]
         request.httpBody = body.map { "\($0)=\($1)" }.joined(separator: "&").data(using: .utf8)
         let (data, response) = try await session.data(for: request)
