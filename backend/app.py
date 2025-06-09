@@ -77,7 +77,9 @@ api = Api(app)
 # Initialize JWTManager for handling JWT authentication
 jwt = JWTManager(app)
 
-# In-memory set of revoked token identifiers
+# In-memory set of revoked token identifiers. In a real deployment this
+# should be stored in a persistent datastore such as Redis so that tokens
+# remain invalidated across process restarts.
 token_blocklist = set()
 
 @jwt.token_in_blocklist_loader
@@ -110,10 +112,12 @@ from .resources import (
 @socketio.on("connect")
 def socket_connect():
     """Join rooms for the authenticated user when a WebSocket connects."""
+    # If the token is missing or invalid the connection will be rejected.
     try:
         verify_jwt_in_request()
         user_id = get_jwt_identity()
         join_room(str(user_id))
+        # Join all group rooms so the user receives group messages in real time
         from .models import GroupMember
         groups = GroupMember.query.filter_by(user_id=user_id).all()
         for g in groups:

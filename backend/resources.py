@@ -88,10 +88,13 @@ def send_web_push(subscription_json: str, message: str) -> None:
 def send_push_notifications(user_id: int, message: str) -> None:
     """Send notifications to all registered tokens for the user."""
     tokens = PushToken.query.filter_by(user_id=user_id).all()
+    # Each token represents either a web push subscription or an APNs token.
     for t in tokens:
         if t.platform == "web":
+            # Browser push notification
             send_web_push(t.token, message)
         else:
+            # iOS push notification
             send_apns(t.token, message)
 
 """
@@ -345,6 +348,7 @@ class GroupMessages(Resource):
         uid = int(get_jwt_identity())
         if not GroupMember.query.filter_by(group_id=group_id, user_id=uid).first():
             return {"message": "Not a member"}, 403
+        # Use the RequestParser above to validate the incoming form fields
         data = message_parser.parse_args()
         try:
             client_ciphertext = b64decode(data["content"], validate=True)
@@ -456,6 +460,7 @@ class Messages(Resource):
             )
         ).all()
         message_list = []
+        # Iterate over each stored message and decrypt the server layer.
         for msg in messages:
             nonce = b64decode(msg.nonce)
             ciphertext = b64decode(msg.content)
@@ -464,6 +469,7 @@ class Messages(Resource):
             plaintext_bytes = aesgcm.decrypt(nonce, ciphertext, None)
             plaintext_b64 = b64encode(plaintext_bytes).decode()
             try:
+                # Verify the sender's signature to detect tampering
                 user = db.session.get(User, msg.sender_id)
                 user.public_key.verify(
                     b64decode(msg.signature),
@@ -472,6 +478,7 @@ class Messages(Resource):
                     hashes.SHA256(),
                 )
             except Exception:
+                # Skip messages that fail verification
                 continue
             message_list.append({
                 "id": msg.id,
@@ -490,6 +497,7 @@ class Messages(Resource):
         """Store an encrypted message and broadcast it to clients."""
         data = message_parser.parse_args()
 
+        # Arbitrary limit on encrypted payload size to prevent abuse
         if len(data['content']) > 2000:
             return {"message": "Message too long."}, 400
 

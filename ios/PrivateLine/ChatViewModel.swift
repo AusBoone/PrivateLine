@@ -82,7 +82,7 @@ final class ChatViewModel: ObservableObject {
             MessageStore.save(messages)
             input = ""
         } catch {
-            // ignore for now
+            // Ignore transmission errors for the demo app
         }
     }
 

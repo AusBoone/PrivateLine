@@ -26,6 +26,7 @@ class APIService: ObservableObject {
     private let session: URLSession
 
     /// JWT token returned after a successful login.
+    // JWT used for authorizing API requests
     private var token: String? {
         didSet {
             if let token = token {
@@ -50,6 +51,7 @@ class APIService: ObservableObject {
             self.session = s
         } else {
             let config = URLSessionConfiguration.default
+            // PinningDelegate performs certificate pinning for all requests
             self.session = URLSession(configuration: config, delegate: PinningDelegate(), delegateQueue: nil)
         }
 
