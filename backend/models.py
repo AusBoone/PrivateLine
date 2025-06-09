@@ -49,6 +49,7 @@ class Group(db.Model):
     """A chat group used for group messaging."""
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(64), unique=True, nullable=False)
+    # Base64 encoded 256-bit AES key used to encrypt messages for this group.
     aes_key = db.Column(
         db.String(44),
         nullable=False,
@@ -67,6 +68,7 @@ class File(db.Model):
     """Binary file uploaded by a user and stored encrypted."""
     id = db.Column(db.Integer, primary_key=True)
     filename = db.Column(db.String(256), nullable=False)
+    # ``data`` stores nonce + ciphertext produced by AES-GCM
     data = db.Column(db.LargeBinary, nullable=False)
 
 
@@ -106,6 +108,7 @@ class PushToken(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    # Web push endpoint or APNs token
     token = db.Column(db.Text, nullable=False)
     platform = db.Column(db.String(16), nullable=False)
     __table_args__ = (

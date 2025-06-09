@@ -13,6 +13,7 @@ from cryptography.hazmat.backends import default_backend
 # These imports will fail if Flask and related dependencies are not installed.
 # Ensure an AES key is available for the backend before it is imported. Tests
 # run without a .env file so we generate a deterministic key on the fly.
+# Generate a deterministic AES key for tests so encryption is repeatable
 os.environ.setdefault("AES_KEY", base64.b64encode(os.urandom(32)).decode())
 
 from backend.app import app, db
@@ -21,6 +22,7 @@ from backend.models import User
 @pytest.fixture
 def client():
     """Create a test client with an in-memory database."""
+    # Use SQLite in-memory DB so each test starts with a clean state
     app.config['TESTING'] = True
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
     with app.app_context():
@@ -33,6 +35,7 @@ def client():
 
 def register_user(client, username='alice'):
     """Helper to register a user in tests."""
+    # Minimal payload required by /api/register
     data = {
         'username': username,
         'email': f'{username}@example.com',
@@ -43,6 +46,7 @@ def register_user(client, username='alice'):
 
 def login_user(client, username='alice'):
     """Helper to log in a user and return the response."""
+    # Password is fixed as 'secret' for all test users
     return client.post('/api/login', json={
         'username': username,
         'password': 'secret',
@@ -51,6 +55,7 @@ def login_user(client, username='alice'):
 def decrypt_private_key(resp):
     """Return a private key object decrypted from the registration response."""
     from cryptography.hazmat.primitives import serialization
+    # Extract the encryption parameters returned by /api/register
     data = resp.get_json()
     salt = b64decode(data['salt'])
     nonce = b64decode(data['nonce'])
@@ -69,6 +74,7 @@ def decrypt_private_key(resp):
 def sign_content(private_key, content):
     """Return a base64 signature of ``content`` using ``private_key``."""
     from cryptography.hazmat.primitives.asymmetric import padding as asympad
+    # Sign the UTF-8 encoded payload using RSA-PSS
     sig = private_key.sign(
         content.encode(),
         asympad.PSS(mgf=asympad.MGF1(hashes.SHA256()), salt_length=asympad.PSS.MAX_LENGTH),

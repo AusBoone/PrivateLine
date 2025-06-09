@@ -16,6 +16,7 @@ class WebSocketService: ObservableObject {
 
     /// Establish the WebSocket connection using ``token`` for authentication.
     func connect(token: String) {
+        // WebSocketURL is defined in Info.plist and points to the backend
         guard let urlString = Bundle.main.object(forInfoDictionaryKey: "WebSocketURL") as? String,
               let url = URL(string: urlString) else { return }
         var request = URLRequest(url: url)
@@ -32,10 +33,12 @@ class WebSocketService: ObservableObject {
         task?.receive { [weak self] result in
             switch result {
             case .failure:
+                // Connection closed or failed; caller decides whether to reconnect
                 break
             case .success(let message):
                 if case .string(let text) = message,
                    let data = text.data(using: .utf8),
+                   // Payload is a JSON object with ciphertext and optional group id
                    let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let b64 = payload["content"] as? String {
                     var plaintext: String?
