@@ -383,7 +383,11 @@ class GroupMessages(Resource):
         )
         db.session.add(m)
         db.session.commit()
-        socketio.emit("new_message", {"content": data["content"], "group_id": group_id}, to=str(group_id))
+        socketio.emit(
+            "new_message",
+            {"id": m.id, "content": data["content"], "group_id": group_id},
+            to=str(group_id),
+        )
         return {"message": "sent", "id": m.id}, 201
 
 
@@ -560,6 +564,7 @@ class Messages(Resource):
             socketio.emit(
                 "new_message",
                 {
+                    "id": new_message.id,
                     "content": data["content"],
                     "sender_id": current_user_id,
                     "recipient_id": recipient.id,
@@ -573,6 +578,7 @@ class Messages(Resource):
             socketio.emit(
                 "new_message",
                 {
+                    "id": new_message.id,
                     "content": data["content"],
                     "sender_id": current_user_id,
                     "group_id": gid,

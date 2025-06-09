@@ -50,7 +50,8 @@ class WebSocketService: ObservableObject {
                     }
                     if let plaintext = plaintext {
                         let fid = payload["file_id"] as? Int
-                        let msg = Message(id: Int(Date().timeIntervalSince1970), content: plaintext, file_id: fid)
+                        let msgId = payload["id"] as? Int ?? Int(Date().timeIntervalSince1970)
+                        let msg = Message(id: msgId, content: plaintext, file_id: fid, read: true)
                         DispatchQueue.main.async {
                             self?.messages.append(msg)
                         }

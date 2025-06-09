@@ -353,7 +353,13 @@ function Chat() {
           ) {
             setMessages((prev) => [
               ...prev,
-              { id: Date.now(), text, type: 'received', file_id: payload.file_id, read: true },
+              {
+                id: payload.id || Date.now(),
+                text,
+                type: 'received',
+                file_id: payload.file_id,
+                read: true,
+              },
             ]);
           }
         });
@@ -466,7 +472,7 @@ function Chat() {
           setMessages([
             ...messages,
             {
-              id: newId || Date.now(),
+              id: newId,
               text: message,
               type: 'sent',
               file_id: formData.get('file_id'),
