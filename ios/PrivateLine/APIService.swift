@@ -121,8 +121,13 @@ class APIService: ObservableObject {
         request.httpMethod = "POST"
         request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         // Encode the form fields as URL encoded parameters
-        let body = ["username": username, "email": email, "password": password]
-        request.httpBody = body.map { "\($0)=\($1)" }.joined(separator: "&").data(using: .utf8)
+        var comps = URLComponents()
+        comps.queryItems = [
+            URLQueryItem(name: "username", value: username),
+            URLQueryItem(name: "email", value: email),
+            URLQueryItem(name: "password", value: password),
+        ]
+        request.httpBody = comps.query?.data(using: .utf8)
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 201 else {
             throw URLError(.badServerResponse)
@@ -196,11 +201,18 @@ class APIService: ObservableObject {
         let encrypted = try CryptoManager.encryptGroupMessage(content, groupId: groupId)
         let b64 = encrypted.base64EncodedString()
         let sig = try CryptoManager.signMessage(b64).base64EncodedString()
-        var body = "content=\(b64)&group_id=\(groupId)&signature=\(sig)"
+        var comps = URLComponents()
+        var items = [
+            URLQueryItem(name: "content", value: b64),
+            URLQueryItem(name: "group_id", value: String(groupId)),
+            URLQueryItem(name: "signature", value: sig),
+        ]
         if let id = fileId {
-            body.append("&file_id=\(id)")
+            items.append(URLQueryItem(name: "file_id", value: String(id)))
         }
-        request.httpBody = body.data(using: .utf8)
+        comps.queryItems = items
+        request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = comps.query?.data(using: .utf8)
         _ = try await session.data(for: request)
     }
 
@@ -294,11 +306,18 @@ class APIService: ObservableObject {
         let encrypted = try CryptoManager.encryptRSA(content, publicKeyPem: publicKeyPem)
         let b64 = encrypted.base64EncodedString()
         let sig = try CryptoManager.signMessage(b64).base64EncodedString()
-        var body = "content=\(b64)&signature=\(sig)&recipient=\(recipient)"
+        var comps = URLComponents()
+        var items = [
+            URLQueryItem(name: "content", value: b64),
+            URLQueryItem(name: "signature", value: sig),
+            URLQueryItem(name: "recipient", value: recipient),
+        ]
         if let id = fileId {
-            body.append("&file_id=\(id)")
+            items.append(URLQueryItem(name: "file_id", value: String(id)))
         }
-        request.httpBody = body.data(using: .utf8)
+        comps.queryItems = items
+        request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = comps.query?.data(using: .utf8)
         _ = try await session.data(for: request)
     }
 
