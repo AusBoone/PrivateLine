@@ -273,7 +273,8 @@ function Chat() {
 
       async function init() {
         setupWebPush();
-        setUserId(getUserIdFromToken());
+        const uid = getUserIdFromToken();
+        setUserId(uid);
         let key = null;
         const pem = sessionStorage.getItem('private_key_pem');
         if (pem) {
@@ -336,6 +337,9 @@ function Chat() {
         s = io(process.env.REACT_APP_API_URL || 'http://localhost:5000');
 
         s.on('new_message', async (payload) => {
+          if (payload.sender_id === uid) {
+            return;
+          }
           let text = payload.content;
           if (payload.group_id) {
             try {
@@ -354,7 +358,7 @@ function Chat() {
             (payload.group_id && payload.group_id === selectedGroup) ||
             (!payload.group_id &&
               !selectedGroup &&
-              (payload.sender_id === userId || payload.recipient_id === userId))
+              (payload.sender_id === uid || payload.recipient_id === uid))
           ) {
             setMessages((prev) => [
               ...prev,
