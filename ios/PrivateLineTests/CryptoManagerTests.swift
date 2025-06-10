@@ -1,10 +1,13 @@
-// Unit tests for CryptoManager verifying symmetric and group encryption helpers.
+// Unit tests for ``CryptoManager`` verifying symmetric and group encryption
+// helpers including RSA round trips and signing.
 import XCTest
 import CryptoKit
 import Security
 import CommonCrypto
 @testable import PrivateLine
 
+/// Exercises the symmetric, group and RSA helper functions provided by
+/// ``CryptoManager``.
 final class CryptoManagerTests: XCTestCase {
     func testEncryptDecryptMessage() throws {
         // Symmetric encryption roundtrip should restore the original string

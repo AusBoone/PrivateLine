@@ -205,6 +205,8 @@ class APIService: ObservableObject {
     }
 
     /// Encrypt ``data`` and upload it as ``filename``.
+    /// The server returns an identifier which can later be attached to a
+    /// ``Message`` so recipients may download the same file.
     func uploadFile(data: Data, filename: String) async throws -> Int? {
         guard let token = token else { return nil }
         var request = URLRequest(url: baseURL.appendingPathComponent("files"))
@@ -228,6 +230,8 @@ class APIService: ObservableObject {
     }
 
     /// Download and decrypt a previously uploaded file.
+    /// Files are stored encrypted on the server just like messages so the
+    /// client must decrypt them after fetching.
     func downloadFile(id: Int) async throws -> Data {
         guard let token = token else { throw URLError(.userAuthenticationRequired) }
         var request = URLRequest(url: baseURL.appendingPathComponent("files/\(id)"))
@@ -237,7 +241,9 @@ class APIService: ObservableObject {
         return decrypted
     }
 
-    /// Fetch and cache the public key for ``username``.
+    /// Fetch and cache the PEM encoded RSA public key for ``username``.
+    /// The value is looked up once and then stored in ``publicKeyCache`` for
+    /// subsequent calls so repeated message sends do not hit the network.
     private func publicKey(for username: String) async throws -> String {
         if let cached = publicKeyCache[username] {
             return cached
@@ -255,7 +261,10 @@ class APIService: ObservableObject {
         return pem
     }
 
-    /// Fetch and cache the AES key for ``groupId``.
+    /// Retrieve the symmetric AES key used for a group chat from the backend.
+    /// Keys are cached in memory and also persisted via ``CryptoManager`` so
+    /// that subsequent requests can decrypt messages without another network
+    /// call.
     private func groupKey(for groupId: Int) async throws -> String {
         if let cached = groupKeys[groupId] { return cached }
         guard let token = token else { throw URLError(.userAuthenticationRequired) }

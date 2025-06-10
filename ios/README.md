@@ -50,3 +50,22 @@ With these set, you can test push notifications by sending a message to a user
 while the app is in the background on a device or simulator that supports push
 delivery. The backend will use the stored token to send an alert via APNs.
 
+## Test Suite Overview
+
+The Swift package contains a small set of unit tests which can be executed on
+macOS or Linux using `swift test` (or `xcodebuild` on macOS). Each test file
+focuses on a different component:
+
+- `APIServicesTests` exercises the login flow and message APIs using mocked
+  network responses.
+- `CryptoManagerTests` verifies symmetric encryption, group key handling and
+  RSA helpers.
+- `WebSocketServiceTests` ensures the WebSocket wrapper connects and disconnects
+  correctly.
+- `MessageStoreTests` checks that cached messages persist to disk.
+- `PinningDelegateTests` validates the certificate pinning logic used when
+  communicating with the backend.
+
+Running these tests regularly helps ensure the iOS client continues to work
+correctly as new features are added.
+
