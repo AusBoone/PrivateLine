@@ -148,6 +148,8 @@ enum CryptoManager {
     }
 
     /// Derive a 256-bit key from ``password`` and ``salt`` using PBKDF2.
+    /// This is used to encrypt the user's private RSA key material so that
+    /// it can only be unlocked with the correct password.
     private static func deriveKey(password: String, salt: Data) throws -> SymmetricKey {
         var derived = Data(count: 32)
         let pwdData = password.data(using: .utf8)!
@@ -220,6 +222,8 @@ enum CryptoManager {
     }
 
     /// Sign ``message`` using the cached private key with RSA-PSS.
+    /// The signature can be verified by the recipient using the sender's
+    /// public key to ensure the message was not tampered with.
     static func signMessage(_ message: String) throws -> Data {
         guard let key = rsaPrivateKey else { throw CocoaError(.coderValueNotFound) }
         let data = message.data(using: .utf8)!

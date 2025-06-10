@@ -3,6 +3,11 @@ import CryptoKit
 import Security
 @testable import PrivateLine
 
+/// Integration style tests covering ``APIService``. Network calls are mocked so
+/// the logic can be verified without a running backend.
+
+/// Minimal ``URLSession`` subclass returning queued responses for each request
+/// so tests can simulate network interactions.
 final class MockURLSession: URLSession {
     var responses: [(Data, URLResponse)] = []
     private(set) var requests: [URLRequest] = []
@@ -16,6 +21,9 @@ final class MockURLSession: URLSession {
     }
 }
 
+/// Exercises the authentication flow and message endpoints of ``APIService``.
+/// RSA keys and HTTP responses are stubbed out so crypto and parsing logic can
+/// be tested deterministically.
 final class APIServicesTests: XCTestCase {
     var session: MockURLSession!
     var api: APIService!

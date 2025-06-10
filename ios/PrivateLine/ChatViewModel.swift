@@ -13,7 +13,8 @@ final class ChatViewModel: ObservableObject {
     @Published var recipient = "bob"
     /// Available chat groups pulled from the backend.
     @Published var groups: [Group] = []
-    /// Identifier of the selected group chat, if any.
+    /// Identifier of the selected group chat if the user is chatting in a group.
+    /// ``nil`` indicates a direct person-to-person conversation.
     @Published var selectedGroup: Int? = nil
     /// Binary data for an optional file attachment.
     @Published var attachment: Data? = nil
@@ -31,6 +32,8 @@ final class ChatViewModel: ObservableObject {
     }
 
     /// Fetch messages from the server and establish the WebSocket connection.
+    /// Local cached messages are loaded first so the UI can display immediately
+    /// while the network request is in flight.
     func load() async {
         // Load cached messages first for offline support
         messages = MessageStore.load()
@@ -61,6 +64,9 @@ final class ChatViewModel: ObservableObject {
     }
 
     /// Encrypt and send the current input to the selected recipient or group.
+    /// Attachments are uploaded first and the returned file id included in the
+    /// message body. On success the plaintext is appended locally so the UI
+    /// feels responsive while waiting for the server.
     func send() async {
         do {
             var fileId: Int? = nil
@@ -87,6 +93,8 @@ final class ChatViewModel: ObservableObject {
     }
 
     /// Persist cached messages and close the WebSocket connection.
+    /// This should be called when the chat screen disappears so background
+    /// tasks do not continue consuming resources.
     func disconnect() {
         // Tear down the socket and store the latest messages
         socket.disconnect()

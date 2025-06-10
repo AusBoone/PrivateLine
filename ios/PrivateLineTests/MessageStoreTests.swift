@@ -1,8 +1,11 @@
 import XCTest
 @testable import PrivateLine
 
+/// Verifies the lightweight disk cache used by the iOS client.
+
 extension Message: Equatable {}
 
+/// Ensures messages persist to disk and can be reloaded accurately.
 final class MessageStoreTests: XCTestCase {
     let fileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("messages.json")

@@ -1,6 +1,9 @@
 import XCTest
 @testable import PrivateLine
 
+/// Tests certificate comparison logic used by the pinning delegate.
+
+/// Ensures the certificate pinning logic compares DER data correctly.
 final class PinningDelegateTests: XCTestCase {
     func testCertificateDataEquality() throws {
         // Loading the same DER data twice should produce identical certificates

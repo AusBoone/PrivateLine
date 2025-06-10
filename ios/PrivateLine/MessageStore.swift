@@ -2,6 +2,8 @@ import Foundation
 
 /// Simple persistence layer for caching messages locally on disk.
 /// This is not a full database but provides minimal offline support.
+/// Messages are stored in plain JSON because they are already encrypted by
+/// ``CryptoManager`` before being sent to the server.
 enum MessageStore {
     /// Location of the JSON file used for caching messages.
     private static var fileURL: URL {
