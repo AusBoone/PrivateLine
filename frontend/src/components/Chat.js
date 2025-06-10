@@ -18,6 +18,7 @@ import './Chat.css';
 import { arrayBufferToBase64, base64ToArrayBuffer } from '../utils/encoding';
 import { loadKeyMaterial } from '../utils/secureStore';
 import { setupWebPush } from '../utils/push';
+import { getUserIdFromToken } from '../utils/auth';
 
 // Chat groups loaded from the backend. Each entry contains
 // an ``id`` and ``name`` used to populate the sidebar.
@@ -256,6 +257,7 @@ function Chat() {
   const [messages, setMessages] = useState([]);
   const [privateKey, setPrivateKey] = useState(null);
   const [signKey, setSignKey] = useState(null);
+  const [userId, setUserId] = useState(null);
   const [recipient, setRecipient] = useState('');
   const [groups, setGroups] = useState([]);
   const [users, setUsers] = useState([]);
@@ -271,6 +273,7 @@ function Chat() {
 
       async function init() {
         setupWebPush();
+        setUserId(getUserIdFromToken());
         let key = null;
         const pem = sessionStorage.getItem('private_key_pem');
         if (pem) {
@@ -349,7 +352,9 @@ function Chat() {
           }
           if (
             (payload.group_id && payload.group_id === selectedGroup) ||
-            (!payload.group_id && !selectedGroup && payload.recipient_id === recipient)
+            (!payload.group_id &&
+              !selectedGroup &&
+              (payload.sender_id === userId || payload.recipient_id === userId))
           ) {
             setMessages((prev) => [
               ...prev,
