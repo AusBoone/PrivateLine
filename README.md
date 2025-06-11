@@ -48,7 +48,7 @@ To run the application, follow these steps:
    * `JWT_SECRET_KEY` – key used for JWT signatures.
    * `AES_KEY` – base64 encoded 32 byte key used to encrypt persisted messages. A convenient way to generate one is `openssl rand -base64 32`.
    * Optional `DATABASE_URI` if you want to use a database other than the default SQLite file.
-   * Optional `REDIS_URL` for persistent rate limiting storage.
+   * Optional `REDIS_URL` for persistent rate limiting and token blocklist storage.
    * Optional `SOCKETIO_ORIGINS` to restrict WebSocket origins.
    * Optional push notification settings: `APNS_CERT`, `APNS_TOPIC`,
      `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`.
