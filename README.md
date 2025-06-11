@@ -35,7 +35,11 @@ The interface uses the Material-UI component library. It supports a responsive l
 The backend is built using Flask and consists of the following resources:
 1. **Register**: Handles user registration by saving user information, hashed passwords, and public keys to the database. It also returns the encrypted private key, salt, and IV to the frontend for storage.
 2. **Login**: Handles user login by verifying the provided username and password, and returns a JWT access token if the credentials are valid.
-3. **Messages**: Handles fetching and storing messages in the database. Messages are encrypted before storage and decrypted before sending them to the frontend.
+3. **Messages**: Handles fetching and storing messages in the database. Messages
+   are encrypted before storage and decrypted before sending them to the
+   frontend. The retrieval endpoints (`/api/messages` and `/api/groups/<id>/messages`)
+   accept optional `limit` and `offset` query parameters which default to 50 and
+   0 respectively.
 4. **RefreshToken**: Issues a new JWT for an authenticated user when called with a valid token.
 5. **RevokeToken**: Revokes the current JWT so it can no longer be used.
 
