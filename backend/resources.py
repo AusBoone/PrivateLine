@@ -585,12 +585,18 @@ class Messages(Resource):
             return {"message": "Message too long."}, 400
 
         recipient = None
+        gid = data.get('group_id')
         if data.get('recipient'):
             recipient = User.query.filter_by(username=data['recipient']).first()
             if not recipient:
                 return {"message": "Recipient not found."}, 404
-        elif not data.get('group_id'):
+        elif gid is None:
             return {"message": "Recipient or group_id required."}, 400
+        else:
+            # Verify the sender is a member of the target group
+            uid = int(get_jwt_identity())
+            if not GroupMember.query.filter_by(group_id=gid, user_id=uid).first():
+                return {"message": "Not a member"}, 403
 
         # The client sends base64 encoded ciphertext. Decode it before applying
         # server-side encryption for storage.
@@ -626,7 +632,7 @@ class Messages(Resource):
             user_id=current_user_id,
             sender_id=current_user_id,
             recipient_id=recipient.id if recipient else None,
-            group_id=data.get('group_id'),
+            group_id=gid,
             file_id=data.get('file_id'),
             signature=data["signature"],
         )
@@ -653,7 +659,6 @@ class Messages(Resource):
             )
             send_push_notifications(recipient.id, "New message")
         else:
-            gid = data.get('group_id')
             socketio.emit(
                 "new_message",
                 {
