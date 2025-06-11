@@ -119,6 +119,15 @@ environment variables:
 * `VAPID_PRIVATE_KEY` – private key for Web Push messages.
 * `VAPID_SUBJECT` – contact URI shown in Web Push claims.
 
+Example `.env` entries:
+
+```bash
+APNS_CERT=apns.pem
+APNS_TOPIC=com.example.PrivateLine
+VAPID_PRIVATE_KEY=vapid_private.pem
+VAPID_SUBJECT=mailto:admin@example.com
+```
+
 Generate VAPID keys with `npx web-push generate-vapid-keys` and copy the
 public key to `REACT_APP_VAPID_PUBLIC_KEY` for the React frontend. For APNs,
 export your push notification certificate as a `.p12` file and convert it to PEM:
@@ -126,6 +135,21 @@ export your push notification certificate as a `.p12` file and convert it to PEM
 ```bash
 openssl pkcs12 -in cert.p12 -out apns.pem -nodes
 ```
+
+When deploying with Docker, mount your certificate files into the backend
+container and reference them in `.env`. A `docker-compose.yml` snippet looks
+like:
+
+```yaml
+services:
+  backend:
+    volumes:
+      - ./apns.pem:/app/apns.pem:ro
+      - ./vapid_private.pem:/app/vapid_private.pem:ro
+```
+
+Then set `APNS_CERT=/app/apns.pem` and `VAPID_PRIVATE_KEY=/app/vapid_private.pem`
+in your environment file.
 
 After authentication each client calls `POST /api/push-token` with its push
 token and platform (`ios` or `web`). These tokens are stored in the database and
