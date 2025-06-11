@@ -57,13 +57,20 @@ function LoginForm() {
 
       // Check if the login was successful (response status 200)
       if (response.status === 200) {
-        // Store the received JWT so it can be attached to future requests
-        localStorage.setItem('access_token', response.data.access_token);
+        // Decode the returned token to cache the user id for later use
+        try {
+          const payload = JSON.parse(atob(response.data.access_token.split('.')[1]));
+          if (payload.sub) {
+            sessionStorage.setItem('user_id', payload.sub);
+          }
+        } catch (e) {
+          console.error('Failed to decode token', e);
+        }
 
         try {
           const pkResp = await api.get('/api/pinned_keys');
           if (pkResp.status === 200) {
-            localStorage.setItem('pinned_keys', JSON.stringify(pkResp.data.pinned_keys || []));
+            sessionStorage.setItem('pinned_keys', JSON.stringify(pkResp.data.pinned_keys || []));
           }
         } catch (e) {
           console.error('Failed to fetch pinned keys', e);

@@ -36,7 +36,7 @@ if sentry_dsn:
 app = Flask(__name__)
 
 # Enable Cross-Origin Resource Sharing (CORS) for the app
-CORS(app)
+CORS(app, supports_credentials=True)
 
 # SocketIO is used for pushing real-time updates to connected clients. Origins
 # can be restricted via the SOCKETIO_ORIGINS environment variable.
@@ -70,6 +70,10 @@ _jwt_secret = os.environ.get('JWT_SECRET_KEY')
 if not _jwt_secret:
     raise RuntimeError('JWT_SECRET_KEY environment variable not set')
 app.config['JWT_SECRET_KEY'] = _jwt_secret
+app.config['JWT_TOKEN_LOCATION'] = ["headers", "cookies"]
+app.config['JWT_COOKIE_SECURE'] = False
+app.config['JWT_COOKIE_SAMESITE'] = 'Lax'
+app.config['JWT_COOKIE_CSRF_PROTECT'] = False
 
 # Initialize database and migration tools
 db = SQLAlchemy(app)

@@ -30,7 +30,6 @@ beforeAll(() => {
 afterEach(() => {
   jest.clearAllMocks();
   sessionStorage.clear();
-  localStorage.clear();
 });
 
 it('fetches existing messages and shows websocket updates', async () => {
