@@ -392,6 +392,20 @@ def test_push_token_and_notification(monkeypatch, client):
     assert calls
 
 
+def test_push_token_delete(client):
+    register_user(client, 'alice')
+    token = login_user(client, 'alice').get_json()['access_token']
+    headers = {'Authorization': f'Bearer {token}'}
+    resp = client.post('/api/push-token', json={'token': 'tok', 'platform': 'web'}, headers=headers)
+    assert resp.status_code == 200
+
+    resp = client.delete('/api/push-token', json={'token': 'tok'}, headers=headers)
+    assert resp.status_code == 200
+    with app.app_context():
+        from backend.models import PushToken
+        assert PushToken.query.filter_by(token='tok').first() is None
+
+
 def test_group_message_flow(client):
     reg_a = register_user(client, 'alice')
     pk_a = decrypt_private_key(reg_a)

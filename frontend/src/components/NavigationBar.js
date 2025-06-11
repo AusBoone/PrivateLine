@@ -3,6 +3,7 @@
 import React from 'react';
 import { Link, useHistory } from 'react-router-dom';
 import api from '../api';
+import { removeWebPush } from '../utils/push';
 import {
   AppBar,
   Toolbar,
@@ -26,6 +27,7 @@ function NavigationBar({ onToggleTheme, currentTheme }) {
    */
   const handleLogout = async () => {
     try {
+      await removeWebPush();
       await api.post('/api/revoke');
     } catch (e) {
       console.error('Failed to revoke token', e);
