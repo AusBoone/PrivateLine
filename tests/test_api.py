@@ -16,8 +16,16 @@ from cryptography.hazmat.backends import default_backend
 # Generate a deterministic AES key for tests so encryption is repeatable
 os.environ.setdefault("AES_KEY", base64.b64encode(os.urandom(32)).decode())
 
-from backend.app import app, db
+from backend.app import app, db, RedisBlocklist
 from backend.models import User
+
+@pytest.fixture(autouse=True)
+def fake_blocklist(monkeypatch):
+    import fakeredis
+    bl = RedisBlocklist(fakeredis.FakeRedis())
+    monkeypatch.setattr("backend.app.token_blocklist", bl)
+    monkeypatch.setattr("backend.resources.token_blocklist", bl)
+    yield
 
 @pytest.fixture
 def client():

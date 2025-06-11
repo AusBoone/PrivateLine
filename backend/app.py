@@ -14,6 +14,7 @@ from flask_jwt_extended import (
     verify_jwt_in_request,
 )
 from flask_socketio import SocketIO, disconnect, join_room
+import redis
 from dotenv import load_dotenv
 import sentry_sdk
 from sentry_sdk.integrations.flask import FlaskIntegration
@@ -77,10 +78,32 @@ api = Api(app)
 # Initialize JWTManager for handling JWT authentication
 jwt = JWTManager(app)
 
-# In-memory set of revoked token identifiers. In a real deployment this
-# should be stored in a persistent datastore such as Redis so that tokens
-# remain invalidated across process restarts.
-token_blocklist = set()
+# --- JWT Token Blocklist ---
+# Token identifiers (jti) are stored in memory by default.  When a REDIS_URL is
+# configured, use Redis so revoked tokens persist across restarts.
+
+class RedisBlocklist:
+    """Simple set-like interface backed by Redis."""
+
+    def __init__(self, client):
+        self.client = client
+
+    def add(self, jti: str) -> None:
+        self.client.sadd("token_blocklist", jti)
+
+    def __contains__(self, jti: str) -> bool:  # pragma: no cover - trivial
+        return bool(self.client.sismember("token_blocklist", jti))
+
+
+if _redis_url:
+    try:
+        _redis_client = redis.from_url(_redis_url)
+        token_blocklist = RedisBlocklist(_redis_client)
+    except Exception:
+        # Fallback to in-memory store if Redis is unreachable
+        token_blocklist = set()
+else:
+    token_blocklist = set()
 
 @jwt.token_in_blocklist_loader
 def token_in_blocklist_callback(jwt_header, jwt_payload):
