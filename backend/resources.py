@@ -751,6 +751,25 @@ class PushTokenResource(Resource):
             return {"message": "Failed to store token."}, 500
         return {"message": "Token stored."}, 200
 
+    @jwt_required()
+    def delete(self):
+        """Remove a push token for the current user."""
+        data = request.get_json() or {}
+        token = data.get("token")
+        if not token:
+            return {"message": "Token is required."}, 400
+
+        user_id = int(get_jwt_identity())
+        pt = PushToken.query.filter_by(user_id=user_id, token=token).first()
+        if pt:
+            db.session.delete(pt)
+            try:
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                return {"message": "Failed to delete token."}, 500
+        return {"message": "Token deleted."}, 200
+
 class AccountSettings(Resource):
     """Update the authenticated user's account information."""
 

@@ -26,3 +26,23 @@ export async function setupWebPush() {
     console.error('Failed to setup push', e);
   }
 }
+
+/**
+ * Unregister the current push subscription and remove it from the backend.
+ * When unsupported or no subscription exists, the function exits silently.
+ */
+export async function removeWebPush() {
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) return;
+    const sub = await reg.pushManager.getSubscription();
+    if (!sub) return;
+    await api.delete('/api/push-token', { data: { token: JSON.stringify(sub) } });
+    if (typeof sub.unsubscribe === 'function') {
+      await sub.unsubscribe();
+    }
+  } catch (e) {
+    console.error('Failed to remove push', e);
+  }
+}

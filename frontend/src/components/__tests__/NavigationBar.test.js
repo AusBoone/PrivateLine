@@ -5,8 +5,10 @@ import { Router } from 'react-router-dom';
 import { createMemoryHistory } from 'history';
 import NavigationBar from '../NavigationBar';
 import api from '../../api';
+import { removeWebPush } from '../../utils/push';
 
 jest.mock('../../api');
+jest.mock('../../utils/push', () => ({ removeWebPush: jest.fn().mockResolvedValue() }));
 
 afterEach(() => {
   jest.clearAllMocks();
@@ -30,6 +32,7 @@ test('logout revokes token and redirects to login', async () => {
   fireEvent.click(getByRole('button', { name: /logout/i }));
 
   await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/revoke'));
+  await waitFor(() => expect(removeWebPush).toHaveBeenCalled());
   await waitFor(() => expect(localStorage.getItem('access_token')).toBeNull());
   await waitFor(() => expect(history.location.pathname).toBe('/login'));
 });
