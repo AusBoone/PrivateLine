@@ -410,6 +410,9 @@ class GroupMessages(Resource):
             return {"message": "Not a member"}, 403
         # Use the RequestParser above to validate the incoming form fields
         data = message_parser.parse_args()
+        # Arbitrary limit on encrypted payload size to prevent abuse
+        if len(data["content"]) > 2000:
+            return {"message": "Message too long."}, 400
         try:
             client_ciphertext = b64decode(data["content"], validate=True)
         except Exception:

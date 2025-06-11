@@ -438,6 +438,32 @@ def test_group_message_flow(client):
     assert len(msgs) == 1
 
 
+def test_group_message_too_long(client):
+    reg_a = register_user(client, 'alice')
+    pk_a = decrypt_private_key(reg_a)
+    register_user(client, 'bob')
+
+    token_alice = login_user(client, 'alice').get_json()['access_token']
+    headers_alice = {'Authorization': f'Bearer {token_alice}'}
+    resp = client.post('/api/groups', json={'name': 'long'}, headers=headers_alice)
+    gid = resp.get_json()['id']
+
+    client.post(
+        f'/api/groups/{gid}/members',
+        json={'username': 'bob'},
+        headers=headers_alice,
+    )
+
+    long_content = base64.b64encode(b'A' * 1501).decode()
+    sig = sign_content(pk_a, long_content)
+    resp = client.post(
+        f'/api/groups/{gid}/messages',
+        data={'content': long_content, 'signature': sig},
+        headers=headers_alice,
+    )
+    assert resp.status_code == 400
+
+
 def test_group_key_distribution(client):
     register_user(client, 'alice')
     register_user(client, 'bob')
