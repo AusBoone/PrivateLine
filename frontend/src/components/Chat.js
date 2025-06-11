@@ -18,7 +18,7 @@ import './Chat.css';
 import { arrayBufferToBase64, base64ToArrayBuffer } from '../utils/encoding';
 import { loadKeyMaterial } from '../utils/secureStore';
 import { setupWebPush } from '../utils/push';
-import { getUserIdFromToken } from '../utils/auth';
+import { getUserId } from '../utils/auth';
 
 // Chat groups loaded from the backend. Each entry contains
 // an ``id`` and ``name`` used to populate the sidebar.
@@ -273,7 +273,7 @@ function Chat() {
 
       async function init() {
         setupWebPush();
-        const uid = getUserIdFromToken();
+        const uid = getUserId();
         setUserId(uid);
         let key = null;
         const pem = sessionStorage.getItem('private_key_pem');
@@ -432,7 +432,7 @@ function Chat() {
             }
           }
 
-          const pinned = JSON.parse(localStorage.getItem('pinned_keys') || '[]');
+          const pinned = JSON.parse(sessionStorage.getItem('pinned_keys') || '[]');
           const entry = pinned.find((p) => p.username === recipient);
           if (entry) {
             const fp = await fingerprintPem(publicKeyPem);

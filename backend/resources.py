@@ -18,6 +18,8 @@ from flask_jwt_extended import (
     jwt_required,
     get_jwt_identity,
     get_jwt,
+    set_access_cookies,
+    unset_jwt_cookies,
 )
 
 # AES-GCM key for encrypting stored messages
@@ -215,7 +217,9 @@ class Login(Resource):
 
         if user and check_password_hash(user.password_hash, data['password']):
             access_token = create_access_token(identity=str(user.id))
-            return {'access_token': access_token}, 200
+            resp = jsonify({'access_token': access_token})
+            set_access_cookies(resp, access_token)
+            return resp
         return {'message': 'Invalid username or password'}, 401
 
 
@@ -847,7 +851,9 @@ class RefreshToken(Resource):
         """Return a freshly minted token for the current user."""
         user_id = get_jwt_identity()
         new_token = create_access_token(identity=str(user_id))
-        return {"access_token": new_token}, 200
+        resp = jsonify({"access_token": new_token})
+        set_access_cookies(resp, new_token)
+        return resp
 
 
 class RevokeToken(Resource):
@@ -858,4 +864,6 @@ class RevokeToken(Resource):
         """Invalidate the calling JWT by adding its jti to the blocklist."""
         jti = get_jwt()["jti"]
         token_blocklist.add(jti)
-        return {"message": "Token revoked"}, 200
+        resp = jsonify({"message": "Token revoked"})
+        unset_jwt_cookies(resp)
+        return resp

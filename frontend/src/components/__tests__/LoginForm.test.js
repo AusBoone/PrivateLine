@@ -27,7 +27,7 @@ beforeAll(() => {
 
 afterEach(() => {
   jest.clearAllMocks();
-  localStorage.clear();
+  sessionStorage.clear();
 });
 
 test('successful login redirects to chat', async () => {

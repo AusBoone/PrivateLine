@@ -32,9 +32,9 @@ function NavigationBar({ onToggleTheme, currentTheme }) {
     } catch (e) {
       console.error('Failed to revoke token', e);
     } finally {
-      localStorage.removeItem('access_token');
-      localStorage.removeItem('pinned_keys');
+      sessionStorage.removeItem('pinned_keys');
       sessionStorage.removeItem('private_key_pem');
+      sessionStorage.removeItem('user_id');
       history.push('/login');
     }
   };
