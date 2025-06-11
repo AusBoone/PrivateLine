@@ -752,3 +752,25 @@ def test_group_messages_pagination(client):
     assert len(msgs) == 2
     assert msgs[0]['id'] == ids[-2]
     assert msgs[1]['id'] == ids[-3]
+
+
+def test_message_endpoint_group_membership_required(client):
+    register_user(client, 'alice')
+    reg_bob = register_user(client, 'bob')
+
+    token_a = login_user(client, 'alice').get_json()['access_token']
+    headers_a = {'Authorization': f'Bearer {token_a}'}
+    resp = client.post('/api/groups', json={'name': 'memb'}, headers=headers_a)
+    gid = resp.get_json()['id']
+
+    token_b = login_user(client, 'bob').get_json()['access_token']
+    headers_b = {'Authorization': f'Bearer {token_b}'}
+
+    b64 = base64.b64encode(b'hi').decode()
+    sig = sign_content(decrypt_private_key(reg_bob), b64)
+    resp = client.post(
+        '/api/messages',
+        data={'content': b64, 'group_id': gid, 'signature': sig},
+        headers=headers_b,
+    )
+    assert resp.status_code == 403
