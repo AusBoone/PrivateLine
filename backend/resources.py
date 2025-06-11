@@ -376,7 +376,15 @@ class GroupMessages(Resource):
         uid = int(get_jwt_identity())
         if not GroupMember.query.filter_by(group_id=group_id, user_id=uid).first():
             return {"message": "Not a member"}, 403
-        msgs = Message.query.filter_by(group_id=group_id).all()
+        limit = request.args.get("limit", default=50, type=int)
+        offset = request.args.get("offset", default=0, type=int)
+        msgs = (
+            Message.query.filter_by(group_id=group_id)
+            .order_by(Message.timestamp.desc())
+            .limit(limit)
+            .offset(offset)
+            .all()
+        )
         result = []
         for msg in msgs:
             nonce = b64decode(msg.nonce)
@@ -520,12 +528,20 @@ class Messages(Resource):
         from sqlalchemy import or_
 
         current_user_id = int(get_jwt_identity())
-        messages = Message.query.filter(
-            or_(
-                Message.sender_id == current_user_id,
-                Message.recipient_id == current_user_id,
+        limit = request.args.get("limit", default=50, type=int)
+        offset = request.args.get("offset", default=0, type=int)
+        messages = (
+            Message.query.filter(
+                or_(
+                    Message.sender_id == current_user_id,
+                    Message.recipient_id == current_user_id,
+                )
             )
-        ).all()
+            .order_by(Message.timestamp.desc())
+            .limit(limit)
+            .offset(offset)
+            .all()
+        )
         message_list = []
         # Iterate over each stored message and decrypt the server layer.
         for msg in messages:

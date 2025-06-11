@@ -691,3 +691,63 @@ def test_users_endpoint(client):
     resp = client.get('/api/users?q=bo', headers=headers)
     assert resp.status_code == 200
     assert resp.get_json()['users'] == ['bob']
+
+
+def test_messages_pagination(client):
+    reg_bob = register_user(client, 'bob')
+    pk_bob = decrypt_private_key(reg_bob)
+    register_user(client, 'alice')
+
+    token_bob = login_user(client, 'bob').get_json()['access_token']
+    headers_b = {'Authorization': f'Bearer {token_bob}'}
+
+    ids = []
+    for i in range(5):
+        b64 = base64.b64encode(f'm{i}'.encode()).decode()
+        sig = sign_content(pk_bob, b64)
+        resp = client.post(
+            '/api/messages',
+            data={'content': b64, 'recipient': 'alice', 'signature': sig},
+            headers=headers_b,
+        )
+        ids.append(resp.get_json()['id'])
+
+    resp = client.get('/api/messages?limit=2&offset=1', headers=headers_b)
+    assert resp.status_code == 200
+    msgs = resp.get_json()['messages']
+    assert len(msgs) == 2
+    assert msgs[0]['id'] == ids[-2]
+    assert msgs[1]['id'] == ids[-3]
+
+
+def test_group_messages_pagination(client):
+    reg_a = register_user(client, 'alice')
+    pk_a = decrypt_private_key(reg_a)
+    register_user(client, 'bob')
+
+    token_a = login_user(client, 'alice').get_json()['access_token']
+    headers_a = {'Authorization': f'Bearer {token_a}'}
+    resp = client.post('/api/groups', json={'name': 'pag'}, headers=headers_a)
+    gid = resp.get_json()['id']
+
+    token_b = login_user(client, 'bob').get_json()['access_token']
+    headers_b = {'Authorization': f'Bearer {token_b}'}
+    client.post(f'/api/groups/{gid}/members', json={'username': 'bob'}, headers=headers_a)
+
+    ids = []
+    for i in range(4):
+        b64 = base64.b64encode(f'g{i}'.encode()).decode()
+        sig = sign_content(pk_a, b64)
+        resp = client.post(
+            f'/api/groups/{gid}/messages',
+            data={'content': b64, 'signature': sig},
+            headers=headers_a,
+        )
+        ids.append(resp.get_json()['id'])
+
+    resp = client.get(f'/api/groups/{gid}/messages?limit=2&offset=1', headers=headers_b)
+    assert resp.status_code == 200
+    msgs = resp.get_json()['messages']
+    assert len(msgs) == 2
+    assert msgs[0]['id'] == ids[-2]
+    assert msgs[1]['id'] == ids[-3]
