@@ -273,6 +273,66 @@ class Groups(Resource):
         return {"id": g.id, "name": g.name}, 201
 
 
+class GroupMembers(Resource):
+    """Manage membership of a group."""
+
+    @jwt_required()
+    def post(self, group_id):
+        """Join ``group_id`` or invite another user by username or id."""
+        uid = int(get_jwt_identity())
+        g = db.session.get(Group, group_id)
+        if not g:
+            return {"message": "Not found"}, 404
+
+        data = request.get_json() or {}
+
+        target_id = uid
+        if "username" in data:
+            user = User.query.filter_by(username=data["username"]).first()
+            if not user:
+                return {"message": "User not found"}, 404
+            target_id = user.id
+        elif "user_id" in data:
+            user = db.session.get(User, data["user_id"])
+            if not user:
+                return {"message": "User not found"}, 404
+            target_id = user.id
+
+        if target_id != uid and not GroupMember.query.filter_by(group_id=group_id, user_id=uid).first():
+            return {"message": "Not a member"}, 403
+
+        if GroupMember.query.filter_by(group_id=group_id, user_id=target_id).first():
+            return {"message": "Already a member"}, 400
+
+        gm = GroupMember(group_id=group_id, user_id=target_id)
+        db.session.add(gm)
+        db.session.commit()
+        return {"message": "added"}, 201
+
+
+class GroupMemberResource(Resource):
+    """Handle operations on a single group member."""
+
+    @jwt_required()
+    def delete(self, group_id, user_id):
+        """Remove ``user_id`` from ``group_id`` or allow the user to leave."""
+        current = int(get_jwt_identity())
+        g = db.session.get(Group, group_id)
+        if not g:
+            return {"message": "Not found"}, 404
+
+        gm = GroupMember.query.filter_by(group_id=group_id, user_id=user_id).first()
+        if not gm:
+            return {"message": "Not found"}, 404
+
+        if current != user_id and not GroupMember.query.filter_by(group_id=group_id, user_id=current).first():
+            return {"message": "Not a member"}, 403
+
+        db.session.delete(gm)
+        db.session.commit()
+        return {"message": "removed"}, 200
+
+
 class GroupKey(Resource):
     """Return or rotate the AES key for a group."""
 

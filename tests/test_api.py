@@ -397,11 +397,13 @@ def test_group_message_flow(client):
 
     token_bob = login_user(client, 'bob').get_json()['access_token']
     headers_bob = {'Authorization': f'Bearer {token_bob}'}
-    # add bob to group
-    from backend.models import GroupMember
-    with app.app_context():
-        db.session.add(GroupMember(group_id=gid, user_id=2))
-        db.session.commit()
+    # invite bob to group
+    resp = client.post(
+        f'/api/groups/{gid}/members',
+        json={'username': 'bob'},
+        headers=headers_alice,
+    )
+    assert resp.status_code == 201
 
     b64 = base64.b64encode(b'hi').decode()
     sig = sign_content(pk_a, b64)
@@ -422,10 +424,14 @@ def test_group_key_distribution(client):
     resp = client.post('/api/groups', json={'name': 'g1'}, headers=headers_a)
     assert resp.status_code == 201
     gid = resp.get_json()['id']
-    from backend.models import GroupMember, Group
+    from backend.models import Group
+    resp = client.post(
+        f'/api/groups/{gid}/members',
+        json={'username': 'bob'},
+        headers=headers_a,
+    )
+    assert resp.status_code == 201
     with app.app_context():
-        db.session.add(GroupMember(group_id=gid, user_id=2))
-        db.session.commit()
         key_before = db.session.get(Group, gid).aes_key
 
     token_b = login_user(client, 'bob').get_json()['access_token']
@@ -521,11 +527,15 @@ def test_group_message_read_requires_membership(client):
     assert resp.status_code == 201
     gid = resp.get_json()['id']
 
-    from backend.models import GroupMember, User
+    from backend.models import User
+    resp = client.post(
+        f'/api/groups/{gid}/members',
+        json={'username': 'bob'},
+        headers=headers_a,
+    )
+    assert resp.status_code == 201
     with app.app_context():
         bob_id = User.query.filter_by(username='bob').first().id
-        db.session.add(GroupMember(group_id=gid, user_id=bob_id))
-        db.session.commit()
 
     b64 = base64.b64encode(b'hey').decode()
     sig = sign_content(pk_a, b64)
@@ -556,11 +566,15 @@ def test_group_message_id_usage(client):
 
     token_b = login_user(client, 'bob').get_json()['access_token']
     headers_b = {'Authorization': f'Bearer {token_b}'}
-    from backend.models import GroupMember, User
+    from backend.models import User
+    resp = client.post(
+        f'/api/groups/{gid}/members',
+        json={'username': 'bob'},
+        headers=headers_a,
+    )
+    assert resp.status_code == 201
     with app.app_context():
         bob_id = User.query.filter_by(username='bob').first().id
-        db.session.add(GroupMember(group_id=gid, user_id=bob_id))
-        db.session.commit()
 
     b64 = base64.b64encode(b'hello').decode()
     sig = sign_content(pk_a, b64)
@@ -584,6 +598,35 @@ def test_group_message_id_usage(client):
 
     resp = client.get(f'/api/groups/{gid}/messages', headers=headers_a)
     assert resp.get_json()['messages'] == []
+
+
+def test_group_member_invite_and_leave(client):
+    register_user(client, 'alice')
+    register_user(client, 'bob')
+
+    token_a = login_user(client, 'alice').get_json()['access_token']
+    headers_a = {'Authorization': f'Bearer {token_a}'}
+    resp = client.post('/api/groups', json={'name': 'leave'}, headers=headers_a)
+    gid = resp.get_json()['id']
+
+    resp = client.post(
+        f'/api/groups/{gid}/members',
+        json={'username': 'bob'},
+        headers=headers_a,
+    )
+    assert resp.status_code == 201
+
+    token_b = login_user(client, 'bob').get_json()['access_token']
+    headers_b = {'Authorization': f'Bearer {token_b}'}
+    from backend.models import User
+    with app.app_context():
+        bob_id = User.query.filter_by(username='bob').first().id
+
+    resp = client.delete(f'/api/groups/{gid}/members/{bob_id}', headers=headers_b)
+    assert resp.status_code == 200
+
+    resp = client.get(f'/api/groups/{gid}/messages', headers=headers_b)
+    assert resp.status_code == 403
 
 
 def test_users_endpoint(client):

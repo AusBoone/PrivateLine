@@ -95,6 +95,8 @@ from .resources import (
     PublicKey,
     Users,
     Groups,
+    GroupMembers,
+    GroupMemberResource,
     GroupKey,
     GroupMessages,
     FileUpload,
@@ -136,6 +138,8 @@ api.add_resource(Messages, '/api/messages')
 api.add_resource(PublicKey, '/api/public_key/<string:username>')
 api.add_resource(Users, '/api/users')
 api.add_resource(Groups, '/api/groups')
+api.add_resource(GroupMembers, '/api/groups/<int:group_id>/members')
+api.add_resource(GroupMemberResource, '/api/groups/<int:group_id>/members/<int:user_id>')
 api.add_resource(GroupKey, '/api/groups/<int:group_id>/key')
 api.add_resource(GroupMessages, '/api/groups/<int:group_id>/messages')
 api.add_resource(FileUpload, '/api/files')
