@@ -66,7 +66,10 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
     'DATABASE_URI', 'sqlite:///secure_messaging.db'
 )
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'change-me')
+_jwt_secret = os.environ.get('JWT_SECRET_KEY')
+if not _jwt_secret:
+    raise RuntimeError('JWT_SECRET_KEY environment variable not set')
+app.config['JWT_SECRET_KEY'] = _jwt_secret
 
 # Initialize database and migration tools
 db = SQLAlchemy(app)
