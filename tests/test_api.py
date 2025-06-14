@@ -539,6 +539,40 @@ def test_file_download_authorization(client):
     assert resp.status_code == 403
 
 
+def test_filename_sanitization(client):
+    reg = register_user(client, 'alice')
+    pk = decrypt_private_key(reg)
+    token = login_user(client, 'alice').get_json()['access_token']
+    headers = {'Authorization': f'Bearer {token}'}
+    from werkzeug.datastructures import FileStorage
+    from werkzeug.utils import secure_filename
+    unsanitized = '../../evil.txt'
+    fs = FileStorage(stream=io.BytesIO(b'data'), filename=unsanitized)
+    resp = client.post(
+        '/api/files',
+        data={'file': fs},
+        headers=headers,
+        content_type='multipart/form-data',
+    )
+    assert resp.status_code == 201
+    fid = resp.get_json()['file_id']
+    b64 = base64.b64encode(b'x').decode()
+    sig = sign_content(pk, b64)
+    client.post(
+        '/api/messages',
+        data={'content': b64, 'recipient': 'alice', 'file_id': fid, 'signature': sig},
+        headers=headers,
+    )
+    expected = secure_filename(unsanitized)
+    with app.app_context():
+        from backend.models import File
+        assert db.session.get(File, fid).filename == expected
+    resp = client.get(f'/api/files/{fid}', headers=headers)
+    assert resp.status_code == 200
+    cd = resp.headers['Content-Disposition']
+    assert f'filename={expected}' in cd
+
+
 def test_message_delete_and_read(client):
     reg = register_user(client, 'alice')
     pk = decrypt_private_key(reg)
