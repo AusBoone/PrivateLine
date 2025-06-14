@@ -1,6 +1,7 @@
 """REST API resources for PrivateLine."""
 from flask_restful import Resource, reqparse
 from flask import request, jsonify
+from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
@@ -476,12 +477,13 @@ class FileUpload(Resource):
             return {"message": "file required"}, 400
         f = request.files['file']
         data = f.read()
+        sanitized = secure_filename(f.filename)
         nonce = os.urandom(12)
         # Encrypt the raw bytes using the server's symmetric key before writing
         # to the database so that file contents remain confidential at rest.
         ciphertext = aesgcm.encrypt(nonce, data, None)
         stored = nonce + ciphertext
-        file_rec = File(filename=f.filename, data=stored)
+        file_rec = File(filename=sanitized, data=stored)
         db.session.add(file_rec)
         db.session.commit()
         return {"file_id": file_rec.id}, 201
@@ -519,7 +521,8 @@ class FileDownload(Resource):
         from flask import make_response
         resp = make_response(plaintext)
         resp.headers.set("Content-Type", "application/octet-stream")
-        resp.headers.set("Content-Disposition", f"attachment; filename={f.filename}")
+        fname = secure_filename(f.filename)
+        resp.headers.set("Content-Disposition", f"attachment; filename={fname}")
         return resp
 
 class Messages(Resource):
