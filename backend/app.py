@@ -35,12 +35,19 @@ if sentry_dsn:
 # Initialize Flask app and extensions
 app = Flask(__name__)
 
-# Enable Cross-Origin Resource Sharing (CORS) for the app
-CORS(app, supports_credentials=True)
+# Configure allowed origins for CORS and WebSocket connections. A comma
+# separated list in the ``CORS_ORIGINS`` environment variable restricts both
+# Flask and Socket.IO traffic. The default "*" permits all origins.
+_cors_origins = os.environ.get("CORS_ORIGINS", "*")
+if _cors_origins != "*":
+    _cors_origins = [o.strip() for o in _cors_origins.split(",")]
 
-# SocketIO is used for pushing real-time updates to connected clients. Origins
-# can be restricted via the SOCKETIO_ORIGINS environment variable.
-socketio = SocketIO(app, cors_allowed_origins=os.environ.get("SOCKETIO_ORIGINS", "*"))
+# Enable Cross-Origin Resource Sharing (CORS) for the app
+CORS(app, supports_credentials=True, origins=_cors_origins)
+
+# SocketIO is used for pushing real-time updates to connected clients. The same
+# ``CORS_ORIGINS`` setting controls which WebSocket origins are accepted.
+socketio = SocketIO(app, cors_allowed_origins=_cors_origins)
 
 # Initialize rate limiting with a custom key function that prefers the
 # authenticated user id and falls back to the client's IP address.

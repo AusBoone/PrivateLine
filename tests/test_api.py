@@ -808,3 +808,24 @@ def test_message_endpoint_group_membership_required(client):
         headers=headers_b,
     )
     assert resp.status_code == 403
+
+
+def test_cors_origins_applied(monkeypatch):
+    """CORS_ORIGINS should configure both Flask and Socket.IO."""
+    monkeypatch.setenv("CORS_ORIGINS", "http://example.com")
+    import importlib
+    import backend.app as appmod
+    appmod = importlib.reload(appmod)
+
+    client = appmod.app.test_client()
+    resp = client.options(
+        "/api/login",
+        headers={
+            "Origin": "http://example.com",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert resp.headers["Access-Control-Allow-Origin"] == "http://example.com"
+    assert appmod.socketio.server.eio.cors_allowed_origins == [
+        "http://example.com"
+    ]
