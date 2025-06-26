@@ -79,9 +79,9 @@ if not _jwt_secret:
     raise RuntimeError('JWT_SECRET_KEY environment variable not set')
 app.config['JWT_SECRET_KEY'] = _jwt_secret
 app.config['JWT_TOKEN_LOCATION'] = ["headers", "cookies"]
-app.config['JWT_COOKIE_SECURE'] = False
-app.config['JWT_COOKIE_SAMESITE'] = 'Lax'
-app.config['JWT_COOKIE_CSRF_PROTECT'] = False
+app.config['JWT_COOKIE_SECURE'] = os.environ.get("JWT_COOKIE_SECURE", "false").lower() == "true"
+app.config['JWT_COOKIE_SAMESITE'] = os.environ.get("JWT_COOKIE_SAMESITE", "Lax")
+app.config['JWT_COOKIE_CSRF_PROTECT'] = os.environ.get("JWT_COOKIE_CSRF_PROTECT", "false").lower() == "true"
 
 # Initialize database and migration tools
 db = SQLAlchemy(app)

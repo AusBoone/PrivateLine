@@ -55,13 +55,20 @@ To run the application, follow these steps:
    * Optional `REDIS_URL` for persistent rate limiting and token blocklist storage.
    * Optional `CORS_ORIGINS` to restrict allowed origins for both REST and
      WebSocket connections.
-  * Optional push notification settings: `APNS_CERT`, `APNS_TOPIC`,
+   * Optional cookie security settings: `JWT_COOKIE_SECURE`,
+     `JWT_COOKIE_SAMESITE` and `JWT_COOKIE_CSRF_PROTECT`.
+   * Optional push notification settings: `APNS_CERT`, `APNS_TOPIC`,
     `APNS_USE_SANDBOX`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`.
 3. Install backend dependencies with `pip install -r requirements.txt`.
 4. Install frontend dependencies with `npm install` inside the `frontend` directory.
 5. Start the backend with `python backend/app.py` and the frontend with `npm start`.
 6. Open a browser and navigate to the frontend's URL to use the application.
 7. After registering a user, persist the returned `encrypted_private_key`, `salt` and `nonce`. The React client stores these values in IndexedDB so the private key can be decrypted on login. The iOS client saves the same values securely in the Keychain.
+
+### Enabling Secure Cookies
+Set `JWT_COOKIE_SECURE=true` in your environment when deploying behind HTTPS so authentication cookies are marked as secure. `JWT_COOKIE_SAMESITE` and `JWT_COOKIE_CSRF_PROTECT` can also be enabled for additional CSRF mitigation. The defaults remain development-friendly.
+
+Uploaded files are limited to 5&nbsp;MB to prevent abuse. Oversized uploads return `413 Payload Too Large`.
 
 ## Docker
 

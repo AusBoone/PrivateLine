@@ -1,4 +1,9 @@
-"""REST API resources for PrivateLine."""
+"""REST API resources for PrivateLine.
+
+This module defines the Flask-RESTful resources used by the backend. Uploaded
+files are limited to ``MAX_FILE_SIZE`` bytes and message pagination parameters
+are validated for reasonable bounds.
+"""
 from flask_restful import Resource, reqparse
 from flask import request, jsonify
 from werkzeug.utils import secure_filename
@@ -33,6 +38,9 @@ if not _aes_key_env:
     raise RuntimeError("AES_KEY environment variable is required for encryption")
 AES_KEY = b64decode(_aes_key_env)
 aesgcm = AESGCM(AES_KEY)
+
+# Maximum allowed upload size in bytes (5 MB)
+MAX_FILE_SIZE = 5 * 1024 * 1024
 
 
 # Request parser for messages
@@ -387,6 +395,8 @@ class GroupMessages(Resource):
             return {"message": "Not a member"}, 403
         limit = request.args.get("limit", default=50, type=int)
         offset = request.args.get("offset", default=0, type=int)
+        if limit < 1 or limit > 100 or offset < 0:
+            return {"message": "invalid pagination"}, 400
         msgs = (
             Message.query.filter_by(group_id=group_id)
             .order_by(Message.timestamp.desc())
@@ -481,6 +491,8 @@ class FileUpload(Resource):
             return {"message": "file required"}, 400
         f = request.files['file']
         data = f.read()
+        if len(data) > MAX_FILE_SIZE:
+            return {"message": "file too large"}, 413
         sanitized = secure_filename(f.filename)
         nonce = os.urandom(12)
         # Encrypt the raw bytes using the server's symmetric key before writing
@@ -541,6 +553,8 @@ class Messages(Resource):
         current_user_id = int(get_jwt_identity())
         limit = request.args.get("limit", default=50, type=int)
         offset = request.args.get("offset", default=0, type=int)
+        if limit < 1 or limit > 100 or offset < 0:
+            return {"message": "invalid pagination"}, 400
         messages = (
             Message.query.filter(
                 or_(
