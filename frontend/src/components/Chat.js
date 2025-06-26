@@ -19,6 +19,7 @@ import { arrayBufferToBase64, base64ToArrayBuffer } from '../utils/encoding';
 import { loadKeyMaterial } from '../utils/secureStore';
 import { setupWebPush } from '../utils/push';
 import { getUserId } from '../utils/auth';
+import Cookies from 'js-cookie';
 
 // Chat groups loaded from the backend. Each entry contains
 // an ``id`` and ``name`` used to populate the sidebar.
@@ -276,7 +277,7 @@ function Chat() {
         const uid = getUserId();
         setUserId(uid);
         let key = null;
-        const pem = sessionStorage.getItem('private_key_pem');
+        const pem = Cookies.get('private_key_pem');
         if (pem) {
           try {
             key = await pemToCryptoKey(pem);
@@ -432,7 +433,7 @@ function Chat() {
             }
           }
 
-          const pinned = JSON.parse(sessionStorage.getItem('pinned_keys') || '[]');
+          const pinned = JSON.parse(Cookies.get('pinned_keys') || '[]');
           const entry = pinned.find((p) => p.username === recipient);
           if (entry) {
             const fp = await fingerprintPem(publicKeyPem);

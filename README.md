@@ -55,8 +55,8 @@ To run the application, follow these steps:
    * Optional `REDIS_URL` for persistent rate limiting and token blocklist storage.
    * Optional `CORS_ORIGINS` to restrict allowed origins for both REST and
      WebSocket connections.
-   * Optional push notification settings: `APNS_CERT`, `APNS_TOPIC`,
-     `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`.
+  * Optional push notification settings: `APNS_CERT`, `APNS_TOPIC`,
+    `APNS_USE_SANDBOX`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`.
 3. Install backend dependencies with `pip install -r requirements.txt`.
 4. Install frontend dependencies with `npm install` inside the `frontend` directory.
 5. Start the backend with `python backend/app.py` and the frontend with `npm start`.
@@ -117,6 +117,7 @@ environment variables:
 
 * `APNS_CERT` – path to the PEM certificate used for APNs.
 * `APNS_TOPIC` – the bundle identifier of your iOS app.
+* `APNS_USE_SANDBOX` – set to `false` when using production APNs.
 * `VAPID_PRIVATE_KEY` – private key for Web Push messages.
 * `VAPID_SUBJECT` – contact URI shown in Web Push claims.
 
@@ -125,6 +126,7 @@ Example `.env` entries:
 ```bash
 APNS_CERT=apns.pem
 APNS_TOPIC=com.example.PrivateLine
+APNS_USE_SANDBOX=true
 VAPID_PRIVATE_KEY=vapid_private.pem
 VAPID_SUBJECT=mailto:admin@example.com
 ```
@@ -149,8 +151,9 @@ services:
       - ./vapid_private.pem:/app/vapid_private.pem:ro
 ```
 
-Then set `APNS_CERT=/app/apns.pem` and `VAPID_PRIVATE_KEY=/app/vapid_private.pem`
-in your environment file.
+Then set `APNS_CERT=/app/apns.pem`, `APNS_USE_SANDBOX=true` (or `false` for
+production) and `VAPID_PRIVATE_KEY=/app/vapid_private.pem` in your environment
+file.
 
 After authentication each client calls `POST /api/push-token` with its push
 token and platform (`ios` or `web`). These tokens are stored in the database and
