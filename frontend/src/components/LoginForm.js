@@ -11,6 +11,7 @@ import { useHistory, useLocation } from 'react-router-dom';
 import api from '../api';
 import { loadKeyMaterial } from '../utils/secureStore';
 import { base64ToArrayBuffer } from '../utils/encoding';
+import Cookies from 'js-cookie';
 
 /**
  * LoginForm Component
@@ -61,7 +62,7 @@ function LoginForm() {
         try {
           const payload = JSON.parse(atob(response.data.access_token.split('.')[1]));
           if (payload.sub) {
-            sessionStorage.setItem('user_id', payload.sub);
+            Cookies.set('user_id', payload.sub, { secure: true, sameSite: 'lax' });
           }
         } catch (e) {
           console.error('Failed to decode token', e);
@@ -70,7 +71,7 @@ function LoginForm() {
         try {
           const pkResp = await api.get('/api/pinned_keys');
           if (pkResp.status === 200) {
-            sessionStorage.setItem('pinned_keys', JSON.stringify(pkResp.data.pinned_keys || []));
+            Cookies.set('pinned_keys', JSON.stringify(pkResp.data.pinned_keys || []), { secure: true, sameSite: 'lax' });
           }
         } catch (e) {
           console.error('Failed to fetch pinned keys', e);
@@ -104,7 +105,7 @@ function LoginForm() {
               ciphertext
             );
             const privateKeyPem = new TextDecoder().decode(pkBuffer);
-            sessionStorage.setItem('private_key_pem', privateKeyPem);
+            Cookies.set('private_key_pem', privateKeyPem, { secure: true, sameSite: 'lax' });
           }
         } catch (e) {
           console.error('Failed to load private key', e);

@@ -4,6 +4,7 @@ import React from 'react';
 import { Link, useHistory } from 'react-router-dom';
 import api from '../api';
 import { removeWebPush } from '../utils/push';
+import Cookies from 'js-cookie';
 import {
   AppBar,
   Toolbar,
@@ -32,9 +33,9 @@ function NavigationBar({ onToggleTheme, currentTheme }) {
     } catch (e) {
       console.error('Failed to revoke token', e);
     } finally {
-      sessionStorage.removeItem('pinned_keys');
-      sessionStorage.removeItem('private_key_pem');
-      sessionStorage.removeItem('user_id');
+      Cookies.remove('pinned_keys');
+      Cookies.remove('private_key_pem');
+      Cookies.remove('user_id');
       history.push('/login');
     }
   };

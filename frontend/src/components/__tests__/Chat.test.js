@@ -29,7 +29,9 @@ beforeAll(() => {
 
 afterEach(() => {
   jest.clearAllMocks();
-  sessionStorage.clear();
+  document.cookie = 'user_id=; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+  document.cookie = 'private_key_pem=; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+  document.cookie = 'pinned_keys=; expires=Thu, 01 Jan 1970 00:00:00 GMT';
 });
 
 it('fetches existing messages and shows websocket updates', async () => {

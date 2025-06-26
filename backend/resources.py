@@ -9,11 +9,14 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
 from cryptography.hazmat.backends import default_backend
+from cryptography.exceptions import InvalidSignature
 from base64 import b64encode, b64decode
+import binascii
 import os
 from .models import User, Message, PinnedKey, PushToken
 from .models import Group, GroupMember, File
 from .app import db, app, socketio, token_blocklist
+from sqlalchemy.exc import SQLAlchemyError
 from flask_jwt_extended import (
     create_access_token,
     jwt_required,
@@ -62,7 +65,8 @@ def send_apns(token: str, message: str) -> None:
         topic = os.environ.get("APNS_TOPIC")
         if not cert or not topic:
             return
-        client = APNsClient(cert, use_sandbox=True)
+        use_sandbox = os.environ.get("APNS_USE_SANDBOX", "true").lower() != "false"
+        client = APNsClient(cert, use_sandbox=use_sandbox)
         payload = Payload(alert=message, sound="default", badge=1)
         client.send_notification(token, payload, topic=topic)
     except Exception as e:
@@ -189,7 +193,7 @@ class Register(Resource):
         try:
             db.session.add(new_user)
             db.session.commit()
-        except Exception:
+        except SQLAlchemyError:
             app.logger.exception("Failed to register user")
             db.session.rollback()
             return {"message": "Registration failed."}, 500
@@ -403,7 +407,7 @@ class GroupMessages(Resource):
                     padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
                     hashes.SHA256(),
                 )
-            except Exception:
+            except InvalidSignature:
                 continue
             result.append({
                 "id": msg.id,
@@ -428,11 +432,11 @@ class GroupMessages(Resource):
             return {"message": "Message too long."}, 400
         try:
             client_ciphertext = b64decode(data["content"], validate=True)
-        except Exception:
+        except (binascii.Error, ValueError):
             return {"message": "Invalid base64 content."}, 400
         try:
             sig = b64decode(data["signature"], validate=True)
-        except Exception:
+        except (binascii.Error, ValueError):
             return {"message": "Invalid signature."}, 400
         user = db.session.get(User, uid)
         try:
@@ -442,7 +446,7 @@ class GroupMessages(Resource):
                 padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
                 hashes.SHA256(),
             )
-        except Exception:
+        except InvalidSignature:
             return {"message": "Signature verification failed."}, 400
         # The server encrypts the already encrypted payload once more before
         # storing it so that it remains confidential even if the database is
@@ -567,7 +571,7 @@ class Messages(Resource):
                     padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
                     hashes.SHA256(),
                 )
-            except Exception:
+            except InvalidSignature:
                 # Skip messages that fail verification
                 continue
             message_list.append({
@@ -609,11 +613,11 @@ class Messages(Resource):
         # server-side encryption for storage.
         try:
             client_ciphertext = b64decode(data["content"], validate=True)
-        except Exception:
+        except (binascii.Error, ValueError):
             return {"message": "Invalid base64 content."}, 400
         try:
             sig = b64decode(data["signature"], validate=True)
-        except Exception:
+        except (binascii.Error, ValueError):
             return {"message": "Invalid signature."}, 400
 
         sender = db.session.get(User, int(get_jwt_identity()))
@@ -624,7 +628,7 @@ class Messages(Resource):
                 padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
                 hashes.SHA256(),
             )
-        except Exception:
+        except InvalidSignature:
             return {"message": "Signature verification failed."}, 400
 
         nonce = os.urandom(12)
@@ -646,7 +650,7 @@ class Messages(Resource):
         try:
             db.session.add(new_message)
             db.session.commit()
-        except Exception:
+        except SQLAlchemyError:
             app.logger.exception("Failed to store message")
             db.session.rollback()
             return {"message": "Failed to store message."}, 500
@@ -750,7 +754,7 @@ class PinnedKeys(Resource):
             db.session.add(pk)
         try:
             db.session.commit()
-        except Exception:
+        except SQLAlchemyError:
             db.session.rollback()
             return {"message": "Failed to store pinned key."}, 500
         return {"message": "Pinned key stored."}, 200
@@ -777,7 +781,7 @@ class PushTokenResource(Resource):
             db.session.add(pt)
         try:
             db.session.commit()
-        except Exception:
+        except SQLAlchemyError:
             db.session.rollback()
             return {"message": "Failed to store token."}, 500
         return {"message": "Token stored."}, 200
@@ -796,7 +800,7 @@ class PushTokenResource(Resource):
             db.session.delete(pt)
             try:
                 db.session.commit()
-            except Exception:
+            except SQLAlchemyError:
                 db.session.rollback()
                 return {"message": "Failed to delete token."}, 500
         return {"message": "Token deleted."}, 200
@@ -839,7 +843,7 @@ class AccountSettings(Resource):
 
         try:
             db.session.commit()
-        except Exception:
+        except SQLAlchemyError:
             app.logger.exception("Failed to update account settings")
             db.session.rollback()
             return {"message": "Failed to update account."}, 500

@@ -13,6 +13,7 @@ from flask_jwt_extended import (
     get_jwt_identity,
     verify_jwt_in_request,
 )
+from flask_jwt_extended.exceptions import JWTExtendedException
 from flask_socketio import SocketIO, disconnect, join_room
 import redis
 from dotenv import load_dotenv
@@ -58,7 +59,7 @@ def rate_limit_key():
         identity = get_jwt_identity()
         if identity:
             return identity
-    except Exception:
+    except JWTExtendedException:
         pass
     return get_remote_address()
 
@@ -113,7 +114,7 @@ if _redis_url:
     try:
         _redis_client = redis.from_url(_redis_url)
         token_blocklist = RedisBlocklist(_redis_client)
-    except Exception:
+    except redis.RedisError:
         # Fallback to in-memory store if Redis is unreachable
         token_blocklist = set()
 else:
@@ -161,7 +162,7 @@ def socket_connect():
         groups = GroupMember.query.filter_by(user_id=user_id).all()
         for g in groups:
             join_room(str(g.group_id))
-    except Exception:
+    except JWTExtendedException:
         app.logger.warning("WebSocket connection rejected due to missing or invalid token")
         disconnect()
 
@@ -191,5 +192,7 @@ api.add_resource(MessageRead, '/api/messages/<int:message_id>/read')
 
 # Run the development server only when executed directly.
 if __name__ == '__main__':
-    # socketio.run enables WebSocket support alongside the Flask app
-    socketio.run(app, debug=True)
+    # socketio.run enables WebSocket support alongside the Flask app. Debug mode
+    # is only enabled when FLASK_DEBUG=1 is present in the environment so that
+    # production deployments default to a safe configuration.
+    socketio.run(app, debug=os.getenv('FLASK_DEBUG') == '1')

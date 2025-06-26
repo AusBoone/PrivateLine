@@ -1,4 +1,6 @@
+import Cookies from 'js-cookie';
+
 export function getUserId() {
-  const id = sessionStorage.getItem('user_id');
+  const id = Cookies.get('user_id');
   return id ? parseInt(id, 10) : null;
 }
