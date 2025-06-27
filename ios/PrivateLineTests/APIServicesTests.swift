@@ -1,3 +1,7 @@
+// Unit tests for ``APIService`` verifying networking logic such as login,
+// message retrieval and token refresh. ``URLSession`` is mocked so the tests do
+// not require a live backend server.
+
 import XCTest
 import CryptoKit
 import Security

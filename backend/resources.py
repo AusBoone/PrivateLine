@@ -3,7 +3,12 @@
 This module defines the Flask-RESTful resources used by the backend. Uploaded
 files are limited to ``MAX_FILE_SIZE`` bytes and message pagination parameters
 are validated for reasonable bounds.
+
+Recent changes introduce rate limiting on authentication endpoints and store the
+original MIME type of uploaded files so downloads return the correct
+``Content-Type`` header.
 """
+
 from flask_restful import Resource, reqparse
 from flask import request, jsonify
 from werkzeug.utils import secure_filename
@@ -12,7 +17,11 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    PrivateFormat,
+    NoEncryption,
+)
 from cryptography.hazmat.backends import default_backend
 from cryptography.exceptions import InvalidSignature
 from base64 import b64encode, b64decode
@@ -20,7 +29,7 @@ import binascii
 import os
 from .models import User, Message, PinnedKey, PushToken
 from .models import Group, GroupMember, File
-from .app import db, app, socketio, token_blocklist
+from .app import db, app, socketio, token_blocklist, limiter
 from sqlalchemy.exc import SQLAlchemyError
 from flask_jwt_extended import (
     create_access_token,
@@ -34,7 +43,9 @@ from flask_jwt_extended import (
 # AES-GCM key for encrypting stored messages
 _aes_key_env = os.environ.get("AES_KEY")
 if not _aes_key_env:
-    app.logger.error("AES_KEY environment variable not set; cannot decrypt stored messages.")
+    app.logger.error(
+        "AES_KEY environment variable not set; cannot decrypt stored messages."
+    )
     raise RuntimeError("AES_KEY environment variable is required for encryption")
 AES_KEY = b64decode(_aes_key_env)
 aesgcm = AESGCM(AES_KEY)
@@ -46,14 +57,12 @@ MAX_FILE_SIZE = 5 * 1024 * 1024
 # Request parser for messages
 message_parser = reqparse.RequestParser()
 message_parser.add_argument(
-    'content', required=True, location='form', help="Content is required."
+    "content", required=True, location="form", help="Content is required."
 )
-message_parser.add_argument(
-    'recipient', required=False, location='form'
-)
-message_parser.add_argument('group_id', required=False, location='form')
-message_parser.add_argument('file_id', required=False, location='form')
-message_parser.add_argument('signature', required=True, location='form')
+message_parser.add_argument("recipient", required=False, location="form")
+message_parser.add_argument("group_id", required=False, location="form")
+message_parser.add_argument("file_id", required=False, location="form")
+message_parser.add_argument("signature", required=True, location="form")
 
 # Token serializer (legacy).  JWT is now used instead of this custom mechanism.
 # s = Serializer(app.config['SECRET_KEY'], expires_in=3600)
@@ -61,6 +70,7 @@ message_parser.add_argument('signature', required=True, location='form')
 # The previous implementation relied on a custom token_required decorator that
 # used itsdangerous for token verification.  The project now leverages
 # Flask-JWT-Extended, so authentication decorators below use @jwt_required.
+
 
 # --- Push Notification Helpers ---
 def send_apns(token: str, message: str) -> None:
@@ -94,7 +104,9 @@ def send_web_push(subscription_json: str, message: str) -> None:
             json.loads(subscription_json),
             data=message,
             vapid_private_key=private_key,
-            vapid_claims={"sub": os.environ.get("VAPID_SUBJECT", "mailto:admin@example.com")},
+            vapid_claims={
+                "sub": os.environ.get("VAPID_SUBJECT", "mailto:admin@example.com")
+            },
         )
     except Exception as e:
         app.logger.warning("Failed to send web push: %s", e)
@@ -112,14 +124,20 @@ def send_push_notifications(user_id: int, message: str) -> None:
             # iOS push notification
             send_apns(t.token, message)
 
+
 """
 The private key is encrypted using AES-256 in GCM mode,
 with a key derived from the user's password using PBKDF2.
 The encrypted private key, salt, and nonce are then
 sent to the user encoded in base64.
 """
+
+
 class Register(Resource):
     """Create a new user and return the encrypted private key."""
+
+    # Apply rate limiting to throttle repeated registration attempts.
+    decorators = [limiter.limit("10/minute")]
 
     def post(self):
         """Handle POST requests for user registration."""
@@ -128,37 +146,40 @@ class Register(Resource):
         if not data:
             data = request.form.to_dict()
 
-        required = {'username', 'email', 'password'}
+        required = {"username", "email", "password"}
         if not data or not required <= data.keys():
             return {"message": "Username, email and password are required."}, 400
 
-        if len(data['username']) > 64 or len(data['email']) > 120:
+        if len(data["username"]) > 64 or len(data["email"]) > 120:
             return {"message": "Username or email too long."}, 400
-        if '@' not in data['email']:
+        if "@" not in data["email"]:
             return {"message": "Invalid email address."}, 400
 
         # Check if the username is already taken
-        user = User.query.filter_by(username=data['username']).first()
+        user = User.query.filter_by(username=data["username"]).first()
         if user:
             return {"message": "A user with that username already exists."}, 400
 
         # Check if the email is already registered
-        user = User.query.filter_by(email=data['email']).first()
+        user = User.query.filter_by(email=data["email"]).first()
         if user:
             return {"message": "A user with that email already exists."}, 400
 
-        if len(data['password']) < 6:
+        if len(data["password"]) < 6:
             return {"message": "Password must be at least 6 characters."}, 400
 
         # Hash the password
         # Use PBKDF2 with SHA-256 for password hashing
-        hashed_password = generate_password_hash(data['password'], method='pbkdf2:sha256')
+        hashed_password = generate_password_hash(
+            data["password"], method="pbkdf2:sha256"
+        )
 
         # Generate key pair
         private_key, public_key_pem = User.generate_key_pair()
         # Fingerprint of the public key to allow out-of-band verification
         from cryptography.hazmat.primitives.serialization import PublicFormat
         import hashlib
+
         fingerprint = hashlib.sha256(
             private_key.public_key().public_bytes(
                 encoding=Encoding.DER,
@@ -167,16 +188,16 @@ class Register(Resource):
         ).hexdigest()
 
         # Encrypt the private key with the user's password using AES-GCM
-        password = data['password'].encode()  # Encode the user's password as bytes
-        salt = os.urandom(16)                 # Generate a random salt (16 bytes)
+        password = data["password"].encode()  # Encode the user's password as bytes
+        salt = os.urandom(16)  # Generate a random salt (16 bytes)
 
         # Key Derivation Function (KDF) to derive a cryptographic key from the password using PBKDF2 with HMAC and SHA-256
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),  # Use SHA-256 hash algorithm
-            length=32,                  # Length of derived key (32 bytes)
-            salt=salt,                  # Salt for the KDF
-            iterations=200000,          # Number of iterations for the KDF
-            backend=default_backend()   # Cryptographic backend
+            length=32,  # Length of derived key (32 bytes)
+            salt=salt,  # Salt for the KDF
+            iterations=200000,  # Number of iterations for the KDF
+            backend=default_backend(),  # Cryptographic backend
         )
         key = kdf.derive(password)  # Derive the key using the user's password
 
@@ -186,15 +207,15 @@ class Register(Resource):
         private_bytes = private_key.private_bytes(
             encoding=Encoding.PEM,
             format=PrivateFormat.PKCS8,
-            encryption_algorithm=NoEncryption()
+            encryption_algorithm=NoEncryption(),
         )
 
         encrypted_private_key = aes.encrypt(nonce, private_bytes, None)
-        
+
         # Create a new user and add it to the database
         new_user = User(
-            username=data['username'],
-            email=data['email'],
+            username=data["username"],
+            email=data["email"],
             password_hash=hashed_password,
             public_key_pem=public_key_pem,
         )
@@ -205,35 +226,41 @@ class Register(Resource):
             app.logger.exception("Failed to register user")
             db.session.rollback()
             return {"message": "Registration failed."}, 500
-        
+
         # Send encrypted private key and encryption details to the user
         return {
             "message": "User registered successfully.",  # Confirmation message
-            "encrypted_private_key": b64encode(encrypted_private_key).decode(),  # Base64-encoded encrypted private key
-            "salt": b64encode(salt).decode(),           # Base64-encoded salt
-            "nonce": b64encode(nonce).decode(),         # Base64-encoded nonce
+            "encrypted_private_key": b64encode(
+                encrypted_private_key
+            ).decode(),  # Base64-encoded encrypted private key
+            "salt": b64encode(salt).decode(),  # Base64-encoded salt
+            "nonce": b64encode(nonce).decode(),  # Base64-encoded nonce
             "fingerprint": fingerprint,
         }, 201
 
+
 class Login(Resource):
     """Authenticate a user and return a JWT access token."""
+
+    # Limit the frequency of login attempts to mitigate brute-force attacks.
+    decorators = [limiter.limit("10/minute")]
 
     def post(self):
         """Authenticate credentials and issue an access token."""
         data = request.get_json() or {}
 
-        if 'username' not in data or 'password' not in data:
-            return {'message': 'Username and password are required.'}, 400
+        if "username" not in data or "password" not in data:
+            return {"message": "Username and password are required."}, 400
 
         # Query the database for the user with the given username
-        user = User.query.filter_by(username=data['username']).first()
+        user = User.query.filter_by(username=data["username"]).first()
 
-        if user and check_password_hash(user.password_hash, data['password']):
+        if user and check_password_hash(user.password_hash, data["password"]):
             access_token = create_access_token(identity=str(user.id))
-            resp = jsonify({'access_token': access_token})
+            resp = jsonify({"access_token": access_token})
             set_access_cookies(resp, access_token)
             return resp
-        return {'message': 'Invalid username or password'}, 401
+        return {"message": "Invalid username or password"}, 401
 
 
 class PublicKey(Resource):
@@ -315,7 +342,10 @@ class GroupMembers(Resource):
                 return {"message": "User not found"}, 404
             target_id = user.id
 
-        if target_id != uid and not GroupMember.query.filter_by(group_id=group_id, user_id=uid).first():
+        if (
+            target_id != uid
+            and not GroupMember.query.filter_by(group_id=group_id, user_id=uid).first()
+        ):
             return {"message": "Not a member"}, 403
 
         if GroupMember.query.filter_by(group_id=group_id, user_id=target_id).first():
@@ -342,7 +372,12 @@ class GroupMemberResource(Resource):
         if not gm:
             return {"message": "Not found"}, 404
 
-        if current != user_id and not GroupMember.query.filter_by(group_id=group_id, user_id=current).first():
+        if (
+            current != user_id
+            and not GroupMember.query.filter_by(
+                group_id=group_id, user_id=current
+            ).first()
+        ):
             return {"message": "Not a member"}, 403
 
         db.session.delete(gm)
@@ -414,19 +449,24 @@ class GroupMessages(Resource):
                 user.public_key.verify(
                     b64decode(msg.signature),
                     plaintext_b64.encode(),
-                    padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                    padding.PSS(
+                        mgf=padding.MGF1(hashes.SHA256()),
+                        salt_length=padding.PSS.MAX_LENGTH,
+                    ),
                     hashes.SHA256(),
                 )
             except InvalidSignature:
                 continue
-            result.append({
-                "id": msg.id,
-                "content": plaintext_b64,
-                "timestamp": msg.timestamp.isoformat(),
-                "sender_id": msg.sender_id,
-                "file_id": msg.file_id,
-                "read": msg.read,
-            })
+            result.append(
+                {
+                    "id": msg.id,
+                    "content": plaintext_b64,
+                    "timestamp": msg.timestamp.isoformat(),
+                    "sender_id": msg.sender_id,
+                    "file_id": msg.file_id,
+                    "read": msg.read,
+                }
+            )
         return {"messages": result}
 
     @jwt_required()
@@ -453,7 +493,10 @@ class GroupMessages(Resource):
             user.public_key.verify(
                 sig,
                 data["content"].encode(),
-                padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH,
+                ),
                 hashes.SHA256(),
             )
         except InvalidSignature:
@@ -487,9 +530,9 @@ class FileUpload(Resource):
     @jwt_required()
     def post(self):
         """Persist an uploaded file encrypted with AES-GCM."""
-        if 'file' not in request.files:
+        if "file" not in request.files:
             return {"message": "file required"}, 400
-        f = request.files['file']
+        f = request.files["file"]
         data = f.read()
         if len(data) > MAX_FILE_SIZE:
             return {"message": "file too large"}, 413
@@ -499,7 +542,11 @@ class FileUpload(Resource):
         # to the database so that file contents remain confidential at rest.
         ciphertext = aesgcm.encrypt(nonce, data, None)
         stored = nonce + ciphertext
-        file_rec = File(filename=sanitized, data=stored)
+        file_rec = File(
+            filename=sanitized,
+            mimetype=f.mimetype or "application/octet-stream",
+            data=stored,
+        )
         db.session.add(file_rec)
         db.session.commit()
         return {"file_id": file_rec.id}, 201
@@ -522,7 +569,9 @@ class FileDownload(Resource):
         authorized = False
         for msg in msgs:
             if msg.group_id:
-                if GroupMember.query.filter_by(group_id=msg.group_id, user_id=uid).first():
+                if GroupMember.query.filter_by(
+                    group_id=msg.group_id, user_id=uid
+                ).first():
                     authorized = True
                     break
             elif msg.sender_id == uid or msg.recipient_id == uid:
@@ -535,11 +584,14 @@ class FileDownload(Resource):
         ciphertext = f.data[12:]
         plaintext = aesgcm.decrypt(nonce, ciphertext, None)
         from flask import make_response
+
         resp = make_response(plaintext)
-        resp.headers.set("Content-Type", "application/octet-stream")
+        # Restore the original content type so clients can infer the file type.
+        resp.headers.set("Content-Type", f.mimetype)
         fname = secure_filename(f.filename)
         resp.headers.set("Content-Disposition", f"attachment; filename={fname}")
         return resp
+
 
 class Messages(Resource):
     """Retrieve or create encrypted chat messages."""
@@ -582,21 +634,26 @@ class Messages(Resource):
                 user.public_key.verify(
                     b64decode(msg.signature),
                     plaintext_b64.encode(),
-                    padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                    padding.PSS(
+                        mgf=padding.MGF1(hashes.SHA256()),
+                        salt_length=padding.PSS.MAX_LENGTH,
+                    ),
                     hashes.SHA256(),
                 )
             except InvalidSignature:
                 # Skip messages that fail verification
                 continue
-            message_list.append({
-                "id": msg.id,
-                "content": plaintext_b64,
-                "timestamp": msg.timestamp.isoformat(),
-                "sender_id": msg.sender_id,
-                "recipient_id": msg.recipient_id,
-                "file_id": msg.file_id,
-                "read": msg.read,
-            })
+            message_list.append(
+                {
+                    "id": msg.id,
+                    "content": plaintext_b64,
+                    "timestamp": msg.timestamp.isoformat(),
+                    "sender_id": msg.sender_id,
+                    "recipient_id": msg.recipient_id,
+                    "file_id": msg.file_id,
+                    "read": msg.read,
+                }
+            )
         return {"messages": message_list}
 
     # Send a new message. Rate limited via the limiter in app.py
@@ -606,13 +663,13 @@ class Messages(Resource):
         data = message_parser.parse_args()
 
         # Arbitrary limit on encrypted payload size to prevent abuse
-        if len(data['content']) > 2000:
+        if len(data["content"]) > 2000:
             return {"message": "Message too long."}, 400
 
         recipient = None
-        gid = data.get('group_id')
-        if data.get('recipient'):
-            recipient = User.query.filter_by(username=data['recipient']).first()
+        gid = data.get("group_id")
+        if data.get("recipient"):
+            recipient = User.query.filter_by(username=data["recipient"]).first()
             if not recipient:
                 return {"message": "Recipient not found."}, 404
         elif gid is None:
@@ -639,7 +696,10 @@ class Messages(Resource):
             sender.public_key.verify(
                 sig,
                 data["content"].encode(),
-                padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH,
+                ),
                 hashes.SHA256(),
             )
         except InvalidSignature:
@@ -658,7 +718,7 @@ class Messages(Resource):
             sender_id=current_user_id,
             recipient_id=recipient.id if recipient else None,
             group_id=gid,
-            file_id=data.get('file_id'),
+            file_id=data.get("file_id"),
             signature=data["signature"],
         )
         try:
@@ -678,7 +738,7 @@ class Messages(Resource):
                     "content": data["content"],
                     "sender_id": current_user_id,
                     "recipient_id": recipient.id,
-                    "file_id": data.get('file_id'),
+                    "file_id": data.get("file_id"),
                 },
                 to=str(recipient.id),
             )
@@ -691,7 +751,7 @@ class Messages(Resource):
                     "content": data["content"],
                     "sender_id": current_user_id,
                     "group_id": gid,
-                    "file_id": data.get('file_id'),
+                    "file_id": data.get("file_id"),
                 },
                 to=str(gid),
             )
@@ -731,7 +791,9 @@ class MessageRead(Resource):
         if not msg:
             return {"message": "Not found"}, 404
         if msg.group_id is not None:
-            if not GroupMember.query.filter_by(group_id=msg.group_id, user_id=uid).first():
+            if not GroupMember.query.filter_by(
+                group_id=msg.group_id, user_id=uid
+            ).first():
                 return {"message": "Forbidden"}, 403
         elif msg.recipient_id != uid:
             return {"message": "Forbidden"}, 403
@@ -749,7 +811,9 @@ class PinnedKeys(Resource):
         user_id = int(get_jwt_identity())
         keys = PinnedKey.query.filter_by(user_id=user_id).all()
         return {
-            "pinned_keys": [{"username": k.username, "fingerprint": k.fingerprint} for k in keys]
+            "pinned_keys": [
+                {"username": k.username, "fingerprint": k.fingerprint} for k in keys
+            ]
         }
 
     @jwt_required()
@@ -759,11 +823,17 @@ class PinnedKeys(Resource):
         if not data or "username" not in data or "fingerprint" not in data:
             return {"message": "Username and fingerprint are required."}, 400
         user_id = int(get_jwt_identity())
-        pk = PinnedKey.query.filter_by(user_id=user_id, username=data["username"]).first()
+        pk = PinnedKey.query.filter_by(
+            user_id=user_id, username=data["username"]
+        ).first()
         if pk:
             pk.fingerprint = data["fingerprint"]
         else:
-            pk = PinnedKey(user_id=user_id, username=data["username"], fingerprint=data["fingerprint"])
+            pk = PinnedKey(
+                user_id=user_id,
+                username=data["username"],
+                fingerprint=data["fingerprint"],
+            )
 
             db.session.add(pk)
         try:
@@ -819,6 +889,7 @@ class PushTokenResource(Resource):
                 return {"message": "Failed to delete token."}, 500
         return {"message": "Token deleted."}, 200
 
+
 class AccountSettings(Resource):
     """Update the authenticated user's account information."""
 
@@ -835,7 +906,7 @@ class AccountSettings(Resource):
 
         new_email = data.get("email")
         if new_email:
-            if len(new_email) > 120 or '@' not in new_email:
+            if len(new_email) > 120 or "@" not in new_email:
                 return {"message": "Invalid email address."}, 400
             user.email = new_email
             updated = True
@@ -847,7 +918,9 @@ class AccountSettings(Resource):
                 return {"message": "New password must be at least 6 characters."}, 400
             if check_password_hash(user.password_hash, current_pw):
                 # Rehash the new password using PBKDF2 with SHA-256
-                user.password_hash = generate_password_hash(new_pw, method="pbkdf2:sha256")
+                user.password_hash = generate_password_hash(
+                    new_pw, method="pbkdf2:sha256"
+                )
                 updated = True
             else:
                 return {"message": "Current password is incorrect."}, 400

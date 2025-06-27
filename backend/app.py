@@ -50,6 +50,7 @@ CORS(app, supports_credentials=True, origins=_cors_origins)
 # ``CORS_ORIGINS`` setting controls which WebSocket origins are accepted.
 socketio = SocketIO(app, cors_allowed_origins=_cors_origins)
 
+
 # Initialize rate limiting with a custom key function that prefers the
 # authenticated user id and falls back to the client's IP address.
 def rate_limit_key():
@@ -63,6 +64,7 @@ def rate_limit_key():
         pass
     return get_remote_address()
 
+
 _redis_url = os.environ.get("REDIS_URL")
 _limiter_kwargs = {"key_func": rate_limit_key, "app": app}
 if _redis_url:
@@ -70,18 +72,22 @@ if _redis_url:
 limiter = Limiter(**_limiter_kwargs)
 
 # Configure app settings. Values can be overridden via environment variables.
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
-    'DATABASE_URI', 'sqlite:///secure_messaging.db'
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
+    "DATABASE_URI", "sqlite:///secure_messaging.db"
 )
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-_jwt_secret = os.environ.get('JWT_SECRET_KEY')
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+_jwt_secret = os.environ.get("JWT_SECRET_KEY")
 if not _jwt_secret:
-    raise RuntimeError('JWT_SECRET_KEY environment variable not set')
-app.config['JWT_SECRET_KEY'] = _jwt_secret
-app.config['JWT_TOKEN_LOCATION'] = ["headers", "cookies"]
-app.config['JWT_COOKIE_SECURE'] = os.environ.get("JWT_COOKIE_SECURE", "false").lower() == "true"
-app.config['JWT_COOKIE_SAMESITE'] = os.environ.get("JWT_COOKIE_SAMESITE", "Lax")
-app.config['JWT_COOKIE_CSRF_PROTECT'] = os.environ.get("JWT_COOKIE_CSRF_PROTECT", "false").lower() == "true"
+    raise RuntimeError("JWT_SECRET_KEY environment variable not set")
+app.config["JWT_SECRET_KEY"] = _jwt_secret
+app.config["JWT_TOKEN_LOCATION"] = ["headers", "cookies"]
+app.config["JWT_COOKIE_SECURE"] = (
+    os.environ.get("JWT_COOKIE_SECURE", "false").lower() == "true"
+)
+app.config["JWT_COOKIE_SAMESITE"] = os.environ.get("JWT_COOKIE_SAMESITE", "Lax")
+app.config["JWT_COOKIE_CSRF_PROTECT"] = (
+    os.environ.get("JWT_COOKIE_CSRF_PROTECT", "false").lower() == "true"
+)
 
 # Initialize database and migration tools
 db = SQLAlchemy(app)
@@ -96,6 +102,7 @@ jwt = JWTManager(app)
 # --- JWT Token Blocklist ---
 # Token identifiers (jti) are stored in memory by default.  When a REDIS_URL is
 # configured, use Redis so revoked tokens persist across restarts.
+
 
 class RedisBlocklist:
     """Simple set-like interface backed by Redis."""
@@ -120,10 +127,12 @@ if _redis_url:
 else:
     token_blocklist = set()
 
+
 @jwt.token_in_blocklist_loader
 def token_in_blocklist_callback(jwt_header, jwt_payload):
     """Check whether the given JWT has been revoked."""
     return jwt_payload.get("jti") in token_blocklist
+
 
 # Import resources after initializing app components to avoid circular imports
 from .resources import (
@@ -148,6 +157,7 @@ from .resources import (
     MessageRead,
 )
 
+
 # Reject WebSocket connections that do not provide a valid JWT.
 @socketio.on("connect")
 def socket_connect():
@@ -159,40 +169,46 @@ def socket_connect():
         join_room(str(user_id))
         # Join all group rooms so the user receives group messages in real time
         from .models import GroupMember
+
         groups = GroupMember.query.filter_by(user_id=user_id).all()
         for g in groups:
             join_room(str(g.group_id))
     except JWTExtendedException:
-        app.logger.warning("WebSocket connection rejected due to missing or invalid token")
+        app.logger.warning(
+            "WebSocket connection rejected due to missing or invalid token"
+        )
         disconnect()
+
 
 # Apply rate limiting on the messages resource
 limiter.limit("50/minute")(Messages)
 
 # Register resources and routes
-api.add_resource(Register, '/api/register')
-api.add_resource(Login, '/api/login')
-api.add_resource(Messages, '/api/messages')
-api.add_resource(PublicKey, '/api/public_key/<string:username>')
-api.add_resource(Users, '/api/users')
-api.add_resource(Groups, '/api/groups')
-api.add_resource(GroupMembers, '/api/groups/<int:group_id>/members')
-api.add_resource(GroupMemberResource, '/api/groups/<int:group_id>/members/<int:user_id>')
-api.add_resource(GroupKey, '/api/groups/<int:group_id>/key')
-api.add_resource(GroupMessages, '/api/groups/<int:group_id>/messages')
-api.add_resource(FileUpload, '/api/files')
-api.add_resource(FileDownload, '/api/files/<int:file_id>')
-api.add_resource(PinnedKeys, '/api/pinned_keys')
-api.add_resource(AccountSettings, '/api/account-settings')
-api.add_resource(RefreshToken, '/api/refresh')
-api.add_resource(RevokeToken, '/api/revoke')
-api.add_resource(PushTokenResource, '/api/push-token')
-api.add_resource(MessageResource, '/api/messages/<int:message_id>')
-api.add_resource(MessageRead, '/api/messages/<int:message_id>/read')
+api.add_resource(Register, "/api/register")
+api.add_resource(Login, "/api/login")
+api.add_resource(Messages, "/api/messages")
+api.add_resource(PublicKey, "/api/public_key/<string:username>")
+api.add_resource(Users, "/api/users")
+api.add_resource(Groups, "/api/groups")
+api.add_resource(GroupMembers, "/api/groups/<int:group_id>/members")
+api.add_resource(
+    GroupMemberResource, "/api/groups/<int:group_id>/members/<int:user_id>"
+)
+api.add_resource(GroupKey, "/api/groups/<int:group_id>/key")
+api.add_resource(GroupMessages, "/api/groups/<int:group_id>/messages")
+api.add_resource(FileUpload, "/api/files")
+api.add_resource(FileDownload, "/api/files/<int:file_id>")
+api.add_resource(PinnedKeys, "/api/pinned_keys")
+api.add_resource(AccountSettings, "/api/account-settings")
+api.add_resource(RefreshToken, "/api/refresh")
+api.add_resource(RevokeToken, "/api/revoke")
+api.add_resource(PushTokenResource, "/api/push-token")
+api.add_resource(MessageResource, "/api/messages/<int:message_id>")
+api.add_resource(MessageRead, "/api/messages/<int:message_id>/read")
 
 # Run the development server only when executed directly.
-if __name__ == '__main__':
+if __name__ == "__main__":
     # socketio.run enables WebSocket support alongside the Flask app. Debug mode
     # is only enabled when FLASK_DEBUG=1 is present in the environment so that
     # production deployments default to a safe configuration.
-    socketio.run(app, debug=os.getenv('FLASK_DEBUG') == '1')
+    socketio.run(app, debug=os.getenv("FLASK_DEBUG") == "1")
