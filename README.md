@@ -108,7 +108,7 @@ The tests exercise the Flask API endpoints as well as the React components.
 A minimal SwiftUI client is located in the `ios/` directory. See
 [ios/README.md](ios/README.md) for detailed setup instructions.
 
-- Update `Info.plist` so the `BackendBaseURL` and `WebSocketURL` keys point at
+- Update `ios/PrivateLine/Resources/Config/Info.plist` so the `BackendBaseURL` and `WebSocketURL` keys point at
   your server if it does not run on `localhost`.
 - Run the Swift package tests with
   `xcodebuild -scheme PrivateLine-Package test` or choose **Product → Test** in

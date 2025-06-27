@@ -7,7 +7,7 @@ variables.
 ## Getting Started
 
 1. Open the `ios` folder in Xcode.
-2. Open `Info.plist` and change the string values of `BackendBaseURL` and
+2. Open `Resources/Config/Info.plist` and change the string values of `BackendBaseURL` and
    `WebSocketURL` if your backend does not run on `localhost`.
 3. Build and run the app in the iOS simulator.
 
