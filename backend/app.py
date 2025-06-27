@@ -1,7 +1,7 @@
 """Application factory and global objects for the backend."""
 
 import os
-from flask import Flask
+from flask import Flask, send_from_directory
 from flask_restful import Api
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -16,6 +16,7 @@ from flask_jwt_extended import (
 from flask_jwt_extended.exceptions import JWTExtendedException
 from flask_socketio import SocketIO, disconnect, join_room
 import redis
+from pathlib import Path
 from dotenv import load_dotenv
 import sentry_sdk
 from sentry_sdk.integrations.flask import FlaskIntegration
@@ -201,6 +202,19 @@ api.add_resource(FileUpload, "/api/files")
 api.add_resource(FileDownload, "/api/files/<int:file_id>")
 api.add_resource(PinnedKeys, "/api/pinned_keys")
 api.add_resource(DeleteAccount, "/api/account")
+# Serve the generated OpenAPI spec and minimal Swagger UI
+@app.route("/api/openapi.yaml")
+def openapi_spec():
+    """Return the OpenAPI specification YAML."""
+    docs_path = Path(__file__).resolve().parent.parent / "docs"
+    return send_from_directory(docs_path, "openapi.yaml")
+
+
+@app.route("/api/docs")
+def api_docs():
+    """Serve an embedded Swagger UI for browsing the API."""
+    return """<!DOCTYPE html><html><head><title>API Docs</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist/swagger-ui.css"></head><body><div id="swagger-ui"></div><script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist/swagger-ui-bundle.js"></script><script>SwaggerUIBundle({url:"/api/openapi.yaml",dom_id:"#swagger-ui"});</script></body></html>"""
+
 api.add_resource(AccountSettings, "/api/account-settings")
 api.add_resource(RefreshToken, "/api/refresh")
 api.add_resource(RevokeToken, "/api/revoke")

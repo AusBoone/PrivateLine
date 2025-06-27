@@ -1,0 +1,409 @@
+paths:
+  /api/register:
+    post:
+      summary: Create a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+        '400':
+          description: Validation error
+  /api/login:
+    post:
+      summary: Authenticate and obtain access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authentication succeeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid credentials
+  /api/messages:
+    get:
+      summary: Retrieve messages for the user
+      parameters:
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          default: 50
+        required: false
+      - in: query
+        name: offset
+        schema:
+          type: integer
+          default: 0
+        required: false
+      responses:
+        '200':
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MessageResponse'
+    post:
+      summary: Send a new message
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MessageRequest'
+      responses:
+        '201':
+          description: Message stored
+        '400':
+          description: Invalid input
+  /api/public_key/{username}:
+    get:
+      summary: Return public key for user
+      parameters:
+      - in: path
+        name: username
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Public key retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  public_key:
+                    type: string
+        '404':
+          description: User not found
+  /api/users:
+    get:
+      summary: List usernames
+      parameters:
+      - in: query
+        name: q
+        schema:
+          type: string
+        required: false
+      responses:
+        '200':
+          description: User list
+  /api/groups:
+    get:
+      summary: List chat groups
+      responses:
+        '200':
+          description: Group list
+    post:
+      summary: Create group
+      responses:
+        '201':
+          description: Group created
+  /api/groups/{group_id}/members:
+    post:
+      summary: Join or invite user
+      parameters:
+      - in: path
+        name: group_id
+        schema:
+          type: integer
+        required: true
+      responses:
+        '201':
+          description: Added
+        '403':
+          description: Not a member
+  /api/groups/{group_id}/members/{user_id}:
+    delete:
+      summary: Remove a member
+      parameters:
+      - in: path
+        name: group_id
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: user_id
+        schema:
+          type: integer
+        required: true
+      responses:
+        '200':
+          description: Removed
+  /api/groups/{group_id}/key:
+    get:
+      summary: Retrieve group key
+      parameters:
+      - in: path
+        name: group_id
+        schema:
+          type: integer
+        required: true
+      responses:
+        '200':
+          description: Key returned
+    put:
+      summary: Rotate group key
+      parameters:
+      - in: path
+        name: group_id
+        schema:
+          type: integer
+        required: true
+      responses:
+        '200':
+          description: Key rotated
+  /api/groups/{group_id}/messages:
+    get:
+      summary: List group messages
+      parameters:
+      - in: path
+        name: group_id
+        schema:
+          type: integer
+        required: true
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          default: 50
+        required: false
+      - in: query
+        name: offset
+        schema:
+          type: integer
+          default: 0
+        required: false
+      responses:
+        '200':
+          description: Messages returned
+    post:
+      summary: Send group message
+      parameters:
+      - in: path
+        name: group_id
+        schema:
+          type: integer
+        required: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageRequest'
+      responses:
+        '201':
+          description: Message stored
+  /api/files:
+    post:
+      summary: Upload encrypted file
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required:
+              - file
+      responses:
+        '201':
+          description: File stored
+  /api/files/{file_id}:
+    get:
+      summary: Download file
+      parameters:
+      - in: path
+        name: file_id
+        schema:
+          type: integer
+        required: true
+      responses:
+        '200':
+          description: File contents
+  /api/pinned_keys:
+    get:
+      summary: List pinned keys
+      responses:
+        '200':
+          description: List returned
+    post:
+      summary: Store pinned key
+      responses:
+        '200':
+          description: Stored
+  /api/account:
+    delete:
+      summary: Delete account
+      responses:
+        '200':
+          description: Deleted
+  /api/account-settings:
+    put:
+      summary: Update account
+      responses:
+        '200':
+          description: Updated
+  /api/refresh:
+    post:
+      summary: Refresh JWT
+      responses:
+        '200':
+          description: Token issued
+  /api/revoke:
+    post:
+      summary: Revoke JWT
+      responses:
+        '200':
+          description: Revoked
+  /api/push-token:
+    post:
+      summary: Store push token
+      responses:
+        '200':
+          description: Stored
+    delete:
+      summary: Delete push token
+      responses:
+        '200':
+          description: Deleted
+  /api/messages/{message_id}:
+    delete:
+      summary: Delete message
+      parameters:
+      - in: path
+        name: message_id
+        schema:
+          type: integer
+        required: true
+      responses:
+        '200':
+          description: Deleted
+  /api/messages/{message_id}/read:
+    post:
+      summary: Mark message as read
+      parameters:
+      - in: path
+        name: message_id
+        schema:
+          type: integer
+        required: true
+      responses:
+        '200':
+          description: Marked as read
+info:
+  title: PrivateLine API
+  version: 1.0.0
+openapi: 3.0.3
+components:
+  schemas:
+    RegisterRequest:
+      type: object
+      properties:
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+      required:
+      - email
+      - password
+      - username
+    RegisterResponse:
+      type: object
+      properties:
+        encrypted_private_key:
+          type: string
+        salt:
+          type: string
+        nonce:
+          type: string
+        fingerprint:
+          type: string
+    LoginRequest:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+      required:
+      - password
+      - username
+    LoginResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+    MessageRequest:
+      type: object
+      properties:
+        content:
+          type: string
+        recipient:
+          type: string
+        group_id:
+          type: integer
+        file_id:
+          type: integer
+        signature:
+          type: string
+      required:
+      - content
+      - signature
+    MessageResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        content:
+          type: string
+        timestamp:
+          type: string
+        sender_id:
+          type: integer
+        recipient_id:
+          type: integer
+          nullable: true
+        file_id:
+          type: integer
+          nullable: true
+        read:
+          type: boolean
+    GenericMessage:
+      type: object
+      properties:
+        message:
+          type: string

@@ -21,3 +21,6 @@ fakeredis>=2.21
 # WSGI server
 gunicorn
 gevent
+apispec>=6.8
+marshmallow>=4.0
+PyYAML>=6.0

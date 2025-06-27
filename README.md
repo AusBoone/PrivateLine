@@ -33,6 +33,8 @@ The interface uses the Material-UI component library. It supports a responsive l
 
 # Backend
 The backend is built using Flask and consists of the following resources:
+
+An up-to-date OpenAPI specification can be found in [docs/openapi.yaml](docs/openapi.yaml). Run `python backend/generate_openapi.py` to regenerate the file after modifying the API.
 1. **Register**: Handles user registration by saving user information, hashed passwords, and public keys to the database. It also returns the encrypted private key, salt, and IV to the frontend for storage.
 2. **Login**: Handles user login by verifying the provided username and password, and returns a JWT access token if the credentials are valid.
 3. **Messages**: Handles fetching and storing messages in the database. Messages
