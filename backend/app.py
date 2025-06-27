@@ -150,6 +150,7 @@ from .resources import (
     FileDownload,
     PinnedKeys,
     AccountSettings,
+    DeleteAccount,
     RefreshToken,
     RevokeToken,
     PushTokenResource,
@@ -199,6 +200,7 @@ api.add_resource(GroupMessages, "/api/groups/<int:group_id>/messages")
 api.add_resource(FileUpload, "/api/files")
 api.add_resource(FileDownload, "/api/files/<int:file_id>")
 api.add_resource(PinnedKeys, "/api/pinned_keys")
+api.add_resource(DeleteAccount, "/api/account")
 api.add_resource(AccountSettings, "/api/account-settings")
 api.add_resource(RefreshToken, "/api/refresh")
 api.add_resource(RevokeToken, "/api/revoke")

@@ -971,3 +971,48 @@ class RevokeToken(Resource):
         resp = jsonify({"message": "Token revoked"})
         unset_jwt_cookies(resp)
         return resp
+
+
+class DeleteAccount(Resource):
+    """Remove the authenticated user's account and revoke the token."""
+
+    @jwt_required()
+    def delete(self):
+        """Delete the user and all related records from the database."""
+        from sqlalchemy import or_
+
+        user_id = int(get_jwt_identity())
+        user = db.session.get(User, user_id)
+        if not user:
+            return {"message": "User not found"}, 404
+
+        try:
+            # Remove chat messages where the user appears in any role
+            Message.query.filter(
+                or_(
+                    Message.user_id == user_id,
+                    Message.sender_id == user_id,
+                    Message.recipient_id == user_id,
+                )
+            ).delete(synchronize_session=False)
+
+            # Remove group memberships and push tokens belonging to the user
+            GroupMember.query.filter_by(user_id=user_id).delete()
+            PushToken.query.filter_by(user_id=user_id).delete()
+
+            # Remove pinned key records owned by the user
+            PinnedKey.query.filter_by(user_id=user_id).delete()
+
+            # Finally delete the user record itself
+            db.session.delete(user)
+            db.session.commit()
+        except SQLAlchemyError:
+            db.session.rollback()
+            return {"message": "Failed to delete account."}, 500
+
+        # Revoke the JWT that initiated the request so it cannot be reused
+        jti = get_jwt()["jti"]
+        token_blocklist.add(jti)
+        resp = jsonify({"message": "Account deleted"})
+        unset_jwt_cookies(resp)
+        return resp
