@@ -1,4 +1,5 @@
 """Shared fixtures and helpers for PrivateLine tests."""
+
 import os
 import base64
 import io
@@ -13,7 +14,7 @@ from cryptography.hazmat.backends import default_backend
 os.environ.setdefault("AES_KEY", base64.b64encode(os.urandom(32)).decode())
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
 
-from backend.app import app, db, RedisBlocklist
+from backend.app import app, db, RedisBlocklist, limiter
 from backend.models import User
 
 
@@ -26,6 +27,14 @@ def fake_blocklist(monkeypatch):
     monkeypatch.setattr("backend.app.token_blocklist", blocklist)
     monkeypatch.setattr("backend.resources.token_blocklist", blocklist)
     yield
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limits():
+    """Reset request counters between tests to avoid cross-test bleed."""
+    limiter.reset()
+    yield
+    limiter.reset()
 
 
 @pytest.fixture
@@ -43,9 +52,14 @@ def client():
 
 # --- Helper utilities ------------------------------------------------------
 
+
 def register_user(client, username="alice"):
     """Register ``username`` with a default password."""
-    data = {"username": username, "email": f"{username}@example.com", "password": "secret"}
+    data = {
+        "username": username,
+        "email": f"{username}@example.com",
+        "password": "secret",
+    }
     return client.post("/api/register", data=data)
 
 
@@ -80,7 +94,9 @@ def sign_content(private_key, content: str) -> str:
 
     sig = private_key.sign(
         content.encode(),
-        asympad.PSS(mgf=asympad.MGF1(hashes.SHA256()), salt_length=asympad.PSS.MAX_LENGTH),
+        asympad.PSS(
+            mgf=asympad.MGF1(hashes.SHA256()), salt_length=asympad.PSS.MAX_LENGTH
+        ),
         hashes.SHA256(),
     )
     return base64.b64encode(sig).decode()
