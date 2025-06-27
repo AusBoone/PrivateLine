@@ -6,7 +6,9 @@ are validated for reasonable bounds.
 
 Recent changes introduce rate limiting on authentication endpoints and store the
 original MIME type of uploaded files so downloads return the correct
-``Content-Type`` header.
+``Content-Type`` header. Account management now validates that email addresses
+remain unique when changed via the settings endpoint to prevent database
+integrity errors.
 """
 
 from flask_restful import Resource, reqparse
@@ -908,8 +910,16 @@ class AccountSettings(Resource):
         if new_email:
             if len(new_email) > 120 or "@" not in new_email:
                 return {"message": "Invalid email address."}, 400
-            user.email = new_email
-            updated = True
+            # Prevent changing to an email address that already belongs to
+            # another account. Without this check the unique constraint on the
+            # ``email`` column would raise an error during commit and result in
+            # a 500 response.
+            existing = User.query.filter_by(email=new_email).first()
+            if existing and existing.id != user_id:
+                return {"message": "Email already registered."}, 400
+            if new_email != user.email:
+                user.email = new_email
+                updated = True
 
         current_pw = data.get("currentPassword")
         new_pw = data.get("newPassword")
