@@ -97,6 +97,23 @@ def test_account_settings_update(client):
     assert resp.status_code == 200
 
 
+def test_account_settings_duplicate_email(client):
+    """Updating the email to one already in use should return HTTP 400."""
+    register_user(client, "eve")
+    register_user(client, "frank")
+
+    login = login_user(client, "eve")
+    token = login.get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp = client.put(
+        "/api/account-settings",
+        json={"email": "frank@example.com"},
+        headers=headers,
+    )
+    assert resp.status_code == 400
+
+
 def test_token_refresh(client):
     register_user(client, "frank")
     token = login_user(client, "frank").get_json()["access_token"]
