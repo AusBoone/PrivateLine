@@ -144,6 +144,24 @@ def test_token_revocation(client):
     assert resp.status_code == 200
 
 
+def test_account_deletion(client):
+    """Deleting an account should remove the user and revoke the JWT."""
+    register_user(client, "harry")
+    token = login_user(client, "harry").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp = client.delete("/api/account", headers=headers)
+    assert resp.status_code == 200
+
+    # Using the old token should now fail because it was revoked
+    resp = client.get("/api/messages", headers=headers)
+    assert resp.status_code == 401
+
+    # The user record should no longer exist
+    with app.app_context():
+        assert User.query.filter_by(username="harry").first() is None
+
+
 def test_public_key_endpoint(client):
     register_user(client, "alice")
     token = login_user(client, "alice").get_json()["access_token"]
