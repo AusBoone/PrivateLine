@@ -378,8 +378,11 @@ components:
           type: integer
         file_id:
           type: integer
-        signature:
+        expires_at:
           type: string
+          format: date-time
+      signature:
+        type: string
       required:
       - content
       - signature

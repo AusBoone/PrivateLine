@@ -1,4 +1,10 @@
-"""Application factory and global objects for the backend."""
+"""Application factory and global objects for the backend.
+
+The Flask app exposes REST and WebSocket APIs. This file wires together
+extensions such as the database, JWT manager and rate limiting. A background
+task using :class:`apscheduler.schedulers.background.BackgroundScheduler`
+periodically purges expired messages created via the new ``expires_at`` field.
+"""
 
 import os
 from flask import Flask, send_from_directory
@@ -15,6 +21,9 @@ from flask_jwt_extended import (
 )
 from flask_jwt_extended.exceptions import JWTExtendedException
 from flask_socketio import SocketIO, disconnect, join_room
+from datetime import datetime
+from apscheduler.schedulers.background import BackgroundScheduler
+import atexit
 import redis
 from pathlib import Path
 from dotenv import load_dotenv
@@ -99,6 +108,30 @@ api = Api(app)
 
 # Initialize JWTManager for handling JWT authentication
 jwt = JWTManager(app)
+
+# Schedule periodic cleanup of expired messages. The :func:`clean_expired_messages`
+# function runs every minute to remove messages past their ``expires_at`` time
+# so that ephemeral conversations do not linger on the server indefinitely.
+scheduler = BackgroundScheduler()
+
+
+def clean_expired_messages() -> None:
+    """Delete messages with an expiration time in the past."""
+    from .models import Message
+
+    with app.app_context():
+        expired = Message.query.filter(
+            Message.expires_at.is_not(None), Message.expires_at <= datetime.utcnow()
+        ).all()
+        if expired:
+            for msg in expired:
+                db.session.delete(msg)
+            db.session.commit()
+
+
+scheduler.add_job(clean_expired_messages, "interval", minutes=1)
+scheduler.start()
+atexit.register(lambda: scheduler.shutdown())
 
 # --- JWT Token Blocklist ---
 # Token identifiers (jti) are stored in memory by default.  When a REDIS_URL is

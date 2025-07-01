@@ -48,3 +48,18 @@ jobs:
       - name: Run iOS tests
         run: xcodebuild -scheme PrivateLine-Package -destination 'platform=iOS Simulator,name=iPhone 14' test
         working-directory: ios
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - name: Generate wrapper JAR
+        run: gradle wrapper
+        working-directory: android
+      - name: Build Android project
+        run: ./gradlew assembleDebug
+        working-directory: android

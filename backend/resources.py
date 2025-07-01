@@ -13,6 +13,7 @@ integrity errors.
 
 from flask_restful import Resource, reqparse
 from flask import request, jsonify
+from datetime import datetime
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from cryptography.hazmat.primitives import hashes
@@ -65,6 +66,10 @@ message_parser.add_argument("recipient", required=False, location="form")
 message_parser.add_argument("group_id", required=False, location="form")
 message_parser.add_argument("file_id", required=False, location="form")
 message_parser.add_argument("signature", required=True, location="form")
+message_parser.add_argument(
+    "expires_at", required=False, location="form",
+    help="ISO8601 expiration timestamp"
+)
 
 # Token serializer (legacy).  JWT is now used instead of this custom mechanism.
 # s = Serializer(app.config['SECRET_KEY'], expires_in=3600)
@@ -436,6 +441,10 @@ class GroupMessages(Resource):
             return {"message": "invalid pagination"}, 400
         msgs = (
             Message.query.filter_by(group_id=group_id)
+            .filter(
+                (Message.expires_at.is_(None))
+                | (Message.expires_at > datetime.utcnow())
+            )
             .order_by(Message.timestamp.desc())
             .limit(limit)
             .offset(offset)
@@ -515,6 +524,7 @@ class GroupMessages(Resource):
             sender_id=uid,
             group_id=group_id,
             signature=data["signature"],
+            expires_at=datetime.fromisoformat(data["expires_at"]) if data.get("expires_at") else None,
         )
         db.session.add(m)
         db.session.commit()
@@ -615,6 +625,10 @@ class Messages(Resource):
                     Message.sender_id == current_user_id,
                     Message.recipient_id == current_user_id,
                 )
+            )
+            .filter(
+                (Message.expires_at.is_(None))
+                | (Message.expires_at > datetime.utcnow())
             )
             .order_by(Message.timestamp.desc())
             .limit(limit)
@@ -722,6 +736,7 @@ class Messages(Resource):
             group_id=gid,
             file_id=data.get("file_id"),
             signature=data["signature"],
+            expires_at=datetime.fromisoformat(data["expires_at"]) if data.get("expires_at") else None,
         )
         try:
             db.session.add(new_message)

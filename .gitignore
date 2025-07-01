@@ -4,3 +4,7 @@ instance/
 
 # Local environment variables
 .env
+
+# Android Gradle wrapper
+android/gradle/wrapper/gradle-wrapper.jar
+
