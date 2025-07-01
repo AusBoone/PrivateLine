@@ -17,6 +17,7 @@ apns2
 pywebpush
 redis>=4.0
 fakeredis>=2.21
+APScheduler>=3.10
 
 # WSGI server
 gunicorn

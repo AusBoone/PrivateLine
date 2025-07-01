@@ -1,4 +1,10 @@
-"""SQLAlchemy models for PrivateLine."""
+"""SQLAlchemy models for PrivateLine.
+
+This module defines the database schema used by the Flask backend. The most
+recent change adds an ``expires_at`` column on :class:`Message` to implement
+ephemeral messaging. Older messages are cleaned up by a scheduled job in
+``app.py``.
+"""
 
 from .app import db
 from datetime import datetime
@@ -95,6 +101,9 @@ class Message(db.Model):
     content = db.Column(db.String(1000), nullable=False)
     nonce = db.Column(db.String(24), nullable=False)
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
+    # Optional expiration timestamp used for ephemeral messaging. When set the
+    # message is automatically removed once the time has passed.
+    expires_at = db.Column(db.DateTime, index=True)
     # ``user_id`` historically referenced the owner of the message.  To support
     # private messaging between two users while maintaining backward
     # compatibility, the original column remains but new ``sender_id`` and

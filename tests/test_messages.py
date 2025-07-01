@@ -171,3 +171,23 @@ def test_messages_pagination(client):
     assert resp.status_code == 400
     resp = client.get('/api/messages?offset=-1', headers=headers_b)
     assert resp.status_code == 400
+
+
+def test_expired_messages_not_returned(client):
+    """Messages with an ``expires_at`` in the past should be hidden."""
+    reg = register_user(client, 'alice')
+    pk = decrypt_private_key(reg)
+    token = login_user(client, 'alice').get_json()['access_token']
+    headers = {'Authorization': f'Bearer {token}'}
+    b64 = base64.b64encode(b'expire').decode()
+    sig = sign_content(pk, b64)
+    from datetime import datetime, timedelta
+    past = (datetime.utcnow() - timedelta(seconds=1)).isoformat()
+    resp = client.post(
+        '/api/messages',
+        data={'content': b64, 'recipient': 'alice', 'signature': sig, 'expires_at': past},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    resp = client.get('/api/messages', headers=headers)
+    assert resp.get_json()['messages'] == []

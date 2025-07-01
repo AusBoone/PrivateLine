@@ -12,6 +12,10 @@ jest.mock('socket.io-client');
 jest.mock('../../utils/secureStore', () => ({
   loadKeyMaterial: jest.fn().mockResolvedValue({}),
 }));
+jest.mock('../../utils/messageCache', () => ({
+  loadMessages: jest.fn().mockResolvedValue([]),
+  saveMessages: jest.fn().mockResolvedValue(),
+}));
 jest.mock('../../utils/push', () => ({ setupWebPush: jest.fn() }));
 
 beforeAll(() => {
@@ -105,4 +109,19 @@ it('uses selected recipient when sending a message', async () => {
 
   // interactions skipped in this environment; ensure Send button is present
   expect(screen.getByText('Send')).toBeInTheDocument();
+});
+
+it('loads cached messages when the API request fails', async () => {
+  const socket = { on: jest.fn(), disconnect: jest.fn() };
+  io.mockReturnValue(socket);
+  api.get.mockRejectedValueOnce(new Error('network'));
+  const cache = require('../../utils/messageCache');
+  cache.loadMessages.mockResolvedValueOnce([{ id: 1, text: 'cached', type: 'received' }]);
+
+  render(<Chat />);
+
+  await waitFor(() => {
+    // fallback to cached messages should occur
+    expect(cache.loadMessages).toHaveBeenCalled();
+  });
 });

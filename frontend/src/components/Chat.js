@@ -19,6 +19,7 @@ import { arrayBufferToBase64, base64ToArrayBuffer } from '../utils/encoding';
 import { loadKeyMaterial } from '../utils/secureStore';
 import { setupWebPush } from '../utils/push';
 import { getUserId } from '../utils/auth';
+import { loadMessages, saveMessages } from '../utils/messageCache';
 import Cookies from 'js-cookie';
 
 // Chat groups loaded from the backend. Each entry contains
@@ -333,6 +334,14 @@ function Chat() {
           }
         } catch (err) {
           console.error('Failed to fetch messages', err);
+          try {
+            const cached = await loadMessages();
+            if (cached.length) {
+              setMessages(cached);
+            }
+          } catch (e) {
+            console.error('Failed to load cached messages', e);
+          }
         }
 
         s = io(process.env.REACT_APP_API_URL || 'http://localhost:5000');
@@ -381,6 +390,17 @@ function Chat() {
         if (s) s.disconnect();
       };
     }, [selectedGroup, recipient]);
+
+    // Persist the message list whenever it changes so a recent history is
+    // available when offline.
+    useEffect(() => {
+      const maybePromise = saveMessages(messages);
+      if (maybePromise && typeof maybePromise.catch === 'function') {
+        maybePromise.catch((e) => {
+          console.error('Failed to cache messages', e);
+        });
+      }
+    }, [messages]);
 
     useEffect(() => {
       async function fetchUsers() {

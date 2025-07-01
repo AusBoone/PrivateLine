@@ -6,6 +6,7 @@ The goal of this project is to build a secure messaging application that allows 
 
 # Overview
 This secure messaging application consists of a frontend built with React and a backend built with Flask. The frontend handles user registration, login, message encryption/decryption, and message display. The backend handles user authentication, message storage, and key management.
+See [docs/architecture.md](docs/architecture.md) for a high-level overview of how the pieces fit together.
 
 # Features
 - User registration and login
@@ -18,7 +19,9 @@ This secure messaging application consists of a frontend built with React and a 
 - Token refresh and revocation endpoints for session management
 - Real-time message delivery over WebSockets
 - User account management interface
+- Public key verification via QR codes
 - Offline caching of messages on the iOS client
+- Offline caching of messages on the React frontend
 - Optional dark mode and push notification support on iOS
 
 # Frontend
@@ -118,6 +121,13 @@ A minimal SwiftUI client is located in the `ios/` directory. See
 - To receive push notifications, start the backend with `APNS_CERT` and
   `APNS_TOPIC`. The app's `NotificationManager` will register its APNs token by
   calling `/api/push-token` after a user signs in.
+
+## Android Client
+A small Kotlin client lives in the `android/` directory. It mirrors the
+iOS networking layer and saves encrypted messages locally using `MessageStore`.
+Open the folder in Android Studio and run `./gradlew assembleDebug` to verify
+the skeleton builds. If the Gradle wrapper JAR is missing, run `gradle wrapper`
+first to generate it. See [android/README.md](android/README.md) for details.
 
 ## Push Notifications
 The backend can notify offline clients via Apple Push Notification service (APNs)
@@ -229,4 +239,11 @@ docker compose -f docker-compose.prod.yml up -d
 Logs from the services are sent to the address defined in the `gelf` logging
 driver. Adjust `logcollector` in `docker-compose.prod.yml` to point at your
 aggregator (e.g. Graylog or Logstash).
+
+## Key Verification
+
+The **User Account** screen shows your public key fingerprint and a QR code that
+can be shared with contacts. When adding a new contact, scan their QR code and
+compare fingerprints. Matching fingerprints ensure end-to-end encryption is not
+being intercepted.
 
