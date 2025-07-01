@@ -9,9 +9,10 @@ Features include:
 * **RSA/OAEP encryption** using `APIService`
 * **WebSocket** connectivity for real-time updates
 * **Offline message cache** stored via `MessageStore`
-* **User authentication** and registration flows
+* **User authentication** and registration flows protected by biometrics
 * **Attachment upload** prior to sending messages
 * **Push notifications** delivered via Firebase Cloud Messaging (FCM)
+* **Read receipts** allowing contacts to see when a message was opened
 
 The project intentionally stays small to demonstrate core functionality. It is a
 starting point rather than a polished application.
@@ -46,9 +47,17 @@ val cached = MessageStore.load(context)
 MessageStore.save(context, updatedMessages)
 ```
 
-Only strings are stored because encryption is handled before the data reaches the
-store. Failure to read or write the cache is silently ignored to avoid crashing
-the app.
+`MessageStore` now persists full `Message` objects so read receipts and
+expiration timestamps survive app restarts. Encryption occurs before data
+reaches the store, therefore the JSON on disk is still encrypted. Failure to
+read or write the cache is silently ignored to avoid crashing the app.
+
+## Biometric Unlock
+
+`TokenStore` saves the JWT token in `SharedPreferences` and requires Face or
+Touch ID via the `BiometricPrompt` API before returning it. Call
+`TokenStore.loadWithBiometrics(activity) { token -> ... }` when launching the
+app to authenticate the user.
 
 ## Firebase Setup
 

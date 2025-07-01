@@ -30,6 +30,13 @@ import java.security.interfaces.RSAPublicKey
 import java.security.spec.X509EncodedKeySpec
 import javax.crypto.Cipher
 import android.util.Base64
+import android.content.Context
+import com.example.privateline.TokenStore
+
+/**
+ * Minimal networking helper mirroring the iOS APIService. Encryption is
+ * performed locally using RSA and AES via standard JCA providers.
+ */
 
 /**
  * Minimal networking helper mirroring the iOS APIService. Encryption is
@@ -78,8 +85,12 @@ class APIService(private val baseUrl: String) {
         return Base64.encodeToString(encrypted, Base64.NO_WRAP)
     }
 
-    /** Perform a login request and cache the returned JWT token. */
-    fun login(username: String, password: String): Boolean {
+    /**
+     * Perform a login request and cache the returned JWT token. When a
+     * ``context`` is supplied the token is also persisted using
+     * ``TokenStore`` so it can be unlocked later with biometrics.
+     */
+    fun login(username: String, password: String, context: Context? = null): Boolean {
         val body = "{\"username\":\"$username\",\"password\":\"$password\"}"
         val req = Request.Builder()
             .url("$baseUrl/api/login")
@@ -90,6 +101,9 @@ class APIService(private val baseUrl: String) {
                 val json = resp.body?.string() ?: return false
                 val tokenValue = Regex("access_token":"([^"]+)").find(json)?.groupValues?.get(1)
                 token = tokenValue
+                if (context != null && tokenValue != null) {
+                    TokenStore.saveToken(context, tokenValue)
+                }
                 return tokenValue != null
             }
         }
@@ -159,5 +173,23 @@ class APIService(private val baseUrl: String) {
             .post(okhttp3.RequestBody.create(okhttp3.MediaType.parse("application/json"), body))
             .build()
         client.newCall(req).execute().close()
+    }
+
+    /**
+     * Notify the backend that the specified message has been read.
+     *
+     * @param id Identifier of the message to mark as read.
+     * @return true if the request was successful.
+     */
+    fun markMessageRead(id: Int): Boolean {
+        val tok = token ?: return false
+        val req = Request.Builder()
+            .url("$baseUrl/api/messages/$id/read")
+            .addHeader("Authorization", "Bearer $tok")
+            .post(okhttp3.RequestBody.create(null, ByteArray(0)))
+            .build()
+        client.newCall(req).execute().use { resp ->
+            return resp.isSuccessful
+        }
     }
 }

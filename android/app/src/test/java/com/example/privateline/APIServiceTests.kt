@@ -65,4 +65,24 @@ class APIServiceTests {
         // No requests should be recorded when token is missing
         assertEquals(0, server.requestCount)
     }
+
+    /**
+     * Verify that markMessageRead posts to the correct endpoint and
+     * includes the Authorization header derived from login.
+     */
+    @Test
+    fun markReadUsesAuthToken() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{\"access_token\":\"abc\"}"))
+        server.enqueue(MockResponse().setResponseCode(200))
+
+        val loggedIn = service.login("user", "pass")
+        assertTrue(loggedIn)
+        val ok = service.markMessageRead(5)
+        assertTrue(ok)
+
+        server.takeRequest() // login
+        val readReq = server.takeRequest()
+        assertEquals("/api/messages/5/read", readReq.path)
+        assertEquals("Bearer abc", readReq.getHeader("Authorization"))
+    }
 }

@@ -1,6 +1,10 @@
 /**
  * MessageStore.kt - On-device cache for encrypted messages.
- * Stores message strings in JSON so chats remain viewable offline.
+ *
+ * Persists the decrypted message models to the app's private files
+ * directory so conversations remain accessible when offline. Messages
+ * are already encrypted before hitting this layer, therefore they are
+ * stored as received JSON objects.
  */
 
 package com.example.privateline
@@ -25,15 +29,15 @@ object MessageStore {
      * @param context Application context used to resolve the cache location.
      * @return List of messages previously stored or an empty list if none.
      */
-    fun load(context: Context): List<String> {
+    fun load(context: Context): List<Message> {
         val file = File(context.filesDir, FILE_NAME)
         if (!file.exists()) {
             return emptyList()
         }
         return try {
             val text = file.readText()
-            val type = object : TypeToken<List<String>>() {}.type
-            Gson().fromJson<List<String>>(text, type) ?: emptyList()
+            val type = object : TypeToken<List<Message>>() {}.type
+            Gson().fromJson<List<Message>>(text, type) ?: emptyList()
         } catch (e: Exception) {
             // Corrupt cache should not crash the app
             emptyList()
@@ -45,9 +49,9 @@ object MessageStore {
      * offload to a background thread if writing large lists.
      *
      * @param context Application context used to resolve the cache location.
-     * @param messages List of encrypted message strings.
+     * @param messages List of message objects to persist.
      */
-    fun save(context: Context, messages: List<String>) {
+    fun save(context: Context, messages: List<Message>) {
         val file = File(context.filesDir, FILE_NAME)
         try {
             val json = Gson().toJson(messages)
