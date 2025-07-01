@@ -1,3 +1,7 @@
+/*
+ * ChatView.swift - Main conversation UI in SwiftUI.
+ * Presents message history and compose bar using ChatViewModel.
+ */
 import SwiftUI
 
 /// SwiftUI view displaying conversations and allowing the user to send
@@ -63,6 +67,11 @@ struct ChatView: View {
                     if case let .success(url) = result, let data = try? Data(contentsOf: url) {
                         viewModel.attachment = data
                     }
+                }
+                // Choose optional expiration time for the message
+                Stepper(value: $viewModel.expiresInMinutes, in: 0...1440, step: 10) {
+                    Text(viewModel.expiresInMinutes == 0 ? "No expiry" : "Expires in \(Int(viewModel.expiresInMinutes)) min")
+                        .font(.caption)
                 }
                 // Tapping the send icon encrypts and uploads the message
                 Button(action: { Task { await viewModel.send() } }) {

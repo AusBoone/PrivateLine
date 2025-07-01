@@ -1,3 +1,7 @@
+/*
+ * ChatViewModel.swift - Observable store backing ChatView.
+ * Coordinates message loading, sending and WebSocket updates.
+ */
 import Foundation
 import Combine
 
@@ -18,6 +22,9 @@ final class ChatViewModel: ObservableObject {
     @Published var selectedGroup: Int? = nil
     /// Binary data for an optional file attachment.
     @Published var attachment: Data? = nil
+    /// Minutes after which newly sent messages should expire. ``0`` means no
+    /// expiration and messages persist indefinitely.
+    @Published var expiresInMinutes: Double = 0
 
     /// Backend API wrapper used for all network operations.
     let api: APIService
@@ -36,27 +43,40 @@ final class ChatViewModel: ObservableObject {
     /// while the network request is in flight.
     func load() async {
         // Load cached messages first for offline support
-        messages = MessageStore.load()
+        // Remove locally cached messages that have already expired
+        let cached = MessageStore.load().filter { msg in
+            guard let exp = msg.expires_at else { return true }
+            return exp > Date()
+        }
+        messages = cached
         do {
             // Retrieve available chat groups
             groups = try await api.fetchGroups()
             // Fetch either direct or group conversation history
             let fetched = try await (selectedGroup != nil ? api.fetchGroupMessages(selectedGroup!) : api.fetchMessages())
-            messages = fetched
+            let valid = fetched.filter { msg in
+                guard let exp = msg.expires_at else { return true }
+                return exp > Date()
+            }
+            messages = valid
             // Mark unread messages as read on the server
             for msg in fetched where msg.read != true && (msg.id != 0) {
                 try? await api.markMessageRead(id: msg.id)
             }
             // Persist the updated history locally
-            MessageStore.save(fetched)
+            MessageStore.save(valid)
             // Establish WebSocket connection for real-time updates
             if let token = api.authToken {
                 socket.connect(token: token)
             }
             // Update local messages whenever new ones arrive
             socket.$messages.sink { [weak self] msgs in
-                self?.messages = msgs
-                MessageStore.save(msgs)
+                let valid = msgs.filter { msg in
+                    guard let exp = msg.expires_at else { return true }
+                    return exp > Date()
+                }
+                self?.messages = valid
+                MessageStore.save(valid)
             }.store(in: &cancellables)
         } catch {
             messages = []
@@ -75,15 +95,19 @@ final class ChatViewModel: ObservableObject {
                 fileId = try await api.uploadFile(data: data, filename: "file")
                 attachment = nil
             }
+            var expires: Date? = nil
+            if expiresInMinutes > 0 {
+                expires = Date().addingTimeInterval(expiresInMinutes * 60)
+            }
             if let gid = selectedGroup {
                 // Send to the selected group chat
-                try await api.sendGroupMessage(input, groupId: gid, fileId: fileId)
+                try await api.sendGroupMessage(input, groupId: gid, fileId: fileId, expiresAt: expires)
             } else {
                 // Send a direct message
-                try await api.sendMessage(input, to: recipient, fileId: fileId)
+                try await api.sendMessage(input, to: recipient, fileId: fileId, expiresAt: expires)
             }
             // Optimistically append the sent message locally
-            let msg = Message(id: Int(Date().timeIntervalSince1970), content: input, file_id: fileId, read: true)
+            let msg = Message(id: Int(Date().timeIntervalSince1970), content: input, file_id: fileId, read: true, expires_at: expires)
             messages.append(msg)
             MessageStore.save(messages)
             input = ""

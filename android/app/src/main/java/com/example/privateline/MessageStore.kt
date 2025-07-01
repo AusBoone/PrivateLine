@@ -1,3 +1,8 @@
+/**
+ * MessageStore.kt - On-device cache for encrypted messages.
+ * Stores message strings in JSON so chats remain viewable offline.
+ */
+
 package com.example.privateline
 
 import android.content.Context

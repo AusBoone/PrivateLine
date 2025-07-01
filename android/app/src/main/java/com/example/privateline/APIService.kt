@@ -1,3 +1,9 @@
+/**
+ * APIService.kt - Lightweight client for PrivateLine REST API.
+ * Provides methods to authenticate, send messages and upload files.
+ * Encryption is performed locally using RSA and AES.
+ */
+
 package com.example.privateline
 
 /**
@@ -32,6 +38,7 @@ import android.util.Base64
 class APIService(private val baseUrl: String) {
     private val client = OkHttpClient()
     private var socket: WebSocket? = null
+    private var token: String? = null
 
     /**
      * Retrieve the PEM encoded public key for ``username`` from the server.
@@ -69,5 +76,88 @@ class APIService(private val baseUrl: String) {
         cipher.init(Cipher.ENCRYPT_MODE, key)
         val encrypted = cipher.doFinal(text.toByteArray())
         return Base64.encodeToString(encrypted, Base64.NO_WRAP)
+    }
+
+    /** Perform a login request and cache the returned JWT token. */
+    fun login(username: String, password: String): Boolean {
+        val body = "{\"username\":\"$username\",\"password\":\"$password\"}"
+        val req = Request.Builder()
+            .url("$baseUrl/api/login")
+            .post(okhttp3.RequestBody.create(okhttp3.MediaType.parse("application/json"), body))
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (resp.isSuccessful) {
+                val json = resp.body?.string() ?: return false
+                val tokenValue = Regex("access_token":"([^"]+)").find(json)?.groupValues?.get(1)
+                token = tokenValue
+                return tokenValue != null
+            }
+        }
+        return false
+    }
+
+    /** Register a new account. */
+    fun register(username: String, email: String, password: String): Boolean {
+        val body = "username=$username&email=$email&password=$password"
+        val req = Request.Builder()
+            .url("$baseUrl/api/register")
+            .post(okhttp3.RequestBody.create(okhttp3.MediaType.parse("application/x-www-form-urlencoded"), body))
+            .build()
+        client.newCall(req).execute().use { resp ->
+            return resp.isSuccessful
+        }
+    }
+
+    /** Upload encrypted attachment data and return the file id. */
+    fun uploadAttachment(data: ByteArray, filename: String): Int? {
+        val tok = token ?: return null
+        val boundary = "----pl${'$'}{System.currentTimeMillis()}"
+        val body = okhttp3.MultipartBody.Builder(boundary)
+            .setType(okhttp3.MultipartBody.FORM)
+            .addFormDataPart("file", filename, okhttp3.RequestBody.create(null, data))
+            .build()
+        val req = Request.Builder()
+            .url("$baseUrl/api/files")
+            .addHeader("Authorization", "Bearer $tok")
+            .post(body)
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (resp.isSuccessful) {
+                val json = resp.body?.string() ?: return null
+                return Regex("file_id":(\d+)").find(json)?.groupValues?.get(1)?.toInt()
+            }
+        }
+        return null
+    }
+
+    /** Send an encrypted message. */
+    fun sendMessage(ciphertext: String, recipient: String, signature: String, fileId: Int?, expiresAt: String?): Boolean {
+        val tok = token ?: return false
+        val form = okhttp3.FormBody.Builder()
+            .add("content", ciphertext)
+            .add("recipient", recipient)
+            .add("signature", signature)
+        if (fileId != null) form.add("file_id", fileId.toString())
+        if (expiresAt != null) form.add("expires_at", expiresAt)
+        val req = Request.Builder()
+            .url("$baseUrl/api/messages")
+            .addHeader("Authorization", "Bearer $tok")
+            .post(form.build())
+            .build()
+        client.newCall(req).execute().use { resp ->
+            return resp.isSuccessful
+        }
+    }
+
+    /** Register an FCM token for push notifications. */
+    fun registerPushToken(token: String) {
+        val tok = this.token ?: return
+        val body = "{\"token\":\"$token\",\"platform\":\"android\"}"
+        val req = Request.Builder()
+            .url("$baseUrl/api/push-token")
+            .addHeader("Authorization", "Bearer $tok")
+            .post(okhttp3.RequestBody.create(okhttp3.MediaType.parse("application/json"), body))
+            .build()
+        client.newCall(req).execute().close()
     }
 }

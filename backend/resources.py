@@ -476,6 +476,7 @@ class GroupMessages(Resource):
                     "sender_id": msg.sender_id,
                     "file_id": msg.file_id,
                     "read": msg.read,
+                    "expires_at": msg.expires_at.isoformat() if msg.expires_at else None,
                 }
             )
         return {"messages": result}
@@ -668,6 +669,7 @@ class Messages(Resource):
                     "recipient_id": msg.recipient_id,
                     "file_id": msg.file_id,
                     "read": msg.read,
+                    "expires_at": msg.expires_at.isoformat() if msg.expires_at else None,
                 }
             )
         return {"messages": message_list}
