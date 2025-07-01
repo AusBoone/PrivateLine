@@ -23,6 +23,8 @@ See [docs/architecture.md](docs/architecture.md) for a high-level overview of ho
 - Offline caching of messages on the iOS client
 - Offline caching of messages on the React frontend
 - Optional dark mode and push notification support on iOS
+- Ephemeral messages with automatic expiration handling
+- Smooth animated chat interface for the React frontend
 
 # Frontend
 The frontend is built using React and consists of the following components:
@@ -128,6 +130,25 @@ iOS networking layer and saves encrypted messages locally using `MessageStore`.
 Open the folder in Android Studio and run `./gradlew assembleDebug` to verify
 the skeleton builds. If the Gradle wrapper JAR is missing, run `gradle wrapper`
 first to generate it. See [android/README.md](android/README.md) for details.
+
+### Release Process
+
+To create a production APK run:
+
+```bash
+cd android
+./gradlew assembleRelease
+```
+
+For iOS builds execute:
+
+```bash
+cd ios
+xcodebuild -scheme PrivateLine-Package -configuration Release
+```
+
+The OpenAPI specification is regenerated during CI to ensure the mobile clients
+remain in sync with the backend.
 
 ## Push Notifications
 The backend can notify offline clients via Apple Push Notification service (APNs)

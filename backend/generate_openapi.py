@@ -50,6 +50,10 @@ class MessageRequestSchema(Schema):
     recipient = fields.Str(required=False)
     group_id = fields.Int(required=False)
     file_id = fields.Int(required=False)
+    # Optional ISO8601 timestamp indicating when the message should
+    # expire and be removed by the server. Clients may hide expired
+    # messages locally as well for a consistent experience.
+    expires_at = fields.DateTime(required=False)
     signature = fields.Str(required=True)
 
 
@@ -63,6 +67,7 @@ class MessageResponseSchema(Schema):
     recipient_id = fields.Int(allow_none=True)
     file_id = fields.Int(allow_none=True)
     read = fields.Bool()
+    expires_at = fields.Str()
 
 
 class GenericMessageSchema(Schema):

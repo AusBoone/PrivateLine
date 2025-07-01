@@ -381,8 +381,8 @@ components:
         expires_at:
           type: string
           format: date-time
-      signature:
-        type: string
+        signature:
+          type: string
       required:
       - content
       - signature
@@ -405,6 +405,8 @@ components:
           nullable: true
         read:
           type: boolean
+        expires_at:
+          type: string
     GenericMessage:
       type: object
       properties:

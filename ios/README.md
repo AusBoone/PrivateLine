@@ -30,6 +30,11 @@ You can also open the project in Xcode and choose **Product → Test** from the 
 - Optional dark mode toggle in Settings for a modern appearance.
 - Push notification registration via `NotificationManager` so upcoming
   versions can alert users to new messages.
+- Support for ephemeral messages. When composing a chat you can select an
+  expiration time and messages are automatically hidden locally once that time
+  passes.
+- Settings now include a switch to enable or disable push notifications at any
+  time.
 
 ## Push Notifications
 

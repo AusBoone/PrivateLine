@@ -1,0 +1,68 @@
+/*
+ * APIServiceTests.kt - Unit tests for APIService network client.
+ * Uses MockWebServer to validate HTTP interactions without a real backend.
+ */
+package com.example.privateline
+
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+
+/**
+ * Test suite verifying authentication and message sending behaviour.
+ */
+class APIServiceTests {
+    private lateinit var server: MockWebServer
+    private lateinit var service: APIService
+
+    @Before
+    fun setup() {
+        server = MockWebServer()
+        server.start()
+        service = APIService(server.url("/").toString().removeSuffix("/"))
+    }
+
+    @After
+    fun tearDown() {
+        server.shutdown()
+    }
+
+    @Test
+    fun loginSuccessStoresTokenAndSendsAuthorizedMessage() {
+        // Provide successful login and message responses
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{\"access_token\":\"abc\"}"))
+        server.enqueue(MockResponse().setResponseCode(200))
+
+        val loggedIn = service.login("user", "pass")
+        assertTrue(loggedIn)
+        // sendMessage should include Authorization header with token from login
+        val result = service.sendMessage("cipher", "bob", "sig", null, null)
+        assertTrue(result)
+
+        val loginReq = server.takeRequest()
+        assertEquals("/api/login", loginReq.path)
+        val msgReq = server.takeRequest()
+        assertEquals("/api/messages", msgReq.path)
+        assertEquals("Bearer abc", msgReq.getHeader("Authorization"))
+    }
+
+    @Test
+    fun loginFailureReturnsFalse() {
+        server.enqueue(MockResponse().setResponseCode(401))
+        val success = service.login("bad", "creds")
+        assertFalse(success)
+    }
+
+    @Test
+    fun sendMessageWithoutTokenDoesNothing() {
+        val sent = service.sendMessage("ct", "alice", "sig", null, null)
+        assertFalse(sent)
+        // No requests should be recorded when token is missing
+        assertEquals(0, server.requestCount)
+    }
+}

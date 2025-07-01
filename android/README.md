@@ -9,6 +9,9 @@ Features include:
 * **RSA/OAEP encryption** using `APIService`
 * **WebSocket** connectivity for real-time updates
 * **Offline message cache** stored via `MessageStore`
+* **User authentication** and registration flows
+* **Attachment upload** prior to sending messages
+* **Push notifications** delivered via Firebase Cloud Messaging (FCM)
 
 The project intentionally stays small to demonstrate core functionality. It is a
 starting point rather than a polished application.
@@ -47,8 +50,10 @@ Only strings are stored because encryption is handled before the data reaches th
 store. Failure to read or write the cache is silently ignored to avoid crashing
 the app.
 
-## Limitations
+## Firebase Setup
 
-This client does not yet implement user authentication or attachment uploads.
-Those pieces can be added by following the API documented in
-`../docs/openapi.yaml`.
+Push notifications are handled using FCM. Add your `google-services.json` to the
+`android/app` folder and ensure Firebase Messaging is enabled in your project.
+On first launch the app will retrieve an FCM token and register it with the
+backend's `/api/push-token` endpoint so notifications can be delivered when new
+messages arrive.

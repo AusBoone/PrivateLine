@@ -1,3 +1,7 @@
+/*
+ * APIService.swift - Networking layer for the iOS client.
+ * Manages authentication, message transfer and certificate pinning.
+ */
 import Foundation
 import LocalAuthentication
 
@@ -155,7 +159,7 @@ class APIService: ObservableObject {
         let msgs = json["messages"] ?? []
         return msgs.compactMap { msg in
             if let text = try? CryptoManager.decryptRSA(msg.content) {
-                return Message(id: msg.id, content: text, file_id: msg.file_id, read: msg.read)
+                return Message(id: msg.id, content: text, file_id: msg.file_id, read: msg.read, expires_at: msg.expires_at)
             }
             return nil
         }
@@ -173,7 +177,7 @@ class APIService: ObservableObject {
         return msgs.compactMap { msg in
             guard let data = Data(base64Encoded: msg.content) else { return nil }
             if let text = try? CryptoManager.decryptGroupMessage(data, groupId: id) {
-                return Message(id: msg.id, content: text, file_id: msg.file_id, read: msg.read)
+                return Message(id: msg.id, content: text, file_id: msg.file_id, read: msg.read, expires_at: msg.expires_at)
             }
             return nil
         }
@@ -192,7 +196,7 @@ class APIService: ObservableObject {
     }
 
     /// Encrypt ``content`` with the group key and POST it to the server.
-    func sendGroupMessage(_ content: String, groupId: Int, fileId: Int? = nil) async throws {
+    func sendGroupMessage(_ content: String, groupId: Int, fileId: Int? = nil, expiresAt: Date? = nil) async throws {
         guard let token = token else { throw URLError(.userAuthenticationRequired) }
         _ = try await groupKey(for: groupId)
         var request = URLRequest(url: baseURL.appendingPathComponent("groups/\(groupId)/messages"))
@@ -209,6 +213,10 @@ class APIService: ObservableObject {
         ]
         if let id = fileId {
             items.append(URLQueryItem(name: "file_id", value: String(id)))
+        }
+        if let exp = expiresAt {
+            let iso = ISO8601DateFormatter().string(from: exp)
+            items.append(URLQueryItem(name: "expires_at", value: iso))
         }
         comps.queryItems = items
         request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -292,7 +300,7 @@ class APIService: ObservableObject {
     }
 
     /// Send a single message to ``recipient``.
-    func sendMessage(_ content: String, to recipient: String, fileId: Int? = nil) async throws {
+    func sendMessage(_ content: String, to recipient: String, fileId: Int? = nil, expiresAt: Date? = nil) async throws {
         guard let token = token else { throw URLError(.userAuthenticationRequired) }
         var request = URLRequest(url: baseURL.appendingPathComponent("messages"))
         request.httpMethod = "POST"
@@ -314,6 +322,10 @@ class APIService: ObservableObject {
         ]
         if let id = fileId {
             items.append(URLQueryItem(name: "file_id", value: String(id)))
+        }
+        if let exp = expiresAt {
+            let iso = ISO8601DateFormatter().string(from: exp)
+            items.append(URLQueryItem(name: "expires_at", value: iso))
         }
         comps.queryItems = items
         request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")

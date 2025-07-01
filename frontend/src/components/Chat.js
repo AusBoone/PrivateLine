@@ -1,6 +1,6 @@
 // Includes the utility functions for encrypting and decrypting messages using RSA-OAEP,
 // as well as the logic for sending encrypted messages and decrypting received messages.
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import api from '../api';
 import {
@@ -265,6 +265,16 @@ function Chat() {
   const [users, setUsers] = useState([]);
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [file, setFile] = useState(null);
+  // Element at the end of the message list so we can smoothly scroll
+  const messageEndRef = useRef(null);
+
+  // Scroll to the bottom of the list whenever a new message appears.
+  useEffect(() => {
+    if (messageEndRef.current &&
+        typeof messageEndRef.current.scrollIntoView === 'function') {
+      messageEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages]);
 
     // Cache for recipient public keys.  In a real app this might live in a
     // Redux store or other global cache.
@@ -599,6 +609,7 @@ function Chat() {
                 </IconButton>
               </Box>
             ))}
+            <div ref={messageEndRef} />
           </Box>
           <Box
             component="form"
