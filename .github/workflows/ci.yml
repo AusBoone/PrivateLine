@@ -20,6 +20,10 @@ jobs:
           profile: minimal
           override: true
       - run: pip install -r backend/requirements.txt
+      - name: Generate OpenAPI spec
+        run: python backend/generate_openapi.py
+      - name: Verify OpenAPI spec committed
+        run: git diff --exit-code docs/openapi.yaml
       - run: pytest
 
   frontend:
