@@ -53,8 +53,9 @@ if not _aes_key_env:
 AES_KEY = b64decode(_aes_key_env)
 aesgcm = AESGCM(AES_KEY)
 
-# Maximum allowed upload size in bytes (5 MB)
-MAX_FILE_SIZE = 5 * 1024 * 1024
+# Maximum allowed upload size in bytes. Defaults to 5 MB but can be overridden
+# with the ``MAX_FILE_SIZE`` environment variable.
+MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE", 5 * 1024 * 1024))
 
 
 # Request parser for messages
@@ -119,16 +120,39 @@ def send_web_push(subscription_json: str, message: str) -> None:
         app.logger.warning("Failed to send web push: %s", e)
 
 
+def send_fcm(token: str, message: str) -> None:
+    """Send a push notification via Firebase Cloud Messaging."""
+    try:
+        import requests
+
+        server_key = os.environ.get("FCM_SERVER_KEY")
+        if not server_key:
+            return
+        headers = {
+            "Authorization": f"key={server_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {"to": token, "notification": {"title": "PrivateLine", "body": message}}
+        requests.post(
+            "https://fcm.googleapis.com/fcm/send",
+            json=payload,
+            headers=headers,
+            timeout=5,
+        )
+    except Exception as e:
+        app.logger.warning("Failed to send FCM notification: %s", e)
+
+
 def send_push_notifications(user_id: int, message: str) -> None:
     """Send notifications to all registered tokens for the user."""
     tokens = PushToken.query.filter_by(user_id=user_id).all()
-    # Each token represents either a web push subscription or an APNs token.
+    # Each token represents a push subscription for a specific platform.
     for t in tokens:
         if t.platform == "web":
-            # Browser push notification
             send_web_push(t.token, message)
+        elif t.platform == "android":
+            send_fcm(t.token, message)
         else:
-            # iOS push notification
             send_apns(t.token, message)
 
 

@@ -72,7 +72,10 @@ To run the application, follow these steps:
    * Optional cookie security settings: `JWT_COOKIE_SECURE`,
      `JWT_COOKIE_SAMESITE` and `JWT_COOKIE_CSRF_PROTECT`.
    * Optional push notification settings: `APNS_CERT`, `APNS_TOPIC`,
-    `APNS_USE_SANDBOX`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`.
+    `APNS_USE_SANDBOX`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` and
+    `FCM_SERVER_KEY` for Android notifications.
+   * Optional `SENTRY_DSN` to forward runtime errors to Sentry.
+   * Optional `MAX_FILE_SIZE` to override the default 5&nbsp;MB upload limit.
 3. Install backend dependencies with `pip install -r requirements.txt`.
 4. Install frontend dependencies with `npm install` inside the `frontend` directory.
 5. Start the backend with `python backend/app.py` and the frontend with `npm start`.
@@ -82,7 +85,9 @@ To run the application, follow these steps:
 ### Enabling Secure Cookies
 Set `JWT_COOKIE_SECURE=true` in your environment when deploying behind HTTPS so authentication cookies are marked as secure. `JWT_COOKIE_SAMESITE` and `JWT_COOKIE_CSRF_PROTECT` can also be enabled for additional CSRF mitigation. The defaults remain development-friendly.
 
-Uploaded files are limited to 5&nbsp;MB to prevent abuse. Oversized uploads return `413 Payload Too Large`.
+Uploaded files are limited to 5&nbsp;MB by default to prevent abuse. Set
+`MAX_FILE_SIZE` in your environment to adjust the limit. Oversized uploads return
+`413 Payload Too Large`.
 
 ## Docker
 
@@ -158,8 +163,9 @@ The OpenAPI specification is regenerated during CI to ensure the mobile clients
 remain in sync with the backend.
 
 ## Push Notifications
-The backend can notify offline clients via Apple Push Notification service (APNs)
-and the Web Push protocol. To enable this feature you must provide additional
+The backend can notify offline clients via Apple Push Notification service (APNs),
+Firebase Cloud Messaging (FCM) and the Web Push protocol. To enable this feature
+you must provide additional
 environment variables:
 
 * `APNS_CERT` – path to the PEM certificate used for APNs.
@@ -167,6 +173,7 @@ environment variables:
 * `APNS_USE_SANDBOX` – set to `false` when using production APNs.
 * `VAPID_PRIVATE_KEY` – private key for Web Push messages.
 * `VAPID_SUBJECT` – contact URI shown in Web Push claims.
+* `FCM_SERVER_KEY` – server key issued by FCM for Android pushes.
 
 Example `.env` entries:
 
@@ -283,6 +290,4 @@ Several areas could further enhance PrivateLine:
   rotate frequently would reduce the impact of any single compromised key.
 - **Expanded test coverage**: adding tests for failure modes like file uploads
   and downloads would catch regressions earlier.
-- **Monitoring integration**: connecting the services to Sentry or a similar
-  tool would surface runtime errors quickly.
 
