@@ -116,6 +116,46 @@ def test_filename_sanitization(client):
     assert f"filename={expected}" in cd
 
 
+def test_missing_mimetype_defaults_octet_stream(client):
+    """Server should default to application/octet-stream when type is absent."""
+    reg = register_user(client, "dora")
+    pk = decrypt_private_key(reg)
+    token = login_user(client, "dora").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    fs = FileStorage(stream=io.BytesIO(b"bin"), filename="bin.dat")
+    resp = client.post(
+        "/api/files",
+        data={"file": fs},
+        headers=headers,
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 201
+    fid = resp.get_json()["file_id"]
+    b64 = base64.b64encode(b"x").decode()
+    sig = sign_content(pk, b64)
+    client.post(
+        "/api/messages",
+        data={"content": b64, "recipient": "dora", "file_id": fid, "signature": sig},
+        headers=headers,
+    )
+    resp = client.get(f"/api/files/{fid}", headers=headers)
+    assert resp.headers["Content-Type"] == "application/octet-stream"
+
+
+def test_invalid_file_field(client):
+    """Sending a non-file under 'file' should be rejected."""
+    register_user(client, "erin")
+    token = login_user(client, "erin").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = client.post(
+        "/api/files",
+        data={"file": "notafile"},
+        headers=headers,
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
+
+
 def test_file_upload_too_large(client):
     register_user(client, "alice")
     token = login_user(client, "alice").get_json()["access_token"]
@@ -131,3 +171,31 @@ def test_file_upload_too_large(client):
         content_type="multipart/form-data",
     )
     assert resp.status_code == 413
+
+
+def test_missing_file_field(client):
+    """Submitting no file should return HTTP 400."""
+    register_user(client, "bob")
+    token = login_user(client, "bob").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = client.post(
+        "/api/files", data={}, headers=headers, content_type="multipart/form-data"
+    )
+    assert resp.status_code == 400
+
+
+def test_max_file_size_env(monkeypatch, client):
+    """Lowering MAX_FILE_SIZE via env variable should reject larger uploads."""
+    import backend.resources as res
+    monkeypatch.setattr(res, "MAX_FILE_SIZE", 10)
+
+    register_user(client, "carla")
+    token = login_user(client, "carla").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    big = io.BytesIO(b"a" * 11)
+    fs = FileStorage(stream=big, filename="tiny.bin", content_type="application/octet-stream")
+    resp = client.post(
+        "/api/files", data={"file": fs}, headers=headers, content_type="multipart/form-data"
+    )
+    assert resp.status_code == 413
+
