@@ -1,9 +1,3 @@
-/**
- * APIService.kt - Lightweight client for PrivateLine REST API.
- * Provides methods to authenticate, send messages and upload files.
- * Encryption is performed locally using RSA and AES.
- */
-
 package com.example.privateline
 
 /**
@@ -24,6 +18,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okhttp3.CertificatePinner
+import okhttp3.HttpUrl
 import java.security.KeyFactory
 import java.security.PublicKey
 import java.security.interfaces.RSAPublicKey
@@ -32,18 +28,29 @@ import javax.crypto.Cipher
 import android.util.Base64
 import android.content.Context
 import com.example.privateline.TokenStore
-
-/**
- * Minimal networking helper mirroring the iOS APIService. Encryption is
- * performed locally using RSA and AES via standard JCA providers.
- */
+import com.google.gson.Gson
+import com.google.gson.JsonObject
 
 /**
  * Minimal networking helper mirroring the iOS APIService. Encryption is
  * performed locally using RSA and AES via standard JCA providers.
  */
 class APIService(private val baseUrl: String) {
-    private val client = OkHttpClient()
+    companion object {
+        /** SHA256 pin for the backend certificate. Replace with actual value. */
+        private const val PINNED_SHA256 = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    }
+
+    private val client: OkHttpClient
+    init {
+        val host = HttpUrl.parse(baseUrl)?.host() ?: baseUrl
+        val pinner = CertificatePinner.Builder()
+            .add(host, PINNED_SHA256)
+            .build()
+        client = OkHttpClient.Builder()
+            .certificatePinner(pinner)
+            .build()
+    }
     private var socket: WebSocket? = null
     private var token: String? = null
 
@@ -98,13 +105,19 @@ class APIService(private val baseUrl: String) {
             .build()
         client.newCall(req).execute().use { resp ->
             if (resp.isSuccessful) {
-                val json = resp.body?.string() ?: return false
-                val tokenValue = Regex("access_token":"([^"]+)").find(json)?.groupValues?.get(1)
-                token = tokenValue
-                if (context != null && tokenValue != null) {
-                    TokenStore.saveToken(context, tokenValue)
+                val jsonStr = resp.body?.string() ?: return false
+                return try {
+                    val obj = Gson().fromJson(jsonStr, JsonObject::class.java)
+                    val tok = obj.get("access_token").asString
+                    token = tok
+                    if (context != null) {
+                        TokenStore.saveToken(context, tok)
+                        TokenStore.saveUsername(context, username)
+                    }
+                    true
+                } catch (_: Exception) {
+                    false
                 }
-                return tokenValue != null
             }
         }
         return false
@@ -126,9 +139,15 @@ class APIService(private val baseUrl: String) {
     fun uploadAttachment(data: ByteArray, filename: String): Int? {
         val tok = token ?: return null
         val boundary = "----pl${'$'}{System.currentTimeMillis()}"
+        // Encrypt attachment locally so the server never sees plaintext bytes
+        val encrypted = CryptoManager.encryptData(data)
         val body = okhttp3.MultipartBody.Builder(boundary)
             .setType(okhttp3.MultipartBody.FORM)
-            .addFormDataPart("file", filename, okhttp3.RequestBody.create(null, data))
+            .addFormDataPart(
+                "file",
+                filename,
+                okhttp3.RequestBody.create(null, encrypted)
+            )
             .build()
         val req = Request.Builder()
             .url("$baseUrl/api/files")
@@ -138,7 +157,12 @@ class APIService(private val baseUrl: String) {
         client.newCall(req).execute().use { resp ->
             if (resp.isSuccessful) {
                 val json = resp.body?.string() ?: return null
-                return Regex("file_id":(\d+)").find(json)?.groupValues?.get(1)?.toInt()
+                return try {
+                    val obj = Gson().fromJson(json, JsonObject::class.java)
+                    obj.get("file_id").asInt
+                } catch (_: Exception) {
+                    null
+                }
             }
         }
         return null
@@ -190,6 +214,98 @@ class APIService(private val baseUrl: String) {
             .build()
         client.newCall(req).execute().use { resp ->
             return resp.isSuccessful
+        }
+    }
+
+    /** Fetch the list of chat groups from the server. */
+    fun fetchGroups(): List<Group> {
+        val tok = token ?: return emptyList()
+        val req = Request.Builder()
+            .url("$baseUrl/api/groups")
+            .addHeader("Authorization", "Bearer $tok")
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (resp.isSuccessful) {
+                val json = resp.body?.string() ?: return emptyList()
+                return try {
+                    val obj = Gson().fromJson(json, JsonObject::class.java)
+                    val arr = obj.getAsJsonArray("groups")
+                    arr.map { g ->
+                        val o = g.asJsonObject
+                        Group(o.get("id").asInt, o.get("name").asString)
+                    }
+                } catch (_: Exception) { emptyList() }
+            }
+        }
+        return emptyList()
+    }
+
+    /** Retrieve messages for a specific group. */
+    fun fetchGroupMessages(groupId: Int): List<Message> {
+        val tok = token ?: return emptyList()
+        val req = Request.Builder()
+            .url("$baseUrl/api/groups/$groupId/messages")
+            .addHeader("Authorization", "Bearer $tok")
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (resp.isSuccessful) {
+                val json = resp.body?.string() ?: return emptyList()
+                return try {
+                    val obj = Gson().fromJson(json, JsonObject::class.java)
+                    val arr = obj.getAsJsonArray("messages")
+                    arr.map { m -> Gson().fromJson(m, Message::class.java) }
+                } catch (_: Exception) { emptyList() }
+            }
+        }
+        return emptyList()
+    }
+
+    /** Send an encrypted group message. */
+    fun sendGroupMessage(ciphertext: String, groupId: Int, signature: String, fileId: Int?, expiresAt: String?): Boolean {
+        val tok = token ?: return false
+        val form = okhttp3.FormBody.Builder()
+            .add("content", ciphertext)
+            .add("group_id", groupId.toString())
+            .add("signature", signature)
+        if (fileId != null) form.add("file_id", fileId.toString())
+        if (expiresAt != null) form.add("expires_at", expiresAt)
+        val req = Request.Builder()
+            .url("$baseUrl/api/groups/$groupId/messages")
+            .addHeader("Authorization", "Bearer $tok")
+            .post(form.build())
+            .build()
+        client.newCall(req).execute().use { resp ->
+            return resp.isSuccessful
+        }
+    }
+
+    /** Revoke all active sessions for the current user. */
+    fun revokeAllSessions() {
+        val tok = token ?: return
+        val req = Request.Builder()
+            .url("$baseUrl/api/revoke")
+            .addHeader("Authorization", "Bearer $tok")
+            .post(okhttp3.RequestBody.create(null, ByteArray(0)))
+            .build()
+        client.newCall(req).execute().close()
+    }
+
+    /** Refresh the JWT token using the backend. */
+    fun refreshToken() {
+        val tok = token ?: return
+        val req = Request.Builder()
+            .url("$baseUrl/api/refresh")
+            .addHeader("Authorization", "Bearer $tok")
+            .post(okhttp3.RequestBody.create(null, ByteArray(0)))
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (resp.isSuccessful) {
+                val json = resp.body?.string() ?: return
+                try {
+                    val obj = Gson().fromJson(json, JsonObject::class.java)
+                    token = obj.get("access_token").asString
+                } catch (_: Exception) {}
+            }
         }
     }
 }
