@@ -8,11 +8,11 @@
     "@mui/icons-material": "^5.14.7",
     "@mui/material": "^5.14.7",
     "axios": "^1.9.0",
-    "qrcode.react": "^1.0.1",
-    "react-qr-reader": "^3.0.0-beta-1",
     "js-cookie": "^3.0.5",
+    "qrcode.react": "^1.0.1",
     "react": "^17.0.2",
     "react-dom": "^17.0.2",
+    "react-qr-reader": "^3.0.0-beta-1",
     "react-router-dom": "^5.3.4",
     "react-scripts": "^5.0.1",
     "socket.io-client": "^4.8.1"
@@ -21,6 +21,7 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test --env=jsdom --watchAll=false"
+    ,"lint": "eslint src --ext js,jsx"
   },
   "jest": {
     "moduleNameMapper": {
@@ -29,7 +30,10 @@
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^5.17.0",
-    "@testing-library/react": "^12.1.5"
+    "@testing-library/react": "^12.1.5",
+    "eslint": "^8.57.1",
+    "eslint-config-airbnb-base": "^15.0.0",
+    "eslint-plugin-import": "^2.32.0"
   },
   "overrides": {
     "@svgr/plugin-svgo": "^8.1.0",

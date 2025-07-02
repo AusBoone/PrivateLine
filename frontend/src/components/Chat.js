@@ -22,6 +22,18 @@ import { getUserId } from '../utils/auth';
 import { loadMessages, saveMessages } from '../utils/messageCache';
 import Cookies from 'js-cookie';
 
+/**
+ * Return ``true`` if ``msg`` has an ``expires_at`` timestamp in the past.
+ *
+ * @param {Object} msg - Message object potentially containing ``expires_at``.
+ * @returns {boolean} ``true`` when the message should no longer be displayed.
+ */
+function isExpired(msg) {
+  return (
+    msg.expires_at && new Date(msg.expires_at).getTime() <= Date.now()
+  );
+}
+
 // Chat groups loaded from the backend. Each entry contains
 // an ``id`` and ``name`` used to populate the sidebar.
 
@@ -257,6 +269,8 @@ function Chat() {
     // State variable to manage the message input field
     const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
+  // Number of minutes before a newly sent message expires. ``0`` disables expiry.
+  const [expiresInMinutes, setExpiresInMinutes] = useState(0);
   const [privateKey, setPrivateKey] = useState(null);
   const [signKey, setSignKey] = useState(null);
   const [userId, setUserId] = useState(null);
@@ -337,17 +351,18 @@ function Chat() {
                   type: 'received',
                   file_id: m.file_id,
                   read: m.read,
+                  expires_at: m.expires_at,
                 };
               })
             );
-            setMessages(decrypted);
+            setMessages(decrypted.filter((m) => !isExpired(m)));
           }
         } catch (err) {
           console.error('Failed to fetch messages', err);
           try {
             const cached = await loadMessages();
             if (cached.length) {
-              setMessages(cached);
+              setMessages(cached.filter((m) => !isExpired(m)));
             }
           } catch (e) {
             console.error('Failed to load cached messages', e);
@@ -404,7 +419,7 @@ function Chat() {
     // Persist the message list whenever it changes so a recent history is
     // available when offline.
     useEffect(() => {
-      const maybePromise = saveMessages(messages);
+      const maybePromise = saveMessages(messages.filter((m) => !isExpired(m)));
       if (maybePromise && typeof maybePromise.catch === 'function') {
         maybePromise.catch((e) => {
           console.error('Failed to cache messages', e);
@@ -505,6 +520,12 @@ function Chat() {
             formData.append('file_id', upload.data.file_id);
           }
         }
+        // Calculate expiration timestamp if the user specified a duration.
+        if (expiresInMinutes > 0) {
+          const exp = new Date(Date.now() + expiresInMinutes * 60000).toISOString();
+          formData.append('expires_at', exp);
+        }
+
         const response = await api.post(url, formData);
 
         if (response.status === 201) {
@@ -517,6 +538,7 @@ function Chat() {
               type: 'sent',
               file_id: formData.get('file_id'),
               read: true,
+              expires_at: expiresInMinutes > 0 ? new Date(Date.now() + expiresInMinutes * 60000).toISOString() : null,
             },
           ]);
           setMessage('');
@@ -561,7 +583,7 @@ function Chat() {
         </Drawer>
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
           <Box className="message-list" sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
-            {messages.map((msg) => (
+            {messages.filter((m) => !isExpired(m)).map((msg) => (
               <Box
                 key={msg.id}
                 className={`message ${msg.type}`}
@@ -623,6 +645,15 @@ function Chat() {
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               size="small"
+            />
+            <TextField
+              type="number"
+              placeholder="Expire minutes"
+              value={expiresInMinutes}
+              onChange={(e) => setExpiresInMinutes(parseInt(e.target.value, 10) || 0)}
+              size="small"
+              sx={{ width: 120, ml: 1 }}
+              inputProps={{ min: 0 }}
             />
             <input type="file" onChange={(e) => setFile(e.target.files[0])} />
             <Button type="submit" variant="contained" sx={{ ml: 1 }}>

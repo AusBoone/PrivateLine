@@ -125,3 +125,47 @@ it('loads cached messages when the API request fails', async () => {
     expect(cache.loadMessages).toHaveBeenCalled();
   });
 });
+
+it('filters expired cached messages', async () => {
+  const socket = { on: jest.fn(), disconnect: jest.fn() };
+  io.mockReturnValue(socket);
+  api.get.mockRejectedValueOnce(new Error('network'));
+  const cache = require('../../utils/messageCache');
+  const past = new Date(Date.now() - 60000).toISOString();
+  cache.loadMessages.mockResolvedValueOnce([{ id: 2, text: 'gone', type: 'received', expires_at: past }]);
+
+  render(<Chat />);
+
+  await waitFor(() => {
+    expect(cache.loadMessages).toHaveBeenCalled();
+  });
+
+  expect(screen.queryByText('gone')).toBeNull();
+});
+
+it('includes expires_at when sending a message', async () => {
+  const socket = { on: jest.fn(), disconnect: jest.fn() };
+  io.mockReturnValue(socket);
+  api.get.mockImplementation((url) => {
+    if (url === '/api/groups') return Promise.resolve({ status: 200, data: { groups: [] } });
+    if (url === '/api/messages') return Promise.resolve({ status: 200, data: { messages: [] } });
+    if (url === '/api/users') return Promise.resolve({ status: 200, data: { users: ['alice'] } });
+    if (url.startsWith('/api/public_key/')) return Promise.resolve({ status: 200, data: { public_key: 'pk' } });
+    return Promise.resolve({ status: 200, data: {} });
+  });
+  api.post.mockResolvedValueOnce({ status: 201, data: { id: 1 } });
+
+  render(<Chat />);
+
+  await waitFor(() => expect(api.get).toHaveBeenCalledWith('/api/groups'));
+  await waitFor(() => expect(api.get).toHaveBeenCalledWith('/api/users'));
+  await waitFor(() => screen.getByText('alice'));
+  fireEvent.click(screen.getByText('alice'));
+  fireEvent.change(screen.getByPlaceholderText('Type your message'), { target: { value: 'hi' } });
+  fireEvent.change(screen.getByPlaceholderText('Expire minutes'), { target: { value: '1' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+  await waitFor(() => expect(api.post).toHaveBeenCalled());
+  const body = api.post.mock.calls[0][1];
+  expect(body.get('expires_at')).toBeTruthy();
+});
