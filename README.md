@@ -26,6 +26,13 @@ See [docs/architecture.md](docs/architecture.md) for a high-level overview of ho
 - Ephemeral messages with automatic expiration handling
 - Smooth animated chat interface for the React frontend
 
+## Ephemeral messages and offline caching
+
+Messages can include an expiration timestamp. Expired messages are
+automatically removed by a scheduled job on the backend and pruned from
+the clients' local caches. Both the React and mobile clients store a small
+history offline so conversations remain visible without network access.
+
 # Frontend
 The frontend is built using React and consists of the following components:
 1. **LoginForm**: Handles user login by sending a request to the backend for authentication and decrypts the stored private key using the user's password.
@@ -267,4 +274,15 @@ The **User Account** screen shows your public key fingerprint and a QR code that
 can be shared with contacts. When adding a new contact, scan their QR code and
 compare fingerprints. Matching fingerprints ensure end-to-end encryption is not
 being intercepted.
+
+## Future Improvements
+
+Several areas could further enhance PrivateLine:
+
+- **Forward secrecy**: adopting a double ratchet protocol so message keys
+  rotate frequently would reduce the impact of any single compromised key.
+- **Expanded test coverage**: adding tests for failure modes like file uploads
+  and downloads would catch regressions earlier.
+- **Monitoring integration**: connecting the services to Sentry or a similar
+  tool would surface runtime errors quickly.
 

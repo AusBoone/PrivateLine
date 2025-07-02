@@ -1,5 +1,7 @@
 // Utility for caching decrypted messages in IndexedDB so the chat interface
 // can function offline. Stored messages mirror the shape returned by the API.
+// Expired messages are pruned whenever data is loaded or saved so that the
+// cache does not retain messages beyond their lifetime.
 //
 // Usage:
 //   const messages = await loadMessages();
@@ -28,7 +30,10 @@ export async function saveMessages(msgs) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
-    store.put(msgs, 'list');
+    const filtered = msgs.filter(
+      (m) => !(m.expires_at && new Date(m.expires_at) <= new Date())
+    );
+    store.put(filtered, 'list');
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -40,7 +45,13 @@ export async function loadMessages() {
     const tx = db.transaction(STORE_NAME, 'readonly');
     const store = tx.objectStore(STORE_NAME);
     const req = store.get('list');
-    req.onsuccess = () => resolve(req.result || []);
+    req.onsuccess = () => {
+      const msgs = req.result || [];
+      const filtered = msgs.filter(
+        (m) => !(m.expires_at && new Date(m.expires_at) <= new Date())
+      );
+      resolve(filtered);
+    };
     req.onerror = () => reject(req.error);
   });
 }
