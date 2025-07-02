@@ -18,6 +18,7 @@ import androidx.fragment.app.FragmentActivity
 object TokenStore {
     private const val PREF = "token_prefs"
     private const val KEY = "jwt"
+    private const val USER = "username"
 
     /**
      * Persist the given token in SharedPreferences.
@@ -27,12 +28,24 @@ object TokenStore {
             .edit().putString(KEY, token).apply()
     }
 
+    /** Store the username alongside the token for later use. */
+    fun saveUsername(context: Context, username: String) {
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit().putString(USER, username).apply()
+    }
+
     /**
      * Remove any stored token.
      */
     fun clearToken(context: Context) {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-            .edit().remove(KEY).apply()
+            .edit().remove(KEY).remove(USER).apply()
+    }
+
+    /** Retrieve the stored username or null if none. */
+    fun loadUsername(context: Context): String? {
+        return context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .getString(USER, null)
     }
 
     /**

@@ -37,7 +37,11 @@ object MessageStore {
         return try {
             val text = file.readText()
             val type = object : TypeToken<List<Message>>() {}.type
-            Gson().fromJson<List<Message>>(text, type) ?: emptyList()
+            val msgs = Gson().fromJson<List<Message>>(text, type) ?: emptyList()
+            // Filter out messages that have expired locally so they are not
+            // displayed when the app starts up again.
+            val now = java.util.Date()
+            msgs.filter { it.expires_at == null || it.expires_at.after(now) }
         } catch (e: Exception) {
             // Corrupt cache should not crash the app
             emptyList()

@@ -13,6 +13,11 @@ Features include:
 * **Attachment upload** prior to sending messages
 * **Push notifications** delivered via Firebase Cloud Messaging (FCM)
 * **Read receipts** allowing contacts to see when a message was opened
+* **Ephemeral messages** automatically disappear after their expiration time
+* **Group chat support** for encrypted conversations with multiple people
+* **Settings screen** with dark mode and push notification toggle
+* **Onboarding screen** displaying your public key fingerprint
+* **TLS certificate pinning** to prevent man-in-the-middle attacks
 
 The project intentionally stays small to demonstrate core functionality. It is a
 starting point rather than a polished application.
