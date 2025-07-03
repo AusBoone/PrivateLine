@@ -3,6 +3,10 @@ import CryptoKit
 import Security
 import CommonCrypto
 
+// GroupKeyStore persists AES keys in the keychain so chats remain
+// decryptable after the app restarts.
+// swiftlint:disable type_body_length
+
 /// Simple cryptography helper used by the SwiftUI client.
 ///
 /// This implementation uses ``CryptoKit`` to provide symmetric AES-GCM
@@ -99,30 +103,87 @@ enum CryptoManager {
 
     // MARK: - Group encryption helpers
 
-    /// Cached per-group symmetric keys
+    /// Cached per-group symmetric keys held in memory.
     private static var groupKeys: [Int: SymmetricKey] = [:]
 
-    /// Store a base64-encoded AES key for ``groupId``.
+    /// Persist ``b64`` as the AES key for ``groupId`` and cache it in memory.
     static func storeGroupKey(_ b64: String, groupId: Int) {
-        if let data = Data(base64Encoded: b64) {
-            groupKeys[groupId] = SymmetricKey(data: data)
+        guard let data = Data(base64Encoded: b64), data.count == 32 else { return }
+        groupKeys[groupId] = SymmetricKey(data: data)
+        GroupKeyStore.store(b64, groupId: groupId)
+    }
+
+    /// Load all saved keys from the Keychain into ``groupKeys``.
+    static func preloadPersistedGroupKeys() {
+        groupKeys = GroupKeyStore.loadAll()
+    }
+
+    /// Remove the cached key and delete it from the Keychain.
+    static func removeGroupKey(_ groupId: Int) {
+        groupKeys[groupId] = nil
+        GroupKeyStore.delete(groupId)
+    }
+
+    /// Clear in-memory keys without touching persisted values.
+    static func clearKeyCache() {
+        groupKeys.removeAll()
+    }
+
+    /// Remove all keys from memory and the Keychain.
+    static func clearAllGroupKeys() {
+        groupKeys.removeAll()
+        GroupKeyStore.clearAll()
+    }
+
+    /// ``true`` if a key exists either in memory or in persistent storage.
+    static func hasGroupKey(_ groupId: Int) -> Bool {
+        groupKeys[groupId] != nil || GroupKeyStore.contains(groupId)
+    }
+
+    /// List all known group IDs from memory and disk.
+    static func listGroupIds() -> [Int] {
+        let mem = Set(groupKeys.keys)
+        let disk = Set(GroupKeyStore.listGroupIds())
+        return Array(mem.union(disk)).sorted()
+    }
+
+    /// Export all stored keys as base64 strings.
+    static func exportAllGroupKeys() -> [Int: String] {
+        var result: [Int: String] = [:]
+        for (id, key) in groupKeys {
+            let data = key.withUnsafeBytes { Data($0) }
+            result[id] = data.base64EncodedString()
         }
+        for (id, b64) in GroupKeyStore.exportAll() where result[id] == nil {
+            result[id] = b64
+        }
+        return result
     }
 
     /// Encrypt a message with the shared group key.
     static func encryptGroupMessage(_ message: String, groupId: Int) throws -> Data {
-        guard let key = groupKeys[groupId] else { throw CocoaError(.coderValueNotFound) }
+        var key = groupKeys[groupId]
+        if key == nil, let data = GroupKeyStore.load(groupId) {
+            key = SymmetricKey(data: data)
+            groupKeys[groupId] = key
+        }
+        guard let useKey = key else { throw CocoaError(.coderValueNotFound) }
         let data = Data(message.utf8)
-        let sealed = try AES.GCM.seal(data, using: key)
+        let sealed = try AES.GCM.seal(data, using: useKey)
         guard let combined = sealed.combined else { throw CocoaError(.coderValueNotFound) }
         return combined
     }
 
     /// Decrypt a group message previously encrypted with ``encryptGroupMessage``.
     static func decryptGroupMessage(_ data: Data, groupId: Int) throws -> String {
-        guard let key = groupKeys[groupId] else { throw CocoaError(.coderValueNotFound) }
+        var key = groupKeys[groupId]
+        if key == nil, let data = GroupKeyStore.load(groupId) {
+            key = SymmetricKey(data: data)
+            groupKeys[groupId] = key
+        }
+        guard let useKey = key else { throw CocoaError(.coderValueNotFound) }
         let sealed = try AES.GCM.SealedBox(combined: data)
-        let decrypted = try AES.GCM.open(sealed, using: key)
+        let decrypted = try AES.GCM.open(sealed, using: useKey)
         return String(decoding: decrypted, as: UTF8.self)
     }
 

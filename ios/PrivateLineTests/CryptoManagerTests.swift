@@ -26,6 +26,32 @@ final class CryptoManagerTests: XCTestCase {
         XCTAssertEqual(decrypted, "hi")
     }
 
+    func testGroupKeyPersistsAcrossLoads() throws {
+        // Persist a group key then drop the cache and reload from disk
+        let b64 = Data(repeating: 2, count: 32).base64EncodedString()
+        CryptoManager.storeGroupKey(b64, groupId: 5)
+        CryptoManager.clearKeyCache()
+        CryptoManager.preloadPersistedGroupKeys()
+        let enc = try CryptoManager.encryptGroupMessage("test", groupId: 5)
+        let dec = try CryptoManager.decryptGroupMessage(enc, groupId: 5)
+        XCTAssertEqual(dec, "test")
+    }
+
+    func testRemoveGroupKeyPreventsUse() throws {
+        let b64 = Data(repeating: 3, count: 32).base64EncodedString()
+        CryptoManager.storeGroupKey(b64, groupId: 6)
+        CryptoManager.removeGroupKey(6)
+        XCTAssertThrowsError(try CryptoManager.encryptGroupMessage("hi", groupId: 6))
+    }
+
+    func testListingAndClearingKeys() throws {
+        CryptoManager.storeGroupKey(Data(repeating: 4, count: 32).base64EncodedString(), groupId: 7)
+        CryptoManager.storeGroupKey(Data(repeating: 5, count: 32).base64EncodedString(), groupId: 8)
+        XCTAssertEqual(Set(CryptoManager.listGroupIds()), Set([7, 8]))
+        CryptoManager.clearAllGroupKeys()
+        XCTAssertTrue(CryptoManager.listGroupIds().isEmpty)
+    }
+
     /// Generate a temporary RSA key pair and verify CryptoManager helpers
     func testRSAEncryptDecryptAndSign() throws {
         // Generate ephemeral RSA key pair

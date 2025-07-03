@@ -17,6 +17,12 @@ jest.mock('../../utils/messageCache', () => ({
   saveMessages: jest.fn().mockResolvedValue(),
 }));
 jest.mock('../../utils/push', () => ({ setupWebPush: jest.fn() }));
+jest.mock('../../utils/groupKeyStore', () => ({
+  saveKey: jest.fn().mockResolvedValue(),
+  loadKey: jest.fn().mockResolvedValue(null),
+  listGroupIds: jest.fn().mockResolvedValue([]),
+  clearAll: jest.fn().mockResolvedValue(),
+}));
 
 beforeAll(() => {
   global.crypto = {

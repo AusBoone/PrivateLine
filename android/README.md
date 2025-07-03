@@ -18,6 +18,7 @@ Features include:
 * **Settings screen** with dark mode and push notification toggle
 * **Onboarding screen** displaying your public key fingerprint
 * **TLS certificate pinning** to prevent man-in-the-middle attacks
+* **Encrypted token storage** using the system KeyStore
 
 The project intentionally stays small to demonstrate core functionality. It is a
 starting point rather than a polished application.
@@ -57,10 +58,46 @@ expiration timestamps survive app restarts. Encryption occurs before data
 reaches the store, therefore the JSON on disk is still encrypted. Failure to
 read or write the cache is silently ignored to avoid crashing the app.
 
+## Group Key Persistence
+
+`GroupKeyStore.kt` keeps per-group AES keys in `EncryptedSharedPreferences` so
+that group conversations remain decryptable after restarting the app while
+ensuring secrets are never written to disk in plaintext. `CryptoManager`
+automatically falls back to this store when encrypting or decrypting group
+messages if an in-memory key is missing. Call
+`CryptoManager.removeGroupKey(id, context)` when leaving a group to erase the
+persisted key from disk. All keys can be wiped at once using
+`CryptoManager.clearAllGroupKeys(context)`. `GroupKeyStore.listGroupIds(context)`
+returns the set of group ids currently saved which may be useful for preloading
+keys during app startup.
+
+The encrypted preferences are powered by the Jetpack Security library which
+creates a master key stored in Android Keystore. This design prevents other
+applications from reading the raw AES keys even on rooted devices.
+
+`CryptoManager.preloadPersistedGroupKeys(context)` loads all saved keys into the
+in-memory cache at once. Use it from your `Application` class to avoid disk
+access when handling the first incoming message. Keys can be rotated at any time
+with `CryptoManager.rotateGroupKey(id, context)` which returns the base64
+representation of the newly generated secret for distribution to other group
+members. To check whether a key already exists, call
+`CryptoManager.hasGroupKey(id, context)` or `GroupKeyStore.contains(context, id)`.
+All keys can be exported as base64 strings using `GroupKeyStore.exportAll(context)`
+before migrating to a new device.
+
+### Cross‑platform compatibility
+
+Group keys use the same 256‑bit AES‑GCM format on Android, iOS and in the
+React frontend. Keys retrieved from the backend can therefore be freely
+exchanged between clients without reformatting. The Jetpack Security
+encryption layer only affects local storage and does not change the value sent
+over the network.
+
 ## Biometric Unlock
 
-`TokenStore` saves the JWT token in `SharedPreferences` and requires Face or
-Touch ID via the `BiometricPrompt` API before returning it. Call
+`TokenStore` saves the JWT token in `EncryptedSharedPreferences` so the value is
+never written to disk in plaintext. Retrieval still requires Face or Touch ID
+via the `BiometricPrompt` API. Call
 `TokenStore.loadWithBiometrics(activity) { token -> ... }` when launching the
 app to authenticate the user.
 
