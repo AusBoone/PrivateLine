@@ -4,6 +4,7 @@ import React from 'react';
 import { Link, useHistory } from 'react-router-dom';
 import api from '../api';
 import { removeWebPush } from '../utils/push';
+import { clearAll as clearPersistedGroupKeys } from '../utils/groupKeyStore';
 import Cookies from 'js-cookie';
 import {
   AppBar,
@@ -33,6 +34,7 @@ function NavigationBar({ onToggleTheme, currentTheme }) {
     } catch (e) {
       console.error('Failed to revoke token', e);
     } finally {
+      await clearPersistedGroupKeys();
       Cookies.remove('pinned_keys');
       Cookies.remove('private_key_pem');
       Cookies.remove('user_id');

@@ -20,6 +20,11 @@ import { loadKeyMaterial } from '../utils/secureStore';
 import { setupWebPush } from '../utils/push';
 import { getUserId } from '../utils/auth';
 import { loadMessages, saveMessages } from '../utils/messageCache';
+import {
+  saveKey as saveGroupKey,
+  loadKey as loadGroupKey,
+  listGroupIds as listStoredGroupIds,
+} from '../utils/groupKeyStore';
 import Cookies from 'js-cookie';
 
 /**
@@ -163,6 +168,19 @@ const groupKeyCache = new Map();
 async function fetchGroupKey(groupId) {
   let key = groupKeyCache.get(groupId);
   if (key) return key;
+  // Attempt to load the key from IndexedDB before hitting the network
+  const stored = await loadGroupKey(groupId);
+  if (stored) {
+    key = await window.crypto.subtle.importKey(
+      'raw',
+      base64ToArrayBuffer(stored),
+      'AES-GCM',
+      false,
+      ['encrypt', 'decrypt']
+    );
+    groupKeyCache.set(groupId, key);
+    return key;
+  }
   const resp = await api.get(`/api/groups/${groupId}/key`);
   if (resp.status === 200 && resp.data.key) {
     key = await window.crypto.subtle.importKey(
@@ -173,6 +191,8 @@ async function fetchGroupKey(groupId) {
       ['encrypt', 'decrypt']
     );
     groupKeyCache.set(groupId, key);
+    // Persist for offline access
+    saveGroupKey(groupId, resp.data.key);
     return key;
   }
   throw new Error('failed to fetch group key');
@@ -315,6 +335,23 @@ function Chat() {
         } else {
           // Ensure IndexedDB is initialized
           await loadKeyMaterial();
+        }
+
+        // Preload persisted group chat keys so messages can be decrypted
+        const ids = await listStoredGroupIds();
+        for (const id of ids) {
+          const b64 = await loadGroupKey(id);
+          if (b64) {
+            // eslint-disable-next-line no-await-in-loop
+            const k = await window.crypto.subtle.importKey(
+              'raw',
+              base64ToArrayBuffer(b64),
+              'AES-GCM',
+              false,
+              ['encrypt', 'decrypt']
+            );
+            groupKeyCache.set(Number(id), k);
+          }
         }
 
         try {

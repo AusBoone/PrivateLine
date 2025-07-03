@@ -6,10 +6,12 @@ import { createMemoryHistory } from 'history';
 import NavigationBar from '../NavigationBar';
 import api from '../../api';
 import { removeWebPush } from '../../utils/push';
+import { clearAll as clearPersistedGroupKeys } from '../../utils/groupKeyStore';
 import Cookies from 'js-cookie';
 
 jest.mock('../../api');
 jest.mock('../../utils/push', () => ({ removeWebPush: jest.fn().mockResolvedValue() }));
+jest.mock('../../utils/groupKeyStore', () => ({ clearAll: jest.fn().mockResolvedValue() }));
 
 afterEach(() => {
   jest.clearAllMocks();
@@ -35,6 +37,7 @@ test('logout revokes token and redirects to login', async () => {
 
   await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/revoke'));
   await waitFor(() => expect(removeWebPush).toHaveBeenCalled());
+  await waitFor(() => expect(clearPersistedGroupKeys).toHaveBeenCalled());
   await waitFor(() => expect(Cookies.get('pinned_keys')).toBeUndefined());
   await waitFor(() => expect(history.location.pathname).toBe('/login'));
 });

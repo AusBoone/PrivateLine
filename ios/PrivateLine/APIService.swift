@@ -73,6 +73,9 @@ class APIService: ObservableObject {
             token = stored
             isAuthenticated = true
         }
+
+        // Preload any persisted group keys for offline message access
+        CryptoManager.preloadPersistedGroupKeys()
     }
 
     /// Attempt to log in with the provided credentials.

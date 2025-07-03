@@ -22,6 +22,7 @@ See [docs/architecture.md](docs/architecture.md) for a high-level overview of ho
 - Public key verification via QR codes
 - Offline caching of messages on the iOS client
 - Offline caching of messages on the React frontend
+- Persisted group chat keys across all clients for offline decryption
 - Optional dark mode and push notification support on iOS
 - Ephemeral messages with automatic expiration handling
 - Smooth animated chat interface for the React frontend
