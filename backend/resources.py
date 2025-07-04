@@ -845,6 +845,45 @@ class MessageRead(Resource):
         return {"message": "read"}, 200
 
 
+class UnreadCount(Resource):
+    """Return the total number of unread messages for the authenticated user."""
+
+    @jwt_required()
+    def get(self):
+        """Calculate unread counts for direct and group conversations.
+
+        The method filters messages that:
+        - Are addressed to the current user or a group they belong to.
+        - Have not been marked as ``read``.
+        - Have not expired yet.
+
+        Returns
+        -------
+        dict
+            ``{"unread": <int>}`` with the total message count.
+        """
+
+        uid = int(get_jwt_identity())
+        now = datetime.utcnow()
+
+        # Base query filtering unread and non-expired messages.
+        base = Message.query.filter(
+            Message.read.is_(False),
+            (Message.expires_at.is_(None)) | (Message.expires_at > now),
+        )
+
+        # Direct messages addressed specifically to ``uid``.
+        direct = base.filter(Message.recipient_id == uid).count()
+
+        # Unread messages in groups ``uid`` participates in.
+        group_ids = [gm.group_id for gm in GroupMember.query.filter_by(user_id=uid)]
+        group_unread = (
+            base.filter(Message.group_id.in_(group_ids)).count() if group_ids else 0
+        )
+
+        return {"unread": direct + group_unread}
+
+
 class PinnedKeys(Resource):
     """Manage pinned key fingerprints for the authenticated user."""
 

@@ -26,6 +26,9 @@ See [docs/architecture.md](docs/architecture.md) for a high-level overview of ho
 - Optional dark mode and push notification support on iOS
 - Ephemeral messages with automatic expiration handling
 - Smooth animated chat interface for the React frontend
+- Unread message count endpoint for quick status checks. Use ``GET /api/unread_count``
+  to retrieve the total number of unread direct and group messages for the
+  authenticated user.
 
 ## Ephemeral messages and offline caching
 
@@ -57,6 +60,7 @@ An up-to-date OpenAPI specification can be found in [docs/openapi.yaml](docs/ope
    0 respectively.
 4. **RefreshToken**: Issues a new JWT for an authenticated user when called with a valid token.
 5. **RevokeToken**: Revokes the current JWT so it can no longer be used.
+6. **UnreadCount**: Returns the number of unread messages for the current user.
 
 The backend also includes rate limiting on message sending, JWT-based user authentication, and CORS configuration.
 

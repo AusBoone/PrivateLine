@@ -191,3 +191,71 @@ def test_expired_messages_not_returned(client):
     assert resp.status_code == 201
     resp = client.get('/api/messages', headers=headers)
     assert resp.get_json()['messages'] == []
+
+
+def test_unread_count_endpoint(client):
+    """The unread count should reflect read status changes."""
+    reg = register_user(client, 'alice')
+    pk = decrypt_private_key(reg)
+    token_a = login_user(client, 'alice').get_json()['access_token']
+    headers_a = {'Authorization': f'Bearer {token_a}'}
+
+    register_user(client, 'bob')
+    token_b = login_user(client, 'bob').get_json()['access_token']
+    headers_b = {'Authorization': f'Bearer {token_b}'}
+
+    b64 = base64.b64encode(b'hello').decode()
+    sig = sign_content(pk, b64)
+    resp = client.post('/api/messages', data={'content': b64, 'recipient': 'bob', 'signature': sig}, headers=headers_a)
+    msg_id = resp.get_json()['id']
+
+    resp = client.get('/api/unread_count', headers=headers_b)
+    assert resp.status_code == 200
+    assert resp.get_json()['unread'] == 1
+
+    client.post(f'/api/messages/{msg_id}/read', headers=headers_b)
+
+    resp = client.get('/api/unread_count', headers=headers_b)
+    assert resp.status_code == 200
+    assert resp.get_json()['unread'] == 0
+
+
+def test_unread_count_group_messages(client):
+    """Unread count should include group messages until they are marked read."""
+    reg_a = register_user(client, 'alice')
+    pk_a = decrypt_private_key(reg_a)
+    register_user(client, 'bob')
+
+    # Alice creates a group and invites Bob
+    token_a = login_user(client, 'alice').get_json()['access_token']
+    headers_a = {'Authorization': f'Bearer {token_a}'}
+    resp = client.post('/api/groups', json={'name': 'room'}, headers=headers_a)
+    gid = resp.get_json()['id']
+
+    token_b = login_user(client, 'bob').get_json()['access_token']
+    headers_b = {'Authorization': f'Bearer {token_b}'}
+    resp = client.post(
+        f'/api/groups/{gid}/members', json={'username': 'bob'}, headers=headers_a
+    )
+    assert resp.status_code == 201
+
+    # Alice sends a group message
+    b64 = base64.b64encode(b'hi group').decode()
+    sig = sign_content(pk_a, b64)
+    resp = client.post(
+        f'/api/groups/{gid}/messages',
+        data={'content': b64, 'signature': sig},
+        headers=headers_a,
+    )
+    msg_id = resp.get_json()['id']
+
+    resp = client.get('/api/unread_count', headers=headers_b)
+    assert resp.status_code == 200
+    assert resp.get_json()['unread'] == 1
+
+    # Bob reads the message which should clear the count
+    client.post(f'/api/messages/{msg_id}/read', headers=headers_b)
+
+    resp = client.get('/api/unread_count', headers=headers_b)
+    assert resp.status_code == 200
+    assert resp.get_json()['unread'] == 0
