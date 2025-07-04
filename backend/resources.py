@@ -8,14 +8,21 @@ Recent changes introduce rate limiting on authentication endpoints and store the
 original MIME type of uploaded files so downloads return the correct
 ``Content-Type`` header. Account management now validates that email addresses
 remain unique when changed via the settings endpoint to prevent database
-integrity errors.
+integrity errors. Passwords are hashed with Argon2 while still accepting legacy
+PBKDF2 hashes for seamless upgrades.
 """
+
+# 2024 update: Introduced Argon2 password hashing via ``PasswordHasher`` and
+# added ``verify_password`` to support existing PBKDF2 accounts. All new
+# registrations now store Argon2 hashes by default.
 
 from flask_restful import Resource, reqparse
 from flask import request, jsonify
 from datetime import datetime
 from werkzeug.utils import secure_filename
-from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.security import check_password_hash
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError, InvalidHash
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -56,6 +63,30 @@ aesgcm = AESGCM(AES_KEY)
 # Maximum allowed upload size in bytes. Defaults to 5 MB but can be overridden
 # with the ``MAX_FILE_SIZE`` environment variable.
 MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE", 5 * 1024 * 1024))
+
+# Argon2 password hasher used for new registrations. Legacy PBKDF2 hashes
+# created by earlier versions remain supported through a compatibility
+# check in :func:`verify_password`.
+password_hasher = PasswordHasher()
+
+
+def verify_password(stored_hash: str, candidate: str) -> bool:
+    """Return ``True`` when ``candidate`` matches ``stored_hash``.
+
+    The function first attempts verification using Argon2. If ``stored_hash``
+    contains an unsupported format, the legacy PBKDF2 check from Werkzeug is
+    used for backward compatibility.
+    """
+
+    try:
+        return password_hasher.verify(stored_hash, candidate)
+    except VerifyMismatchError:
+        return False
+    except InvalidHash:
+        try:
+            return check_password_hash(stored_hash, candidate)
+        except TypeError:
+            return False
 
 
 # Request parser for messages
@@ -199,11 +230,10 @@ class Register(Resource):
         if len(data["password"]) < 6:
             return {"message": "Password must be at least 6 characters."}, 400
 
-        # Hash the password
-        # Use PBKDF2 with SHA-256 for password hashing
-        hashed_password = generate_password_hash(
-            data["password"], method="pbkdf2:sha256"
-        )
+        # Hash the password using Argon2 for modern, memory-hard protection.
+        # ``PasswordHasher`` automatically generates a random salt and encodes
+        # all parameters within the returned string.
+        hashed_password = password_hasher.hash(data["password"])
 
         # Generate key pair
         private_key, public_key_pem = User.generate_key_pair()
@@ -286,7 +316,7 @@ class Login(Resource):
         # Query the database for the user with the given username
         user = User.query.filter_by(username=data["username"]).first()
 
-        if user and check_password_hash(user.password_hash, data["password"]):
+        if user and verify_password(user.password_hash, data["password"]):
             access_token = create_access_token(identity=str(user.id))
             resp = jsonify({"access_token": access_token})
             set_access_cookies(resp, access_token)
@@ -1006,11 +1036,9 @@ class AccountSettings(Resource):
         if current_pw and new_pw:
             if len(new_pw) < 6:
                 return {"message": "New password must be at least 6 characters."}, 400
-            if check_password_hash(user.password_hash, current_pw):
-                # Rehash the new password using PBKDF2 with SHA-256
-                user.password_hash = generate_password_hash(
-                    new_pw, method="pbkdf2:sha256"
-                )
+            if verify_password(user.password_hash, current_pw):
+                # Replace the stored hash with a new Argon2-derived value.
+                user.password_hash = password_hasher.hash(new_pw)
                 updated = True
             else:
                 return {"message": "Current password is incorrect."}, 400

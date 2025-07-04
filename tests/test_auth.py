@@ -314,8 +314,31 @@ def test_login_rate_limit(client):
 
     register_user(client, "hank")
     limiter.reset()
+
     for _ in range(10):
         client.post("/api/login", json={"username": "hank", "password": "bad"})
     resp = client.post("/api/login", json={"username": "hank", "password": "bad"})
     assert resp.status_code == 429
     limiter.reset()
+
+
+def test_legacy_pbkdf2_login(client):
+    """Accounts created with PBKDF2 hashes should still authenticate."""
+    from backend.app import db
+    from backend.models import User
+    from werkzeug.security import generate_password_hash
+
+    with client.application.app_context():
+        priv, pub = User.generate_key_pair()
+        user = User(
+            username="legacy",
+            email="legacy@example.com",
+            password_hash=generate_password_hash("secret", method="pbkdf2:sha256"),
+            public_key_pem=pub,
+        )
+        db.session.add(user)
+        db.session.commit()
+
+    resp = client.post("/api/login", json={"username": "legacy", "password": "secret"})
+    assert resp.status_code == 200
+    assert "access_token" in resp.get_json()
