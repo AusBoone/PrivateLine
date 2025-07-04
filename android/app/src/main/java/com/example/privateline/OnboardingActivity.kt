@@ -2,7 +2,7 @@ package com.example.privateline
 
 import android.os.Bundle
 import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
+import com.example.privateline.SecureActivity
 import androidx.preference.PreferenceManager
 
 /**
@@ -10,7 +10,7 @@ import androidx.preference.PreferenceManager
  * fingerprint. The activity only appears once and stores a flag in
  * SharedPreferences so subsequent launches bypass onboarding.
  */
-class OnboardingActivity : AppCompatActivity() {
+class OnboardingActivity : SecureActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = PreferenceManager.getDefaultSharedPreferences(this)

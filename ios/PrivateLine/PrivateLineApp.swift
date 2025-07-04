@@ -21,6 +21,8 @@ private func configureNotifications() {
 struct PrivateLineApp: App {
     /// Bridge UIKit delegate methods for push notifications.
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    /// Controls whether a privacy overlay should obscure the UI.
+    @StateObject private var shield = PrivacyShield()
     /// Perform one-time configuration when the app starts.
     init() {
         // Configure push notifications right away
@@ -29,6 +31,7 @@ struct PrivateLineApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .privacyOverlay(shield: shield)
         }
     }
 }

@@ -61,6 +61,33 @@ CORS(app, supports_credentials=True, origins=_cors_origins)
 socketio = SocketIO(app, cors_allowed_origins=_cors_origins)
 
 
+def _apply_security_headers(resp):
+    """Attach common security headers to every HTTP response.
+
+    The function reads optional environment variables to allow deployments to
+    customize the ``Content-Security-Policy`` header and to enable HSTS. All
+    API endpoints are marked ``Cache-Control: no-store`` to avoid leaking
+    sensitive data through intermediary caches.
+    """
+
+    csp = os.environ.get("CONTENT_SECURITY_POLICY", "default-src 'none'")
+    hsts_enabled = os.environ.get("HSTS_ENABLED", "false").lower() == "true"
+
+    resp.headers.setdefault("Content-Security-Policy", csp)
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    resp.headers.setdefault("Cache-Control", "no-store")
+    if hsts_enabled:
+        resp.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    return resp
+
+
+app.after_request(_apply_security_headers)
+
+
 # Initialize rate limiting with a custom key function that prefers the
 # authenticated user id and falls back to the client's IP address.
 def rate_limit_key():

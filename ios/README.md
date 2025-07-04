@@ -38,6 +38,8 @@ You can also open the project in Xcode and choose **Product → Test** from the 
 - Group chat keys now persist securely in the Keychain so encrypted messages can
   be read after restarting the app. Keys can be listed or removed via
   `CryptoManager` helper functions.
+- A privacy overlay hides the UI when the app is backgrounded or the screen is
+  being recorded.
 
 ## Push Notifications
 
