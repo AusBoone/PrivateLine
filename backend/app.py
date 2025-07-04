@@ -190,6 +190,7 @@ from .resources import (
     PushTokenResource,
     MessageResource,
     MessageRead,
+    UnreadCount,
 )
 
 
@@ -254,6 +255,7 @@ api.add_resource(RevokeToken, "/api/revoke")
 api.add_resource(PushTokenResource, "/api/push-token")
 api.add_resource(MessageResource, "/api/messages/<int:message_id>")
 api.add_resource(MessageRead, "/api/messages/<int:message_id>/read")
+api.add_resource(UnreadCount, "/api/unread_count")
 
 # Run the development server only when executed directly.
 if __name__ == "__main__":

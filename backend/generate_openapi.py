@@ -507,6 +507,17 @@ def build_spec() -> APISpec:
         },
     )
 
+    spec.path(
+        path="/api/unread_count",
+        operations={
+            "get": {
+                "summary": "Get unread message count",
+                "description": "Return the number of unread direct and group messages for the authenticated user.",
+                "responses": {"200": {"description": "Count returned"}},
+            }
+        },
+    )
+
     return spec
 
 

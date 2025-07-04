@@ -321,6 +321,14 @@ paths:
       responses:
         '200':
           description: Marked as read
+  /api/unread_count:
+    get:
+      summary: Get unread message count
+      description: Return the number of unread direct and group messages for the authenticated
+        user.
+      responses:
+        '200':
+          description: Count returned
 info:
   title: PrivateLine API
   version: 1.0.0
