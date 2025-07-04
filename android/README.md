@@ -19,6 +19,7 @@ Features include:
 * **Onboarding screen** displaying your public key fingerprint
 * **TLS certificate pinning** to prevent man-in-the-middle attacks
 * **Encrypted token storage** using the system KeyStore
+* **Screen capture protection** preventing screenshots of sensitive chats
 
 The project intentionally stays small to demonstrate core functionality. It is a
 starting point rather than a polished application.

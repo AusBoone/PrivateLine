@@ -81,6 +81,8 @@ To run the application, follow these steps:
     `FCM_SERVER_KEY` for Android notifications.
    * Optional `SENTRY_DSN` to forward runtime errors to Sentry.
    * Optional `MAX_FILE_SIZE` to override the default 5&nbsp;MB upload limit.
+   * Optional `CONTENT_SECURITY_POLICY` to customize the `Content-Security-Policy` header.
+   * Optional `HSTS_ENABLED` to enable the `Strict-Transport-Security` header when served over HTTPS.
 3. Install backend dependencies with `pip install -r requirements.txt`.
 4. Install frontend dependencies with `npm install` inside the `frontend` directory.
 5. Start the backend with `python backend/app.py` and the frontend with `npm start`.
@@ -93,6 +95,17 @@ Set `JWT_COOKIE_SECURE=true` in your environment when deploying behind HTTPS so 
 Uploaded files are limited to 5&nbsp;MB by default to prevent abuse. Set
 `MAX_FILE_SIZE` in your environment to adjust the limit. Oversized uploads return
 `413 Payload Too Large`.
+
+### Security Headers
+The backend adds several HTTP headers to harden responses:
+
+* `Content-Security-Policy` restricts resource loading. Override with
+  `CONTENT_SECURITY_POLICY` as needed.
+* `X-Content-Type-Options: nosniff` prevents MIME type sniffing.
+* `X-Frame-Options: DENY` disallows embedding the app in iframes.
+* `Referrer-Policy: no-referrer` avoids leaking URLs.
+* `Cache-Control: no-store` disables caching of API responses.
+* When `HSTS_ENABLED=true`, a `Strict-Transport-Security` header enforces HTTPS.
 
 ## Docker
 
@@ -140,6 +153,8 @@ A minimal SwiftUI client is located in the `ios/` directory. See
 - To receive push notifications, start the backend with `APNS_CERT` and
   `APNS_TOPIC`. The app's `NotificationManager` will register its APNs token by
   calling `/api/push-token` after a user signs in.
+- A privacy shield overlays the interface when the app is backgrounded or being
+  recorded so chats are not visible in the app switcher.
 
 ## Android Client
 A small Kotlin client lives in the `android/` directory. It mirrors the
@@ -147,6 +162,8 @@ iOS networking layer and saves encrypted messages locally using `MessageStore`.
 Open the folder in Android Studio and run `./gradlew assembleDebug` to verify
 the skeleton builds. If the Gradle wrapper JAR is missing, run `gradle wrapper`
 first to generate it. See [android/README.md](android/README.md) for details.
+All activities inherit from `SecureActivity` which applies the system
+`FLAG_SECURE` window attribute so chats cannot be captured in screenshots.
 
 ### Release Process
 

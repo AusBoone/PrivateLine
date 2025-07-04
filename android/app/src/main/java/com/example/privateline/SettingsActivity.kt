@@ -2,7 +2,7 @@ package com.example.privateline
 
 import android.content.SharedPreferences
 import android.os.Bundle
-import androidx.appcompat.app.AppCompatActivity
+import com.example.privateline.SecureActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.preference.PreferenceManager
 import android.widget.Switch
@@ -12,7 +12,7 @@ import android.widget.Switch
  * preferences. The chosen options are persisted via SharedPreferences so they
  * survive app restarts.
  */
-class SettingsActivity : AppCompatActivity() {
+class SettingsActivity : SecureActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = PreferenceManager.getDefaultSharedPreferences(this)
