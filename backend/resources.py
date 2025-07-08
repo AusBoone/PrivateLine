@@ -20,7 +20,7 @@ PBKDF2 hashes for seamless upgrades.
 
 from flask_restful import Resource, reqparse, inputs
 from flask import request, jsonify
-from datetime import datetime
+from datetime import datetime, timedelta
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash
 from argon2 import PasswordHasher
@@ -40,7 +40,7 @@ from base64 import b64encode, b64decode
 import binascii
 import os
 from .models import User, Message, PinnedKey, PushToken
-from .models import Group, GroupMember, File
+from .models import Group, GroupMember, File, ConversationRetention
 from .ratchet import get_ratchet
 from .app import (
     db,
@@ -117,6 +117,24 @@ message_parser.add_argument(
     location="form",
     type=inputs.boolean,
 )
+
+# --- Retention helpers ------------------------------------------------------
+
+def conversation_retention_days(user_id: int, msg: Message) -> int:
+    """Return the retention period in days for ``msg`` as seen by ``user_id``."""
+    if msg.group_id is not None:
+        grp = db.session.get(Group, msg.group_id)
+        if grp and grp.retention_days:
+            return grp.retention_days
+    else:
+        peer = msg.recipient_id if msg.sender_id == user_id else msg.sender_id
+        custom = ConversationRetention.query.filter_by(
+            owner_id=user_id, peer_id=peer
+        ).first()
+        if custom:
+            return custom.retention_days
+    user = db.session.get(User, user_id)
+    return user.message_retention_days
 
 # Token serializer (legacy).  JWT is now used instead of this custom mechanism.
 # s = Serializer(app.config['SECRET_KEY'], expires_in=3600)
@@ -492,6 +510,31 @@ class GroupKey(Resource):
         return {"key": g.aes_key}
 
 
+class GroupRetention(Resource):
+    """Configure message retention for a group."""
+
+    @jwt_required()
+    def put(self, group_id):
+        """Set ``retention_days`` for the specified group."""
+        uid = int(get_jwt_identity())
+        if not GroupMember.query.filter_by(group_id=group_id, user_id=uid).first():
+            return {"message": "Not a member"}, 403
+        g = db.session.get(Group, group_id)
+        if not g:
+            return {"message": "Not found"}, 404
+        data = request.get_json() or {}
+        days = data.get("retention_days")
+        try:
+            days = int(days)
+        except (TypeError, ValueError):
+            return {"message": "Invalid retention"}, 400
+        if days < 1 or days > 365:
+            return {"message": "Retention must be between 1 and 365"}, 400
+        g.retention_days = days
+        db.session.commit()
+        return {"message": "updated"}, 200
+
+
 class GroupMessages(Resource):
     """Send or retrieve messages for a group with additional server-side secrecy.
 
@@ -543,6 +586,9 @@ class GroupMessages(Resource):
                     hashes.SHA256(),
                 )
             except InvalidSignature:
+                continue
+            days = conversation_retention_days(uid, msg)
+            if msg.read and msg.timestamp <= datetime.utcnow() - timedelta(days=days):
                 continue
             if slice_start <= idx < slice_end:
                 result.append(
@@ -771,6 +817,9 @@ class Messages(Resource):
                     hashes.SHA256(),
                 )
             except InvalidSignature:
+                continue
+            days = conversation_retention_days(current_user_id, msg)
+            if msg.read and msg.timestamp <= datetime.utcnow() - timedelta(days=days):
                 continue
             if slice_start <= idx < slice_end:
                 message_list.append(
@@ -1030,6 +1079,34 @@ class PinnedKeys(Resource):
             db.session.rollback()
             return {"message": "Failed to store pinned key."}, 500
         return {"message": "Pinned key stored."}, 200
+
+
+class ConversationRetentionResource(Resource):
+    """Set retention for a direct conversation."""
+
+    @jwt_required()
+    def put(self, username):
+        """Store ``retention_days`` for the conversation with ``username``."""
+        owner_id = int(get_jwt_identity())
+        peer = User.query.filter_by(username=username).first()
+        if not peer:
+            return {"message": "User not found"}, 404
+        data = request.get_json() or {}
+        days = data.get("retention_days")
+        try:
+            days = int(days)
+        except (TypeError, ValueError):
+            return {"message": "Invalid retention"}, 400
+        if days < 1 or days > 365:
+            return {"message": "Retention must be between 1 and 365"}, 400
+        rec = ConversationRetention.query.filter_by(owner_id=owner_id, peer_id=peer.id).first()
+        if rec:
+            rec.retention_days = days
+        else:
+            rec = ConversationRetention(owner_id=owner_id, peer_id=peer.id, retention_days=days)
+            db.session.add(rec)
+        db.session.commit()
+        return {"message": "updated"}, 200
 
 
 class PushTokenResource(Resource):

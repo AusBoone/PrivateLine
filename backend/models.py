@@ -1,10 +1,10 @@
 """SQLAlchemy models for PrivateLine.
 
 This module defines the database schema used by the Flask backend.
-Recent updates add support for ephemeral messages via a ``delete_on_read``
-flag, a ``created_at`` timestamp on :class:`PushToken`, and per-file retention
-settings. Expired messages, push tokens and files are removed by scheduled jobs
-in ``app.py``.
+Recent updates add support for per-conversation message retention. Groups may
+specify ``retention_days`` while direct chats store a per-recipient policy in
+``ConversationRetention``. Scheduled tasks in :mod:`app` rely on these values to
+purge old messages.
 """
 
 from .app import db
@@ -85,6 +85,10 @@ class Group(db.Model):
         nullable=False,
         default=lambda: b64encode(os.urandom(32)).decode(),
     )
+    # Optional retention period for messages in this group. When ``None``
+    # each member's personal ``message_retention_days`` setting is used
+    # instead.
+    retention_days = db.Column(db.Integer)
 
 
 class GroupMember(db.Model):
@@ -93,6 +97,21 @@ class GroupMember(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     group_id = db.Column(db.Integer, db.ForeignKey("group.id"), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+
+
+class ConversationRetention(db.Model):
+    """Custom retention policy for a direct conversation."""
+
+    id = db.Column(db.Integer, primary_key=True)
+    # User who defined the policy
+    owner_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    # Peer this policy applies to
+    peer_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    # Number of days to keep read messages
+    retention_days = db.Column(db.Integer, nullable=False)
+    __table_args__ = (
+        db.UniqueConstraint("owner_id", "peer_id", name="uix_conv_retention"),
+    )
 
 
 class File(db.Model):

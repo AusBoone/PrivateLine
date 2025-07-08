@@ -164,12 +164,32 @@ scheduler = BackgroundScheduler()
 
 
 def clean_expired_messages() -> None:
-    """Remove messages past their expiration or user retention period."""
+    """Remove messages past their expiration or conversation retention."""
     from datetime import timedelta
-    from .models import Message, User
+    from .models import (
+        Message,
+        User,
+        Group,
+        GroupMember,
+        ConversationRetention,
+    )
 
     with app.app_context():
         now = datetime.utcnow()
+
+        def _retention_for(uid: int, msg: Message) -> int:
+            """Return retention days for ``msg`` from ``uid``'s perspective."""
+            if msg.group_id:
+                grp = db.session.get(Group, msg.group_id)
+                if grp and grp.retention_days:
+                    return grp.retention_days
+            else:
+                peer = msg.recipient_id if msg.sender_id == uid else msg.sender_id
+                rec = ConversationRetention.query.filter_by(owner_id=uid, peer_id=peer).first()
+                if rec:
+                    return rec.retention_days
+            user = db.session.get(User, uid)
+            return user.message_retention_days
 
         # Delete any messages with an explicit expires_at timestamp in the past.
         expired = Message.query.filter(
@@ -185,16 +205,17 @@ def clean_expired_messages() -> None:
         # involves multiple users, but deletion is idempotent.
         users = User.query.all()
         for user in users:
-            cutoff = now - timedelta(days=user.message_retention_days)
-            old_msgs = Message.query.filter(
+            msgs = Message.query.filter(
                 Message.read.is_(True),
-                Message.timestamp <= cutoff,
                 ((Message.sender_id == user.id) | (Message.recipient_id == user.id)),
             ).all()
-            for msg in old_msgs:
-                if db.session.get(Message, msg.id) is None:
-                    continue
-                db.session.delete(msg)
+            for msg in msgs:
+                days = _retention_for(user.id, msg)
+                cutoff = now - timedelta(days=days)
+                if msg.timestamp <= cutoff:
+                    if db.session.get(Message, msg.id) is None:
+                        continue
+                    db.session.delete(msg)
 
         if expired or users:
             db.session.commit()
@@ -294,6 +315,7 @@ from .resources import (
     GroupMembers,
     GroupMemberResource,
     GroupKey,
+    GroupRetention,
     GroupMessages,
     FileUpload,
     FileDownload,
@@ -306,6 +328,7 @@ from .resources import (
     MessageResource,
     MessageRead,
     UnreadCount,
+    ConversationRetentionResource,
 )
 
 
@@ -346,6 +369,7 @@ api.add_resource(
     GroupMemberResource, "/api/groups/<int:group_id>/members/<int:user_id>"
 )
 api.add_resource(GroupKey, "/api/groups/<int:group_id>/key")
+api.add_resource(GroupRetention, "/api/groups/<int:group_id>/retention")
 api.add_resource(GroupMessages, "/api/groups/<int:group_id>/messages")
 api.add_resource(FileUpload, "/api/files")
 api.add_resource(FileDownload, "/api/files/<int:file_id>")
@@ -374,6 +398,7 @@ api.add_resource(PushTokenResource, "/api/push-token")
 api.add_resource(MessageResource, "/api/messages/<int:message_id>")
 api.add_resource(MessageRead, "/api/messages/<int:message_id>/read")
 api.add_resource(UnreadCount, "/api/unread_count")
+api.add_resource(ConversationRetentionResource, "/api/conversations/<string:username>/retention")
 
 # Run the development server only when executed directly.
 if __name__ == "__main__":

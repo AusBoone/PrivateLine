@@ -73,3 +73,88 @@ def test_read_message_retention(client):
 
     with app.app_context():
         assert db.session.get(Message, mid) is None
+
+
+def test_conversation_retention_override(client):
+    """Conversation-specific retention should override the user default."""
+    register_user(client, "alice")
+    reg_bob = register_user(client, "bob")
+    pk_bob = decrypt_private_key(reg_bob)
+
+    token_b = login_user(client, "bob").get_json()["access_token"]
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+
+    token_a = login_user(client, "alice").get_json()["access_token"]
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+
+    # Bob sends a message to Alice and she reads it
+    b64 = base64.b64encode(b"hi").decode()
+    sig = sign_content(pk_bob, b64)
+    resp = client.post(
+        "/api/messages",
+        data={"content": b64, "recipient": "alice", "signature": sig},
+        headers=headers_b,
+    )
+    mid = resp.get_json()["id"]
+    client.post(f"/api/messages/{mid}/read", headers=headers_a)
+
+    # Set conversation retention between Alice and Bob to 1 day
+    client.put(
+        "/api/conversations/bob/retention",
+        json={"retention_days": 1},
+        headers=headers_a,
+    )
+
+    with app.app_context():
+        msg = db.session.get(Message, mid)
+        msg.timestamp = datetime.utcnow() - timedelta(days=2)
+        db.session.commit()
+
+    clean_expired_messages()
+
+    with app.app_context():
+        assert db.session.get(Message, mid) is None
+
+
+def test_conversation_longer_retention(client):
+    """A longer conversation TTL preserves messages beyond the user default."""
+    reg_a = register_user(client, "alice")
+    pk_a = decrypt_private_key(reg_a)
+    register_user(client, "bob")
+
+    token_a = login_user(client, "alice").get_json()["access_token"]
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    token_b = login_user(client, "bob").get_json()["access_token"]
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+
+    b64 = base64.b64encode(b"persist").decode()
+    sig = sign_content(pk_a, b64)
+    resp = client.post(
+        "/api/messages",
+        data={"content": b64, "recipient": "bob", "signature": sig},
+        headers=headers_a,
+    )
+    mid = resp.get_json()["id"]
+    client.post(f"/api/messages/{mid}/read", headers=headers_b)
+
+    # User default 1 day but conversation set to 10 days
+    client.put(
+        "/api/account-settings",
+        json={"messageRetentionDays": 1},
+        headers=headers_b,
+    )
+    client.put(
+        "/api/conversations/alice/retention",
+        json={"retention_days": 10},
+        headers=headers_b,
+    )
+
+    with app.app_context():
+        msg = db.session.get(Message, mid)
+        msg.timestamp = datetime.utcnow() - timedelta(days=2)
+        db.session.commit()
+
+    clean_expired_messages()
+
+    with app.app_context():
+        assert db.session.get(Message, mid) is not None
