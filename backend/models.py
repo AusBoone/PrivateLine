@@ -13,8 +13,19 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from cryptography.hazmat.backends import default_backend
-from base64 import b64encode
+from base64 import b64encode, b64decode
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from hashlib import sha256
 import os
+
+# AES-256 key used to encrypt push notification tokens. It mirrors the
+# ``AES_KEY`` defined in :mod:`backend.resources` so encrypted values remain
+# compatible across modules.
+_aes_env = os.environ.get("AES_KEY")
+if not _aes_env:
+    raise RuntimeError("AES_KEY environment variable not set")
+AES_KEY = b64decode(_aes_env)
+_aesgcm = AESGCM(AES_KEY)
 
 
 class User(db.Model):
@@ -136,12 +147,19 @@ class PinnedKey(db.Model):
 
 
 class PushToken(db.Model):
-    """Store push notification tokens for a user."""
+    """Store push notification tokens for a user.
+
+    The ``token`` property transparently encrypts values using AES-GCM so the
+    database never stores plaintext push identifiers. The encrypted bytes are
+    base64 encoded for portability. A deterministic nonce derived from the
+    plaintext ensures the same ciphertext is produced for duplicate tokens,
+    allowing the existing unique constraint to function as before.
+    """
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
-    # Web push endpoint or APNs token
-    token = db.Column(db.Text, nullable=False)
+    # Encrypted push token stored as base64 nonce+ciphertext
+    token_ciphertext = db.Column("token", db.Text, nullable=False)
     platform = db.Column(db.String(16), nullable=False)
     # ``created_at`` records when the token was stored so old entries can be
     # removed automatically by a cleanup job. The timestamp defaults to the
@@ -152,3 +170,36 @@ class PushToken(db.Model):
     __table_args__ = (
         db.UniqueConstraint("user_id", "token", name="uix_user_token"),
     )
+
+    # --- Encryption helpers -------------------------------------------------
+    @staticmethod
+    def _derive_nonce(token: str) -> bytes:
+        """Return a 12-byte nonce derived from ``token``."""
+        return sha256(token.encode()).digest()[:12]
+
+    @classmethod
+    def encrypt_value(cls, token: str) -> str:
+        """Return base64-encoded ciphertext for ``token``."""
+        nonce = cls._derive_nonce(token)
+        ciphertext = _aesgcm.encrypt(nonce, token.encode(), None)
+        return b64encode(nonce + ciphertext).decode()
+
+    @classmethod
+    def decrypt_value(cls, data: str) -> str:
+        """Return the decrypted token from ``data``."""
+        raw = b64decode(data)
+        nonce, ct = raw[:12], raw[12:]
+        return _aesgcm.decrypt(nonce, ct, None).decode()
+
+    @hybrid_property
+    def token(self) -> str:
+        """Plaintext push token."""
+        try:
+            return self.decrypt_value(self.token_ciphertext)
+        except Exception:
+            # Backward compatibility for unencrypted rows
+            return self.token_ciphertext
+
+    @token.setter
+    def token(self, value: str) -> None:
+        self.token_ciphertext = self.encrypt_value(value)
