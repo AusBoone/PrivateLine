@@ -299,6 +299,28 @@ function Chat() {
   const [users, setUsers] = useState([]);
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [file, setFile] = useState(null);
+  // Per-conversation TTL in days. Empty string leaves the setting unchanged.
+  const [convRetention, setConvRetention] = useState('');
+
+  /**
+   * Update the server-side retention policy for the active conversation.
+   */
+  const updateRetention = async () => {
+    try {
+      if (selectedGroup) {
+        await api.put(`/api/groups/${selectedGroup}/retention`, {
+          retention_days: parseInt(convRetention, 10),
+        });
+      } else if (recipient) {
+        await api.put(`/api/conversations/${recipient}/retention`, {
+          retention_days: parseInt(convRetention, 10),
+        });
+      }
+      setConvRetention('');
+    } catch (err) {
+      console.error('Failed to set retention', err);
+    }
+  };
   // Element at the end of the message list so we can smoothly scroll
   const messageEndRef = useRef(null);
 
@@ -692,6 +714,18 @@ function Chat() {
               sx={{ width: 120, ml: 1 }}
               inputProps={{ min: 0 }}
             />
+            <TextField
+              type="number"
+              placeholder="Retention days"
+              value={convRetention}
+              onChange={(e) => setConvRetention(e.target.value)}
+              size="small"
+              sx={{ width: 120, ml: 1 }}
+              inputProps={{ min: 1, max: 365 }}
+            />
+            <Button onClick={updateRetention} variant="outlined" sx={{ ml: 1 }}>
+              Set TTL
+            </Button>
             <input type="file" onChange={(e) => setFile(e.target.files[0])} />
             <Button type="submit" variant="contained" sx={{ ml: 1 }}>
               Send
