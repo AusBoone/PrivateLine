@@ -1,10 +1,10 @@
 """SQLAlchemy models for PrivateLine.
 
-This module defines the database schema used by the Flask backend. A recent
-update introduced a ``created_at`` timestamp on :class:`PushToken` and per-file
-retention settings so old attachments can be pruned automatically. Expired
-messages, push tokens and files are removed by scheduled jobs in
-``app.py``.
+This module defines the database schema used by the Flask backend.
+Recent updates add support for ephemeral messages via a ``delete_on_read``
+flag, a ``created_at`` timestamp on :class:`PushToken`, and per-file retention
+settings. Expired messages, push tokens and files are removed by scheduled jobs
+in ``app.py``.
 """
 
 from .app import db
@@ -51,9 +51,7 @@ class User(db.Model):
     public_key_pem = db.Column(db.Text, nullable=False)
     # Number of days to retain read messages before deletion. Defaults to 30 to
     # keep recent history while limiting stored personal data.
-    message_retention_days = db.Column(
-        db.Integer, nullable=False, server_default="30"
-    )
+    message_retention_days = db.Column(db.Integer, nullable=False, server_default="30")
 
     @hybrid_property
     def public_key(self):
@@ -149,6 +147,11 @@ class Message(db.Model):
     file_id = db.Column(db.Integer, db.ForeignKey("file.id"))
     signature = db.Column(db.String(684), nullable=False)
     read = db.Column(db.Boolean, default=False, nullable=False)
+    # When ``delete_on_read`` is true the message is removed as soon as it is
+    # marked read. This supports disappearing messages in private chats.
+    delete_on_read = db.Column(
+        db.Boolean, nullable=False, server_default="false", index=True
+    )
 
 
 class PinnedKey(db.Model):
@@ -184,9 +187,7 @@ class PushToken(db.Model):
     created_at = db.Column(
         db.DateTime, nullable=False, default=datetime.utcnow, index=True
     )
-    __table_args__ = (
-        db.UniqueConstraint("user_id", "token", name="uix_user_token"),
-    )
+    __table_args__ = (db.UniqueConstraint("user_id", "token", name="uix_user_token"),)
 
     # --- Encryption helpers -------------------------------------------------
     @staticmethod
