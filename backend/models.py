@@ -1,9 +1,10 @@
 """SQLAlchemy models for PrivateLine.
 
 This module defines the database schema used by the Flask backend. A recent
-update introduces a ``created_at`` timestamp on :class:`PushToken` so the
-backend can expire stale tokens. Expired messages and push tokens are purged
-periodically by scheduled jobs in ``app.py``.
+update introduced a ``created_at`` timestamp on :class:`PushToken` and per-file
+retention settings so old attachments can be pruned automatically. Expired
+messages, push tokens and files are removed by scheduled jobs in
+``app.py``.
 """
 
 from .app import db
@@ -26,6 +27,12 @@ if not _aes_env:
     raise RuntimeError("AES_KEY environment variable not set")
 AES_KEY = b64decode(_aes_env)
 _aesgcm = AESGCM(AES_KEY)
+
+# Default age in days before uploaded files are eligible for deletion. The
+# setting mirrors ``FILE_RETENTION_DAYS`` from :mod:`backend.app` so tests can
+# override it via the environment. Each :class:`File` instance stores the
+# effective retention period to support per-file overrides in the future.
+FILE_RETENTION_DAYS = int(os.environ.get("FILE_RETENTION_DAYS", "30"))
 
 
 class User(db.Model):
@@ -108,6 +115,16 @@ class File(db.Model):
     )
     # ``data`` stores nonce + ciphertext produced by AES-GCM
     data = db.Column(db.LargeBinary, nullable=False)
+    # Timestamp when the file was uploaded. Used to enforce retention policies
+    # via the ``clean_expired_files`` scheduled job.
+    created_at = db.Column(
+        db.DateTime, nullable=False, default=datetime.utcnow, index=True
+    )
+    # Maximum age for this file in days. Defaults to ``FILE_RETENTION_DAYS`` but
+    # can be overridden per-file if needed.
+    file_retention_days = db.Column(
+        db.Integer, nullable=False, server_default=str(FILE_RETENTION_DAYS)
+    )
 
 
 class Message(db.Model):

@@ -1,9 +1,9 @@
 """Application factory and global objects for the backend.
 
 The Flask app exposes REST and WebSocket APIs. This file wires together
-extensions such as the database, JWT manager and rate limiting. A background
-task using :class:`apscheduler.schedulers.background.BackgroundScheduler`
-periodically purges expired messages created via the new ``expires_at`` field.
+extensions such as the database, JWT manager and rate limiting. Background tasks
+using :class:`apscheduler.schedulers.background.BackgroundScheduler` periodically
+purge expired messages, stale push tokens and outdated file attachments.
 """
 
 import os
@@ -133,6 +133,10 @@ app.config["JWT_COOKIE_CSRF_PROTECT"] = (
 # Maximum age in days for stored push notification tokens. Tokens older than
 # this are automatically removed by ``clean_expired_push_tokens``.
 PUSH_TOKEN_TTL_DAYS = int(os.environ.get("PUSH_TOKEN_TTL_DAYS", "30"))
+# Maximum age for uploaded files before they are purged. ``clean_expired_files``
+# uses this value when a :class:`File` instance does not specify a custom
+# retention period.
+FILE_RETENTION_DAYS = int(os.environ.get("FILE_RETENTION_DAYS", "30"))
 
 # Initialize database and migration tools
 db = SQLAlchemy(app)
@@ -200,10 +204,36 @@ def clean_expired_push_tokens() -> None:
             db.session.commit()
 
 
+def clean_expired_files() -> None:
+    """Remove files older than their configured retention period."""
+    from datetime import timedelta
+    from .models import File, Message
+
+    now = datetime.utcnow()
+    with app.app_context():
+        candidates = File.query.all()
+        removed = False
+        for f in candidates:
+            age_limit = timedelta(days=f.file_retention_days)
+            if f.created_at <= now - age_limit:
+                # Detach messages referencing the file before deletion to avoid
+                # foreign key violations.
+                Message.query.filter_by(file_id=f.id).update({"file_id": None})
+                db.session.delete(f)
+                removed = True
+        if removed:
+            db.session.commit()
+
+
 scheduler.add_job(clean_expired_messages, "interval", minutes=1)
 scheduler.add_job(clean_expired_push_tokens, "interval", hours=1)
-scheduler.start()
-atexit.register(lambda: scheduler.shutdown())
+scheduler.add_job(clean_expired_files, "interval", hours=1)
+
+# Avoid background threads during unit tests which manipulate the database
+# concurrently. The scheduler only runs in normal operation.
+if os.environ.get("TESTING") != "1":
+    scheduler.start()
+    atexit.register(lambda: scheduler.shutdown())
 
 # --- JWT Token Blocklist ---
 # Token identifiers (jti) are stored in memory by default.  When a REDIS_URL is
