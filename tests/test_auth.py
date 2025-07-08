@@ -365,3 +365,53 @@ def test_legacy_pbkdf2_login(client):
     resp = client.post("/api/login", json={"username": "legacy", "password": "secret"})
     assert resp.status_code == 200
     assert "access_token" in resp.get_json()
+
+
+def _get_csrf_token(resp):
+    """Return the CSRF token value from ``resp`` Set-Cookie headers."""
+    from http.cookies import SimpleCookie
+
+    for header in resp.headers.getlist("Set-Cookie"):
+        cookie = SimpleCookie()
+        cookie.load(header)
+        if "csrf_access_token" in cookie:
+            return cookie["csrf_access_token"].value
+    return None
+
+
+def test_missing_csrf_token(client):
+    """State changing requests without CSRF token should fail with HTTP 401."""
+    register_user(client, "ian")
+    login_resp = login_user(client, "ian")
+    assert login_resp.status_code == 200
+
+    resp = client.post(
+        "/api/push-token",
+        json={"token": "tok", "platform": "web"},
+    )
+    assert resp.status_code == 401
+
+
+def test_invalid_csrf_token(client):
+    """Providing the wrong CSRF token should also yield HTTP 401."""
+    register_user(client, "jane")
+    login_resp = login_user(client, "jane")
+    assert login_resp.status_code == 200
+    csrf = _get_csrf_token(login_resp)
+    assert csrf
+
+    resp = client.post(
+        "/api/push-token",
+        json={"token": "tok", "platform": "web"},
+        headers={"X-CSRF-TOKEN": "bad"},
+    )
+    assert resp.status_code == 401
+
+    # Correct token succeeds to confirm test setup
+    resp = client.post(
+        "/api/push-token",
+        json={"token": "tok", "platform": "web"},
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+    assert resp.status_code == 200
+
