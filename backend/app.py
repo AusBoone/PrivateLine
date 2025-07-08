@@ -1,9 +1,13 @@
 """Application factory and global objects for the backend.
 
-The Flask app exposes REST and WebSocket APIs. This file wires together
-extensions such as the database, JWT manager and rate limiting. Background tasks
-using :class:`apscheduler.schedulers.background.BackgroundScheduler` periodically
-purge expired messages, stale push tokens and outdated file attachments.
+This module configures the Flask application used by the REST and WebSocket
+APIs. Database sessions, JWT authentication and rate limiting are initialized
+here. Periodic cleanup tasks remove expired messages, push tokens and files.
+
+2025 update: CSRF protection for JWT cookies is now enabled by default via
+``JWT_COOKIE_CSRF_PROTECT``. All POST/PUT/DELETE endpoints therefore require the
+``X-CSRF-TOKEN`` header or a ``csrf_token`` form field when authentication
+cookies are used.
 """
 
 import os
@@ -126,8 +130,11 @@ app.config["JWT_COOKIE_SECURE"] = (
     os.environ.get("JWT_COOKIE_SECURE", "false").lower() == "true"
 )
 app.config["JWT_COOKIE_SAMESITE"] = os.environ.get("JWT_COOKIE_SAMESITE", "Lax")
+# Enable CSRF protection for JWT cookies by default. Deployments may
+# explicitly set ``JWT_COOKIE_CSRF_PROTECT=false`` if cookies are not used or a
+# reverse proxy handles CSRF validation.
 app.config["JWT_COOKIE_CSRF_PROTECT"] = (
-    os.environ.get("JWT_COOKIE_CSRF_PROTECT", "false").lower() == "true"
+    os.environ.get("JWT_COOKIE_CSRF_PROTECT", "true").lower() == "true"
 )
 
 # Maximum age in days for stored push notification tokens. Tokens older than
