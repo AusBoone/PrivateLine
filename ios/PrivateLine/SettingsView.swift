@@ -14,8 +14,9 @@ struct SettingsView: View {
     /// Whether push notifications are enabled. Changing this triggers
     /// registration or deregistration with APNs.
     @AppStorage("pushEnabled") private var pushEnabled = true
-    /// Locally cached retention setting in days.
-    @State private var retention = 30
+    /// Locally cached retention setting in days. ``AppStorage`` persists the
+    /// value across launches so the message cache can consult the same TTL.
+    @AppStorage("retention_days") private var retention = 30
 
     var body: some View {
         Form {

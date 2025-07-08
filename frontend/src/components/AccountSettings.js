@@ -1,5 +1,5 @@
 // A part of the user account management interface, focusing on updating account information.
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Button, TextField, Typography, Snackbar, Alert } from '@mui/material';
 import api from '../api';
 
@@ -11,6 +11,8 @@ function AccountSettings() {
   const [email, setEmail] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  // Retention period in days persisted in ``localStorage`` so the message
+  // cache can enforce the same TTL across sessions.
   const [retention, setRetention] = useState('');
   const [error, setError] = useState('');
   const [openSuccess, setOpenSuccess] = useState(false);
@@ -32,6 +34,11 @@ function AccountSettings() {
         setEmail('');
         setCurrentPassword('');
         setNewPassword('');
+        // Persist the new retention value locally so the cache TTL matches
+        // the server side policy.
+        if (retention) {
+          window.localStorage.setItem('retention_days', retention);
+        }
         setRetention('');
       } else {
         setError(response.data.message || 'Account update failed');
@@ -44,6 +51,14 @@ function AccountSettings() {
       }
     }
   };
+
+  // Populate the retention field with any previously saved preference.
+  useEffect(() => {
+    const stored = window.localStorage.getItem('retention_days');
+    if (stored) {
+      setRetention(stored);
+    }
+  }, []);
 
   return (
     <Box
