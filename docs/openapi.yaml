@@ -271,6 +271,9 @@ paths:
   /api/account-settings:
     put:
       summary: Update account
+      description: >-
+        Modify the authenticated user's email, password or message retention
+        policy. ``messageRetentionDays`` must be between 1 and 365.
       responses:
         '200':
           description: Updated

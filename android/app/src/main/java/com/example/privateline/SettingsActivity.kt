@@ -42,10 +42,24 @@ class SettingsActivity : SecureActivity() {
             }
         }
 
+        val retentionInput = android.widget.EditText(this).apply {
+            hint = "Retention days"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText(prefs.getInt("retention_days", 30).toString())
+            setOnFocusChangeListener { _, hasFocus ->
+                if (!hasFocus) {
+                    val days = text.toString().toIntOrNull() ?: 30
+                    prefs.edit().putInt("retention_days", days).apply()
+                    APIService(baseUrl = "http://localhost:5000").updateRetention(days)
+                }
+            }
+        }
+
         val layout = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.VERTICAL
             addView(darkSwitch)
             addView(pushSwitch)
+            addView(retentionInput)
         }
 
         setContentView(layout)
