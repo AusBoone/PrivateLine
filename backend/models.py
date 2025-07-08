@@ -1,9 +1,9 @@
 """SQLAlchemy models for PrivateLine.
 
-This module defines the database schema used by the Flask backend. The most
-recent change adds an ``expires_at`` column on :class:`Message` to implement
-ephemeral messaging. Older messages are cleaned up by a scheduled job in
-``app.py``.
+This module defines the database schema used by the Flask backend. A recent
+update introduces a ``created_at`` timestamp on :class:`PushToken` so the
+backend can expire stale tokens. Expired messages and push tokens are purged
+periodically by scheduled jobs in ``app.py``.
 """
 
 from .app import db
@@ -138,4 +138,12 @@ class PushToken(db.Model):
     # Web push endpoint or APNs token
     token = db.Column(db.Text, nullable=False)
     platform = db.Column(db.String(16), nullable=False)
-    __table_args__ = (db.UniqueConstraint("user_id", "token", name="uix_user_token"),)
+    # ``created_at`` records when the token was stored so old entries can be
+    # removed automatically by a cleanup job. The timestamp defaults to the
+    # current UTC time on insertion.
+    created_at = db.Column(
+        db.DateTime, nullable=False, default=datetime.utcnow, index=True
+    )
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "token", name="uix_user_token"),
+    )
