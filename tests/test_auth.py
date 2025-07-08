@@ -243,7 +243,8 @@ def test_push_token_delete(client):
     resp = client.delete("/api/push-token", json={"token": "tok"}, headers=headers)
     assert resp.status_code == 200
     with app.app_context():
-        assert PushToken.query.filter_by(token="tok").first() is None
+        enc = PushToken.encrypt_value("tok")
+        assert PushToken.query.filter_by(token=enc).first() is None
 
 
 def test_push_token_cleanup(monkeypatch, client):
@@ -264,7 +265,8 @@ def test_push_token_cleanup(monkeypatch, client):
     clean_expired_push_tokens()
 
     with app.app_context():
-        assert PushToken.query.filter_by(token="oldtok").first() is None
+        enc = PushToken.encrypt_value("oldtok")
+        assert PushToken.query.filter_by(token=enc).first() is None
 
 
 def test_users_endpoint(client):

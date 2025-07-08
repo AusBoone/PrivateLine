@@ -1013,7 +1013,8 @@ class PushTokenResource(Resource):
 
         platform = data.get("platform", "ios")
         user_id = int(get_jwt_identity())
-        pt = PushToken.query.filter_by(user_id=user_id, token=token).first()
+        enc = PushToken.encrypt_value(token)
+        pt = PushToken.query.filter_by(user_id=user_id, token=enc).first()
         if pt:
             pt.platform = platform
         else:
@@ -1035,7 +1036,8 @@ class PushTokenResource(Resource):
             return {"message": "Token is required."}, 400
 
         user_id = int(get_jwt_identity())
-        pt = PushToken.query.filter_by(user_id=user_id, token=token).first()
+        enc = PushToken.encrypt_value(token)
+        pt = PushToken.query.filter_by(user_id=user_id, token=enc).first()
         if pt:
             db.session.delete(pt)
             try:

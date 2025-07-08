@@ -37,6 +37,16 @@ def reset_rate_limits():
     limiter.reset()
 
 
+@pytest.fixture(autouse=True)
+def reset_ratchet():
+    """Clear the in-memory ratchet store between tests."""
+    import backend.ratchet as ratchet
+
+    ratchet._store = None
+    yield
+    ratchet._store = None
+
+
 @pytest.fixture
 def client():
     """Flask test client with an isolated SQLite database."""
