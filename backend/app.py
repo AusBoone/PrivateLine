@@ -126,6 +126,10 @@ app.config["JWT_COOKIE_CSRF_PROTECT"] = (
     os.environ.get("JWT_COOKIE_CSRF_PROTECT", "false").lower() == "true"
 )
 
+# Maximum age in days for stored push notification tokens. Tokens older than
+# this are automatically removed by ``clean_expired_push_tokens``.
+PUSH_TOKEN_TTL_DAYS = int(os.environ.get("PUSH_TOKEN_TTL_DAYS", "30"))
+
 # Initialize database and migration tools
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
@@ -159,7 +163,22 @@ def clean_expired_messages() -> None:
             remove_orphan_files()
 
 
+def clean_expired_push_tokens() -> None:
+    """Remove push tokens older than ``PUSH_TOKEN_TTL_DAYS`` days."""
+    from datetime import timedelta
+    from .models import PushToken
+
+    cutoff = datetime.utcnow() - timedelta(days=PUSH_TOKEN_TTL_DAYS)
+    with app.app_context():
+        expired = PushToken.query.filter(PushToken.created_at <= cutoff).all()
+        if expired:
+            for tok in expired:
+                db.session.delete(tok)
+            db.session.commit()
+
+
 scheduler.add_job(clean_expired_messages, "interval", minutes=1)
+scheduler.add_job(clean_expired_push_tokens, "interval", hours=1)
 scheduler.start()
 atexit.register(lambda: scheduler.shutdown())
 

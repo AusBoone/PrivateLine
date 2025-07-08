@@ -246,6 +246,27 @@ def test_push_token_delete(client):
         assert PushToken.query.filter_by(token="tok").first() is None
 
 
+def test_push_token_cleanup(monkeypatch, client):
+    """Old push tokens should be removed by the cleanup job."""
+    register_user(client, "alice")
+    token = login_user(client, "alice").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    client.post(
+        "/api/push-token",
+        json={"token": "oldtok", "platform": "web"},
+        headers=headers,
+    )
+
+    # Set the TTL to zero days so all existing tokens qualify for deletion.
+    monkeypatch.setattr("backend.app.PUSH_TOKEN_TTL_DAYS", 0)
+    from backend.app import clean_expired_push_tokens
+
+    clean_expired_push_tokens()
+
+    with app.app_context():
+        assert PushToken.query.filter_by(token="oldtok").first() is None
+
+
 def test_users_endpoint(client):
     register_user(client, "alice")
     register_user(client, "bob")
