@@ -2,7 +2,9 @@
 
 This module defines the Flask-RESTful resources used by the backend. Uploaded
 files are limited to ``MAX_FILE_SIZE`` bytes and message pagination parameters
-are validated for reasonable bounds.
+are validated for reasonable bounds. Messages may optionally include a
+``delete_on_read`` flag indicating they should be purged as soon as the
+recipient marks them read.
 
 Recent changes introduce rate limiting on authentication endpoints and store the
 original MIME type of uploaded files so downloads return the correct
@@ -16,7 +18,7 @@ PBKDF2 hashes for seamless upgrades.
 # added ``verify_password`` to support existing PBKDF2 accounts. All new
 # registrations now store Argon2 hashes by default.
 
-from flask_restful import Resource, reqparse
+from flask_restful import Resource, reqparse, inputs
 from flask import request, jsonify
 from datetime import datetime
 from werkzeug.utils import secure_filename
@@ -107,8 +109,13 @@ message_parser.add_argument("group_id", required=False, location="form")
 message_parser.add_argument("file_id", required=False, location="form")
 message_parser.add_argument("signature", required=True, location="form")
 message_parser.add_argument(
-    "expires_at", required=False, location="form",
-    help="ISO8601 expiration timestamp"
+    "expires_at", required=False, location="form", help="ISO8601 expiration timestamp"
+)
+message_parser.add_argument(
+    "delete_on_read",
+    required=False,
+    location="form",
+    type=inputs.boolean,
 )
 
 # Token serializer (legacy).  JWT is now used instead of this custom mechanism.
@@ -171,7 +178,10 @@ def send_fcm(token: str, message: str) -> None:
             "Authorization": f"key={server_key}",
             "Content-Type": "application/json",
         }
-        payload = {"to": token, "notification": {"title": "PrivateLine", "body": message}}
+        payload = {
+            "to": token,
+            "notification": {"title": "PrivateLine", "body": message},
+        }
         requests.post(
             "https://fcm.googleapis.com/fcm/send",
             json=payload,
@@ -543,7 +553,9 @@ class GroupMessages(Resource):
                         "sender_id": msg.sender_id,
                         "file_id": msg.file_id,
                         "read": msg.read,
-                        "expires_at": msg.expires_at.isoformat() if msg.expires_at else None,
+                        "expires_at": (
+                            msg.expires_at.isoformat() if msg.expires_at else None
+                        ),
                     }
                 )
         # ``msgs`` was ordered ascending for ratchet purposes; reverse here so
@@ -593,7 +605,12 @@ class GroupMessages(Resource):
             sender_id=uid,
             group_id=group_id,
             signature=data["signature"],
-            expires_at=datetime.fromisoformat(data["expires_at"]) if data.get("expires_at") else None,
+            expires_at=(
+                datetime.fromisoformat(data["expires_at"])
+                if data.get("expires_at")
+                else None
+            ),
+            delete_on_read=data.get("delete_on_read") or False,
         )
         db.session.add(m)
         db.session.commit()
@@ -735,7 +752,9 @@ class Messages(Resource):
             nonce = b64decode(msg.nonce)
             ciphertext = b64decode(msg.content)
             recipient_ref = (
-                f"group:{msg.group_id}" if msg.group_id is not None else str(msg.recipient_id)
+                f"group:{msg.group_id}"
+                if msg.group_id is not None
+                else str(msg.recipient_id)
             )
             ratchet = get_ratchet(str(msg.sender_id), recipient_ref)
             plaintext_bytes = ratchet.decrypt(ciphertext, nonce)
@@ -763,7 +782,9 @@ class Messages(Resource):
                         "recipient_id": msg.recipient_id,
                         "file_id": msg.file_id,
                         "read": msg.read,
-                        "expires_at": msg.expires_at.isoformat() if msg.expires_at else None,
+                        "expires_at": (
+                            msg.expires_at.isoformat() if msg.expires_at else None
+                        ),
                     }
                 )
         return {"messages": list(reversed(message_list))}
@@ -836,7 +857,12 @@ class Messages(Resource):
             group_id=gid,
             file_id=data.get("file_id"),
             signature=data["signature"],
-            expires_at=datetime.fromisoformat(data["expires_at"]) if data.get("expires_at") else None,
+            expires_at=(
+                datetime.fromisoformat(data["expires_at"])
+                if data.get("expires_at")
+                else None
+            ),
+            delete_on_read=data.get("delete_on_read") or False,
         )
         try:
             db.session.add(new_message)
@@ -916,7 +942,12 @@ class MessageRead(Resource):
         elif msg.recipient_id != uid:
             return {"message": "Forbidden"}, 403
         msg.read = True
-        db.session.commit()
+        if msg.delete_on_read:
+            db.session.delete(msg)
+            db.session.commit()
+            remove_orphan_files()
+        else:
+            db.session.commit()
         return {"message": "read"}, 200
 
 

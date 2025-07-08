@@ -3,6 +3,7 @@
 This module configures the Flask application used by the REST and WebSocket
 APIs. Database sessions, JWT authentication and rate limiting are initialized
 here. Periodic cleanup tasks remove expired messages, push tokens and files.
+Messages flagged ``delete_on_read`` are purged immediately once read.
 
 2025 update: CSRF protection for JWT cookies is now enabled by default via
 ``JWT_COOKIE_CSRF_PROTECT``. All POST/PUT/DELETE endpoints therefore require the
@@ -51,6 +52,7 @@ if sentry_dsn:
 app = Flask(__name__)
 # Initialize application-wide logging before other components.
 from .logging_config import init_logging
+
 init_logging()
 
 
@@ -174,6 +176,8 @@ def clean_expired_messages() -> None:
             Message.expires_at.is_not(None), Message.expires_at <= now
         ).all()
         for msg in expired:
+            if db.session.get(Message, msg.id) is None:
+                continue
             db.session.delete(msg)
 
         # Per-user retention policy: prune read messages older than the user's
@@ -188,6 +192,8 @@ def clean_expired_messages() -> None:
                 ((Message.sender_id == user.id) | (Message.recipient_id == user.id)),
             ).all()
             for msg in old_msgs:
+                if db.session.get(Message, msg.id) is None:
+                    continue
                 db.session.delete(msg)
 
         if expired or users:
@@ -345,6 +351,8 @@ api.add_resource(FileUpload, "/api/files")
 api.add_resource(FileDownload, "/api/files/<int:file_id>")
 api.add_resource(PinnedKeys, "/api/pinned_keys")
 api.add_resource(DeleteAccount, "/api/account")
+
+
 # Serve the generated OpenAPI spec and minimal Swagger UI
 @app.route("/api/openapi.yaml")
 def openapi_spec():
@@ -357,6 +365,7 @@ def openapi_spec():
 def api_docs():
     """Serve an embedded Swagger UI for browsing the API."""
     return """<!DOCTYPE html><html><head><title>API Docs</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist/swagger-ui.css"></head><body><div id="swagger-ui"></div><script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist/swagger-ui-bundle.js"></script><script>SwaggerUIBundle({url:"/api/openapi.yaml",dom_id:"#swagger-ui"});</script></body></html>"""
+
 
 api.add_resource(AccountSettings, "/api/account-settings")
 api.add_resource(RefreshToken, "/api/refresh")
