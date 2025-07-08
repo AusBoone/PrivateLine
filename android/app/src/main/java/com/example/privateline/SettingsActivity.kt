@@ -7,6 +7,9 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.preference.PreferenceManager
 import android.widget.Switch
 
+/** Number of days messages should be kept locally by default. */
+private const val DEFAULT_RETENTION_DAYS = 30
+
 /**
  * SettingsActivity.kt - Simple screen exposing dark mode and push notification
  * preferences. The chosen options are persisted via SharedPreferences so they
@@ -45,10 +48,11 @@ class SettingsActivity : SecureActivity() {
         val retentionInput = android.widget.EditText(this).apply {
             hint = "Retention days"
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
-            setText(prefs.getInt("retention_days", 30).toString())
+            // Pre-populate using the saved preference or the default constant
+            setText(prefs.getInt("retention_days", DEFAULT_RETENTION_DAYS).toString())
             setOnFocusChangeListener { _, hasFocus ->
                 if (!hasFocus) {
-                    val days = text.toString().toIntOrNull() ?: 30
+                    val days = text.toString().toIntOrNull() ?: DEFAULT_RETENTION_DAYS
                     prefs.edit().putInt("retention_days", days).apply()
                     APIService(baseUrl = "http://localhost:5000").updateRetention(days)
                 }

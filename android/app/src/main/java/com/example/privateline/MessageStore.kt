@@ -10,6 +10,7 @@
 package com.example.privateline
 
 import android.content.Context
+import androidx.preference.PreferenceManager
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.io.File
@@ -22,6 +23,8 @@ import java.io.File
  */
 object MessageStore {
     private const val FILE_NAME = "messages.json"
+    /** Default retention in days if the user has not specified one. */
+    private const val DEFAULT_TTL_DAYS = 30
 
     /**
      * Load cached messages from the application's files directory.
@@ -32,6 +35,15 @@ object MessageStore {
     fun load(context: Context): List<Message> {
         val file = File(context.filesDir, FILE_NAME)
         if (!file.exists()) {
+            return emptyList()
+        }
+        // Determine the effective TTL using shared preferences so the
+        // cache respects user settings across launches.
+        val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
+        val days = prefs.getInt("retention_days", DEFAULT_TTL_DAYS)
+        val ttlMs = days.toLong() * 24 * 60 * 60 * 1000
+        if (System.currentTimeMillis() - file.lastModified() > ttlMs) {
+            file.delete()
             return emptyList()
         }
         return try {

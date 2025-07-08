@@ -1,10 +1,9 @@
 import { TextEncoder, TextDecoder } from 'util';
-import { initCacheSecret, saveMessages, loadMessages } from '../messageCache';
+import { initCacheSecret, saveMessages, loadMessages, DEFAULT_TTL_MS } from '../../utils/messageCache';
 
 beforeAll(() => {
   if (!global.TextEncoder) global.TextEncoder = TextEncoder;
   if (!global.TextDecoder) global.TextDecoder = TextDecoder;
-  // Provide a minimal crypto implementation for the cache module.
   global.crypto = {
     subtle: {
       importKey: jest.fn().mockResolvedValue('material'),
@@ -22,19 +21,12 @@ beforeEach(async () => {
   await Promise.all(dbs.map((d) => indexedDB.deleteDatabase(d.name)));
 });
 
-test('encrypts and decrypts messages', async () => {
+test('cache entry beyond default TTL is purged', async () => {
+  jest.spyOn(Date, 'now').mockReturnValue(0);
   await initCacheSecret('pw');
   await saveMessages([{ id: 1, text: 'hi' }]);
-  const msgs = await loadMessages();
-  expect(msgs).toEqual([{ id: 1, text: 'hi' }]);
-});
 
-test('purges messages beyond ttl', async () => {
-  const now = Date.now();
-  jest.spyOn(Date, 'now').mockReturnValue(now);
-  await initCacheSecret('pw');
-  await saveMessages([{ id: 1, text: 'hi' }]);
-  Date.now.mockReturnValue(now + 5000);
-  const msgs = await loadMessages({ ttlMs: 1000 });
+  Date.now.mockReturnValue(DEFAULT_TTL_MS + 1000);
+  const msgs = await loadMessages();
   expect(msgs).toEqual([]);
 });

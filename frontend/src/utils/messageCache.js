@@ -16,6 +16,27 @@
 
 import { arrayBufferToBase64, base64ToArrayBuffer } from './encoding';
 
+// Default number of days to keep locally cached messages before
+// considering them stale. This mirrors the server side retention
+// configuration so that old history does not linger on disk indefinitely.
+export const DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Return the currently configured TTL in milliseconds.
+ *
+ * The value is read from ``localStorage`` where the settings screen stores
+ * the user's preferred retention period in days. If no value has been saved
+ * yet, the ``DEFAULT_TTL_MS`` constant is returned.
+ */
+function getConfiguredTtlMs() {
+  const stored = window.localStorage.getItem('retention_days');
+  const days = parseInt(stored, 10);
+  if (Number.isFinite(days) && days > 0) {
+    return days * 24 * 60 * 60 * 1000;
+  }
+  return DEFAULT_TTL_MS;
+}
+
 const DB_NAME = 'privateline-msgs';
 const DB_VERSION = 1;
 const STORE_NAME = 'messages';
@@ -107,7 +128,11 @@ export async function saveMessages(msgs) {
 
 export async function loadMessages(options = {}) {
   ensureKey();
+  // ``ttlMs`` allows callers to override the duration messages remain
+  // in the cache. When not specified, the user configured value or
+  // ``DEFAULT_TTL_MS`` is used.
   const { ttlMs } = options;
+  const effectiveTtl = ttlMs || getConfiguredTtlMs();
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readonly');
@@ -120,8 +145,10 @@ export async function loadMessages(options = {}) {
           resolve([]);
           return;
         }
-        if (ttlMs && record.ts && Date.now() - record.ts > ttlMs) {
-          // Remove stale cache entry
+        if (record.ts && Date.now() - record.ts > effectiveTtl) {
+          // Remove stale cache entry if the record is older than the
+          // allowed TTL. Messages without ``expires_at`` will therefore
+          // disappear once the cache entry itself grows old.
           const delTx = db.transaction(STORE_NAME, 'readwrite');
           delTx.objectStore(STORE_NAME).delete('list');
           resolve([]);

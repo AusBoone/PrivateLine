@@ -11,9 +11,19 @@ enum MessageStore {
             .appendingPathComponent("messages.json")
     }
 
+    /// Default number of days messages remain in the cache.
+    private static let defaultTtlDays = 30
+
     /// Load cached messages from disk.
     static func load() -> [Message] {
-        // Attempt to read the cached JSON file
+        let days = UserDefaults.standard.integer(forKey: "retention_days")
+        let ttl = Double(days > 0 ? days : defaultTtlDays) * 86400
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+           let modified = attrs[.modificationDate] as? Date,
+           Date().timeIntervalSince(modified) > ttl {
+            try? FileManager.default.removeItem(at: fileURL)
+            return []
+        }
         guard let data = try? Data(contentsOf: fileURL),
               let msgs = try? JSONDecoder().decode([Message].self, from: data) else {
             return []
