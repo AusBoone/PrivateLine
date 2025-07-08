@@ -6,7 +6,7 @@ from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
 from backend.app import app, db
-from backend.models import File
+from backend.models import File, Message
 from .conftest import register_user, login_user, decrypt_private_key, sign_content
 
 
@@ -227,4 +227,72 @@ def test_file_removed_with_message(client):
 
     with app.app_context():
         assert db.session.get(File, fid) is None
+
+
+def test_old_files_pruned(client):
+    """Files past their retention period should be deleted and detached."""
+    reg = register_user(client, "irene")
+    pk = decrypt_private_key(reg)
+    token = login_user(client, "irene").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    fs = FileStorage(stream=io.BytesIO(b"expired"), filename="exp.txt")
+    resp = client.post(
+        "/api/files", data={"file": fs}, headers=headers, content_type="multipart/form-data"
+    )
+    fid = resp.get_json()["file_id"]
+
+    b64 = base64.b64encode(b"msg").decode()
+    sig = sign_content(pk, b64)
+    resp = client.post(
+        "/api/messages",
+        data={"content": b64, "recipient": "irene", "file_id": fid, "signature": sig},
+        headers=headers,
+    )
+    mid = resp.get_json()["id"]
+
+    # Expire this file immediately by lowering its retention value to zero
+    with app.app_context():
+        rec = db.session.get(File, fid)
+        rec.file_retention_days = 0
+        db.session.commit()
+
+    from backend.app import clean_expired_files
+
+    clean_expired_files()
+
+    with app.app_context():
+        assert db.session.get(File, fid) is None
+        assert db.session.get(Message, mid).file_id is None
+
+
+def test_recent_files_preserved(client):
+    """Files newer than the retention period should remain available."""
+    reg = register_user(client, "jane")
+    pk = decrypt_private_key(reg)
+    token = login_user(client, "jane").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    fs = FileStorage(stream=io.BytesIO(b"keep"), filename="keep.txt")
+    resp = client.post(
+        "/api/files", data={"file": fs}, headers=headers, content_type="multipart/form-data"
+    )
+    fid = resp.get_json()["file_id"]
+
+    b64 = base64.b64encode(b"hi").decode()
+    sig = sign_content(pk, b64)
+    resp = client.post(
+        "/api/messages",
+        data={"content": b64, "recipient": "jane", "file_id": fid, "signature": sig},
+        headers=headers,
+    )
+    mid = resp.get_json()["id"]
+
+    from backend.app import clean_expired_files
+
+    clean_expired_files()
+
+    with app.app_context():
+        assert db.session.get(File, fid) is not None
+        assert db.session.get(Message, mid).file_id == fid
 

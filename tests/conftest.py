@@ -3,6 +3,10 @@
 import os
 import base64
 import io
+
+# Flag that ensures the Flask app does not start background schedulers when
+# imported for the test suite.
+os.environ.setdefault("TESTING", "1")
 import pytest
 from base64 import b64decode
 from cryptography.hazmat.primitives import hashes

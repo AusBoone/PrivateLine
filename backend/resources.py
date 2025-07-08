@@ -40,7 +40,14 @@ import os
 from .models import User, Message, PinnedKey, PushToken
 from .models import Group, GroupMember, File
 from .ratchet import get_ratchet
-from .app import db, app, socketio, token_blocklist, limiter
+from .app import (
+    db,
+    app,
+    socketio,
+    token_blocklist,
+    limiter,
+    FILE_RETENTION_DAYS,
+)
 from sqlalchemy.exc import SQLAlchemyError
 from flask_jwt_extended import (
     create_access_token,
@@ -495,21 +502,19 @@ class GroupMessages(Resource):
         offset = request.args.get("offset", default=0, type=int)
         if limit < 1 or limit > 100 or offset < 0:
             return {"message": "invalid pagination"}, 400
-        msgs = (
+        all_msgs = (
             Message.query.filter_by(group_id=group_id)
             .filter(
                 (Message.expires_at.is_(None))
                 | (Message.expires_at > datetime.utcnow())
             )
-            .order_by(Message.timestamp.desc())
-            .limit(limit)
-            .offset(offset)
+            .order_by(Message.timestamp.asc())
             .all()
         )
+        slice_start = max(len(all_msgs) - offset - limit, 0)
+        slice_end = len(all_msgs) - offset
         result = []
-        # Decrypt oldest to newest to keep the ratchet in sync while preserving
-        # the original descending order for the response.
-        for msg in reversed(msgs):
+        for idx, msg in enumerate(all_msgs):
             nonce = b64decode(msg.nonce)
             ciphertext = b64decode(msg.content)
             # Each group is treated as a unique conversation for the ratchet.
@@ -529,17 +534,18 @@ class GroupMessages(Resource):
                 )
             except InvalidSignature:
                 continue
-            result.append(
-                {
-                    "id": msg.id,
-                    "content": plaintext_b64,
-                    "timestamp": msg.timestamp.isoformat(),
-                    "sender_id": msg.sender_id,
-                    "file_id": msg.file_id,
-                    "read": msg.read,
-                    "expires_at": msg.expires_at.isoformat() if msg.expires_at else None,
-                }
-            )
+            if slice_start <= idx < slice_end:
+                result.append(
+                    {
+                        "id": msg.id,
+                        "content": plaintext_b64,
+                        "timestamp": msg.timestamp.isoformat(),
+                        "sender_id": msg.sender_id,
+                        "file_id": msg.file_id,
+                        "read": msg.read,
+                        "expires_at": msg.expires_at.isoformat() if msg.expires_at else None,
+                    }
+                )
         # ``msgs`` was ordered ascending for ratchet purposes; reverse here so
         # clients see newest messages first.
         return {"messages": list(reversed(result))}
@@ -621,6 +627,9 @@ class FileUpload(Resource):
             filename=sanitized,
             mimetype=f.mimetype or "application/octet-stream",
             data=stored,
+            # Use the global default retention unless changed later via a
+            # database migration or explicit update.
+            file_retention_days=FILE_RETENTION_DAYS,
         )
         db.session.add(file_rec)
         db.session.commit()
@@ -702,7 +711,10 @@ class Messages(Resource):
         offset = request.args.get("offset", default=0, type=int)
         if limit < 1 or limit > 100 or offset < 0:
             return {"message": "invalid pagination"}, 400
-        messages = (
+        # Fetch all relevant messages in chronological order so the ratchet can
+        # decrypt them sequentially. Pagination is applied after decryption to
+        # keep the API stable while maintaining correct ratchet state.
+        all_msgs = (
             Message.query.filter(
                 or_(
                     Message.sender_id == current_user_id,
@@ -713,33 +725,22 @@ class Messages(Resource):
                 (Message.expires_at.is_(None))
                 | (Message.expires_at > datetime.utcnow())
             )
-            .order_by(Message.timestamp.desc())
-            .limit(limit)
-            .offset(offset)
+            .order_by(Message.timestamp.asc())
             .all()
         )
+        slice_start = max(len(all_msgs) - offset - limit, 0)
+        slice_end = len(all_msgs) - offset
         message_list = []
-        # Decrypt messages in reverse so the ratchet state follows the original
-        # encryption order while the returned list remains newest first.
-        for msg in reversed(messages):
+        for idx, msg in enumerate(all_msgs):
             nonce = b64decode(msg.nonce)
             ciphertext = b64decode(msg.content)
-            # Select the ratchet associated with this conversation. For
-            # group messages the ``recipient`` is the unique group id so all
-            # members share the same state. Using the same ratchet instance
-            # means the root key advances after each successful decryption,
-            # providing forward secrecy for stored payloads.
             recipient_ref = (
                 f"group:{msg.group_id}" if msg.group_id is not None else str(msg.recipient_id)
             )
             ratchet = get_ratchet(str(msg.sender_id), recipient_ref)
-            # Decrypt the layer of server-side encryption. The ratchet updates
-            # its root key so past messages cannot be decrypted again with an
-            # old state.
             plaintext_bytes = ratchet.decrypt(ciphertext, nonce)
             plaintext_b64 = b64encode(plaintext_bytes).decode()
             try:
-                # Verify the sender's signature to detect tampering
                 user = db.session.get(User, msg.sender_id)
                 user.public_key.verify(
                     b64decode(msg.signature),
@@ -751,20 +752,20 @@ class Messages(Resource):
                     hashes.SHA256(),
                 )
             except InvalidSignature:
-                # Skip messages that fail verification
                 continue
-            message_list.append(
-                {
-                    "id": msg.id,
-                    "content": plaintext_b64,
-                    "timestamp": msg.timestamp.isoformat(),
-                    "sender_id": msg.sender_id,
-                    "recipient_id": msg.recipient_id,
-                    "file_id": msg.file_id,
-                    "read": msg.read,
-                    "expires_at": msg.expires_at.isoformat() if msg.expires_at else None,
-                }
-            )
+            if slice_start <= idx < slice_end:
+                message_list.append(
+                    {
+                        "id": msg.id,
+                        "content": plaintext_b64,
+                        "timestamp": msg.timestamp.isoformat(),
+                        "sender_id": msg.sender_id,
+                        "recipient_id": msg.recipient_id,
+                        "file_id": msg.file_id,
+                        "read": msg.read,
+                        "expires_at": msg.expires_at.isoformat() if msg.expires_at else None,
+                    }
+                )
         return {"messages": list(reversed(message_list))}
 
     # Send a new message. Rate limited via the limiter in app.py
