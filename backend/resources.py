@@ -668,6 +668,19 @@ class FileDownload(Resource):
         return resp
 
 
+def remove_orphan_files() -> None:
+    """Delete uploaded files that are not referenced by any message."""
+
+    from sqlalchemy import exists
+
+    orphans = File.query.filter(~exists().where(Message.file_id == File.id)).all()
+    if not orphans:
+        return
+    for record in orphans:
+        db.session.delete(record)
+    db.session.commit()
+
+
 class Messages(Resource):
     """Retrieve or create encrypted chat messages.
 
@@ -880,6 +893,7 @@ class MessageResource(Resource):
             return {"message": "Forbidden"}, 403
         db.session.delete(msg)
         db.session.commit()
+        remove_orphan_files()
         return {"message": "deleted"}, 200
 
 
@@ -1144,6 +1158,7 @@ class DeleteAccount(Resource):
             # Finally delete the user record itself
             db.session.delete(user)
             db.session.commit()
+            remove_orphan_files()
         except SQLAlchemyError:
             db.session.rollback()
             return {"message": "Failed to delete account."}, 500
