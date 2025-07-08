@@ -16,6 +16,7 @@ from cryptography.hazmat.backends import default_backend
 
 # Ensure deterministic keys for tests
 os.environ.setdefault("AES_KEY", base64.b64encode(os.urandom(32)).decode())
+os.environ.setdefault("ENCRYPTED_LOG_KEY", base64.b64encode(os.urandom(32)).decode())
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
 
 from backend.app import app, db, RedisBlocklist, limiter
