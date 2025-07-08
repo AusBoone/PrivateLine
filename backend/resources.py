@@ -39,6 +39,7 @@ import binascii
 import os
 from .models import User, Message, PinnedKey, PushToken
 from .models import Group, GroupMember, File
+from .ratchet import get_ratchet
 from .app import db, app, socketio, token_blocklist, limiter
 from sqlalchemy.exc import SQLAlchemyError
 from flask_jwt_extended import (
@@ -475,12 +476,13 @@ class GroupKey(Resource):
 
 
 class GroupMessages(Resource):
-    """Send or retrieve messages for a group.
+    """Send or retrieve messages for a group with additional server-side secrecy.
 
-    The ``content`` field is expected to contain base64 encoded ciphertext
-    produced by the client (e.g. using a shared group key). The server does not
-    decrypt this payload; it merely applies its own layer of encryption for
-    storage and verifies the accompanying signature.
+    Client payloads are still encrypted end-to-end using the shared group key.
+    Before persistence the server applies :class:`DoubleRatchet` encryption so
+    that every stored message is protected with a unique key. Reading a message
+    rotates the ratchet's root key which prevents the same ciphertext from being
+    decrypted again, providing forward secrecy for data at rest.
     """
 
     @jwt_required()
@@ -505,9 +507,14 @@ class GroupMessages(Resource):
             .all()
         )
         result = []
-        for msg in msgs:
+        # Decrypt oldest to newest to keep the ratchet in sync while preserving
+        # the original descending order for the response.
+        for msg in reversed(msgs):
             nonce = b64decode(msg.nonce)
-            plaintext_bytes = aesgcm.decrypt(nonce, b64decode(msg.content), None)
+            ciphertext = b64decode(msg.content)
+            # Each group is treated as a unique conversation for the ratchet.
+            ratchet = get_ratchet(str(msg.sender_id), f"group:{group_id}")
+            plaintext_bytes = ratchet.decrypt(ciphertext, nonce)
             plaintext_b64 = b64encode(plaintext_bytes).decode()
             try:
                 user = db.session.get(User, msg.sender_id)
@@ -533,7 +540,9 @@ class GroupMessages(Resource):
                     "expires_at": msg.expires_at.isoformat() if msg.expires_at else None,
                 }
             )
-        return {"messages": result}
+        # ``msgs`` was ordered ascending for ratchet purposes; reverse here so
+        # clients see newest messages first.
+        return {"messages": list(reversed(result))}
 
     @jwt_required()
     def post(self, group_id):
@@ -543,7 +552,6 @@ class GroupMessages(Resource):
             return {"message": "Not a member"}, 403
         # Use the RequestParser above to validate the incoming form fields
         data = message_parser.parse_args()
-        # Arbitrary limit on encrypted payload size to prevent abuse
         if len(data["content"]) > 2000:
             return {"message": "Message too long."}, 400
         try:
@@ -567,11 +575,11 @@ class GroupMessages(Resource):
             )
         except InvalidSignature:
             return {"message": "Signature verification failed."}, 400
-        # The server encrypts the already encrypted payload once more before
-        # storing it so that it remains confidential even if the database is
-        # compromised. AES-GCM provides integrity and authenticity.
-        nonce = os.urandom(12)
-        ciphertext = aesgcm.encrypt(nonce, client_ciphertext, None)
+        # Apply the server-side double ratchet so the stored ciphertext is
+        # protected even if the database is compromised. Each message uses a
+        # unique key derived from the conversation state.
+        ratchet = get_ratchet(str(uid), f"group:{group_id}")
+        ciphertext, nonce = ratchet.encrypt(client_ciphertext)
         m = Message(
             content=b64encode(ciphertext).decode(),
             nonce=b64encode(nonce).decode(),
@@ -661,7 +669,14 @@ class FileDownload(Resource):
 
 
 class Messages(Resource):
-    """Retrieve or create encrypted chat messages."""
+    """Retrieve or create encrypted chat messages.
+
+    A lightweight double ratchet is used to encrypt the already encrypted
+    client payload before it is stored in the database. Each decrypt operation
+    advances the ratchet which means old ciphertext cannot be decrypted again
+    with a previous state. This ensures forward secrecy for the server-side
+    encryption layer.
+    """
 
     # Retrieve all messages. Requires a valid JWT token.
     @jwt_required()
@@ -691,13 +706,24 @@ class Messages(Resource):
             .all()
         )
         message_list = []
-        # Iterate over each stored message and decrypt the server layer.
-        for msg in messages:
+        # Decrypt messages in reverse so the ratchet state follows the original
+        # encryption order while the returned list remains newest first.
+        for msg in reversed(messages):
             nonce = b64decode(msg.nonce)
             ciphertext = b64decode(msg.content)
-            # Decrypt the layer of server-side encryption to obtain the
-            # client-provided ciphertext, then re-encode it for transport.
-            plaintext_bytes = aesgcm.decrypt(nonce, ciphertext, None)
+            # Select the ratchet associated with this conversation. For
+            # group messages the ``recipient`` is the unique group id so all
+            # members share the same state. Using the same ratchet instance
+            # means the root key advances after each successful decryption,
+            # providing forward secrecy for stored payloads.
+            recipient_ref = (
+                f"group:{msg.group_id}" if msg.group_id is not None else str(msg.recipient_id)
+            )
+            ratchet = get_ratchet(str(msg.sender_id), recipient_ref)
+            # Decrypt the layer of server-side encryption. The ratchet updates
+            # its root key so past messages cannot be decrypted again with an
+            # old state.
+            plaintext_bytes = ratchet.decrypt(ciphertext, nonce)
             plaintext_b64 = b64encode(plaintext_bytes).decode()
             try:
                 # Verify the sender's signature to detect tampering
@@ -726,13 +752,14 @@ class Messages(Resource):
                     "expires_at": msg.expires_at.isoformat() if msg.expires_at else None,
                 }
             )
-        return {"messages": message_list}
+        return {"messages": list(reversed(message_list))}
 
     # Send a new message. Rate limited via the limiter in app.py
     @jwt_required()
     def post(self):
         """Store an encrypted message and broadcast it to clients."""
         data = message_parser.parse_args()
+        uid = int(get_jwt_identity())
 
         # Arbitrary limit on encrypted payload size to prevent abuse
         if len(data["content"]) > 2000:
@@ -748,7 +775,6 @@ class Messages(Resource):
             return {"message": "Recipient or group_id required."}, 400
         else:
             # Verify the sender is a member of the target group
-            uid = int(get_jwt_identity())
             if not GroupMember.query.filter_by(group_id=gid, user_id=uid).first():
                 return {"message": "Not a member"}, 403
 
@@ -763,7 +789,7 @@ class Messages(Resource):
         except (binascii.Error, ValueError):
             return {"message": "Invalid signature."}, 400
 
-        sender = db.session.get(User, int(get_jwt_identity()))
+        sender = db.session.get(User, uid)
         try:
             sender.public_key.verify(
                 sig,
@@ -777,12 +803,16 @@ class Messages(Resource):
         except InvalidSignature:
             return {"message": "Signature verification failed."}, 400
 
-        nonce = os.urandom(12)
-        ciphertext = aesgcm.encrypt(nonce, client_ciphertext, None)
+        # Encrypt the user-supplied ciphertext using the double ratchet tied to
+        # this sender/recipient pair (or group). The ratchet's encrypt method
+        # returns both the ciphertext and nonce needed for decryption.
+        recipient_ref = f"group:{gid}" if gid is not None else str(recipient.id)
+        ratchet = get_ratchet(str(uid), recipient_ref)
+        ciphertext, nonce = ratchet.encrypt(client_ciphertext)
         encrypted_content = b64encode(ciphertext).decode()
         nonce_b64 = b64encode(nonce).decode()
 
-        current_user_id = int(get_jwt_identity())
+        current_user_id = uid
         new_message = Message(
             content=encrypted_content,
             nonce=nonce_b64,

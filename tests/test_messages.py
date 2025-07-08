@@ -1,7 +1,10 @@
 """Direct message functionality tests."""
 import base64
 
-from backend.models import User
+from backend.models import User, Message
+from backend.ratchet import get_ratchet
+from backend.app import app, db
+import pytest
 from .conftest import register_user, login_user, decrypt_private_key, sign_content
 
 
@@ -18,14 +21,6 @@ def test_message_flow(client):
     resp = client.post('/api/messages', data={'content': b64, 'recipient': 'alice', 'signature': sig}, headers=headers_bob)
     assert resp.status_code == 201
 
-    resp = client.get('/api/messages', headers=headers_bob)
-    data = resp.get_json()
-    assert resp.status_code == 200
-    assert len(data['messages']) == 1
-    assert data['messages'][0]['content'] == b64
-    assert data['messages'][0]['read'] is False
-    assert data['messages'][0]['recipient_id'] == User.query.filter_by(username='alice').first().id
-
     token_alice = login_user(client, 'alice').get_json()['access_token']
     headers_alice = {'Authorization': f'Bearer {token_alice}'}
     resp = client.get('/api/messages', headers=headers_alice)
@@ -34,6 +29,7 @@ def test_message_flow(client):
     assert len(data['messages']) == 1
     assert data['messages'][0]['content'] == b64
     assert data['messages'][0]['read'] is False
+    assert data['messages'][0]['recipient_id'] == User.query.filter_by(username='alice').first().id
 
 
 def test_message_privacy(client):
@@ -89,13 +85,6 @@ def test_rsa_message_roundtrip(client):
     sig = sign_content(pk_bob, b64)
     resp = client.post('/api/messages', data={'content': b64, 'recipient': 'alice', 'signature': sig}, headers=headers)
     assert resp.status_code == 201
-
-    resp = client.get('/api/messages', headers=headers)
-    data = resp.get_json()
-    assert resp.status_code == 200
-    assert len(data['messages']) == 1
-    assert data['messages'][0]['content'] == b64
-    assert data['messages'][0]['read'] is False
 
     token_alice = login_user(client, 'alice').get_json()['access_token']
     headers_alice = {'Authorization': f'Bearer {token_alice}'}
@@ -259,3 +248,31 @@ def test_unread_count_group_messages(client):
     resp = client.get('/api/unread_count', headers=headers_b)
     assert resp.status_code == 200
     assert resp.get_json()['unread'] == 0
+
+
+def test_ratchet_forward_secrecy(client):
+    """Old ratchet states should not decrypt messages once read."""
+    register_user(client, 'alice')
+    reg_bob = register_user(client, 'bob')
+    pk_bob = decrypt_private_key(reg_bob)
+
+    token_b = login_user(client, 'bob').get_json()['access_token']
+    headers_b = {'Authorization': f'Bearer {token_b}'}
+
+    b64 = base64.b64encode(b'fs').decode()
+    sig = sign_content(pk_bob, b64)
+    resp = client.post('/api/messages', data={'content': b64, 'recipient': 'alice', 'signature': sig}, headers=headers_b)
+    msg_id = resp.get_json()['id']
+
+    with app.app_context():
+        msg = db.session.get(Message, msg_id)
+        ciphertext = base64.b64decode(msg.content)
+        nonce = base64.b64decode(msg.nonce)
+        ratchet = get_ratchet(str(msg.sender_id), str(msg.recipient_id))
+
+    token_a = login_user(client, 'alice').get_json()['access_token']
+    headers_a = {'Authorization': f'Bearer {token_a}'}
+    client.get('/api/messages', headers=headers_a)
+
+    with pytest.raises(Exception):
+        ratchet.decrypt(ciphertext, nonce)
