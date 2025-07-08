@@ -1087,6 +1087,20 @@ class AccountSettings(Resource):
             else:
                 return {"message": "Current password is incorrect."}, 400
 
+        # Optional per-user retention policy controlling when read messages are
+        # purged. Values outside the 1-365 day range are rejected.
+        retention = data.get("messageRetentionDays")
+        if retention is not None:
+            try:
+                days = int(retention)
+            except (TypeError, ValueError):
+                return {"message": "Invalid retention value."}, 400
+            if days < 1 or days > 365:
+                return {"message": "Retention must be between 1 and 365 days."}, 400
+            if days != user.message_retention_days:
+                user.message_retention_days = days
+                updated = True
+
         if not updated:
             return {"message": "No account changes provided."}, 400
 

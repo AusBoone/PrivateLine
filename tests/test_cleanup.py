@@ -38,3 +38,38 @@ def test_expired_message_cleanup(client):
 
     with app.app_context():
         assert db.session.get(Message, mid) is None
+
+
+def test_read_message_retention(client):
+    """Read messages older than the user's retention should be purged."""
+    reg = register_user(client, "alice")
+    pk = decrypt_private_key(reg)
+    token = login_user(client, "alice").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    b64 = base64.b64encode(b"old").decode()
+    sig = sign_content(pk, b64)
+    resp = client.post(
+        "/api/messages",
+        data={"content": b64, "recipient": "alice", "signature": sig},
+        headers=headers,
+    )
+    mid = resp.get_json()["id"]
+    client.post(f"/api/messages/{mid}/read", headers=headers)
+
+    # Retain read messages for only one day
+    client.put(
+        "/api/account-settings",
+        json={"messageRetentionDays": 1},
+        headers=headers,
+    )
+
+    with app.app_context():
+        msg = db.session.get(Message, mid)
+        msg.timestamp = datetime.utcnow() - timedelta(days=2)
+        db.session.commit()
+
+    clean_expired_messages()
+
+    with app.app_context():
+        assert db.session.get(Message, mid) is None

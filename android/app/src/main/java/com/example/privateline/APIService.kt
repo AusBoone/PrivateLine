@@ -217,6 +217,19 @@ class APIService(private val baseUrl: String) {
         }
     }
 
+    /** Update the user's message retention period. */
+    fun updateRetention(days: Int) {
+        val tok = token ?: return
+        val body = "{\"messageRetentionDays\":$days}"
+        val req = Request.Builder()
+            .url("$baseUrl/api/account-settings")
+            .addHeader("Authorization", "Bearer $tok")
+            .addHeader("Content-Type", "application/json")
+            .put(okhttp3.RequestBody.create(okhttp3.MediaType.parse("application/json"), body))
+            .build()
+        client.newCall(req).execute().close()
+    }
+
     /** Fetch the list of chat groups from the server. */
     fun fetchGroups(): List<Group> {
         val tok = token ?: return emptyList()

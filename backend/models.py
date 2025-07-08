@@ -31,6 +31,11 @@ class User(db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(128), nullable=False)
     public_key_pem = db.Column(db.Text, nullable=False)
+    # Number of days to retain read messages before deletion. Defaults to 30 to
+    # keep recent history while limiting stored personal data.
+    message_retention_days = db.Column(
+        db.Integer, nullable=False, server_default="30"
+    )
 
     @hybrid_property
     def public_key(self):

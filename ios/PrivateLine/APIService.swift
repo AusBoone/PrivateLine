@@ -354,6 +354,17 @@ class APIService: ObservableObject {
         _ = try await session.data(for: request)
     }
 
+    /// Update the user's message retention period in days.
+    func updateRetention(days: Int) async throws {
+        guard let token = token else { throw URLError(.userAuthenticationRequired) }
+        var request = URLRequest(url: baseURL.appendingPathComponent("account-settings"))
+        request.httpMethod = "PUT"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(["messageRetentionDays": days])
+        _ = try await session.data(for: request)
+    }
+
     /// Clear the stored token and authentication state.
     func logout() {
         token = nil

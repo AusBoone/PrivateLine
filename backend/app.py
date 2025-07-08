@@ -147,16 +147,35 @@ scheduler = BackgroundScheduler()
 
 
 def clean_expired_messages() -> None:
-    """Delete messages with an expiration time in the past."""
-    from .models import Message
+    """Remove messages past their expiration or user retention period."""
+    from datetime import timedelta
+    from .models import Message, User
 
     with app.app_context():
+        now = datetime.utcnow()
+
+        # Delete any messages with an explicit expires_at timestamp in the past.
         expired = Message.query.filter(
-            Message.expires_at.is_not(None), Message.expires_at <= datetime.utcnow()
+            Message.expires_at.is_not(None), Message.expires_at <= now
         ).all()
-        if expired:
-            for msg in expired:
+        for msg in expired:
+            db.session.delete(msg)
+
+        # Per-user retention policy: prune read messages older than the user's
+        # configured duration. Each message may be checked multiple times if it
+        # involves multiple users, but deletion is idempotent.
+        users = User.query.all()
+        for user in users:
+            cutoff = now - timedelta(days=user.message_retention_days)
+            old_msgs = Message.query.filter(
+                Message.read.is_(True),
+                Message.timestamp <= cutoff,
+                ((Message.sender_id == user.id) | (Message.recipient_id == user.id)),
+            ).all()
+            for msg in old_msgs:
                 db.session.delete(msg)
+
+        if expired or users:
             db.session.commit()
             from .resources import remove_orphan_files
 

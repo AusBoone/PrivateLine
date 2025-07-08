@@ -11,6 +11,7 @@ function AccountSettings() {
   const [email, setEmail] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [retention, setRetention] = useState('');
   const [error, setError] = useState('');
   const [openSuccess, setOpenSuccess] = useState(false);
 
@@ -23,6 +24,7 @@ function AccountSettings() {
         email,
         currentPassword,
         newPassword,
+        messageRetentionDays: retention ? parseInt(retention, 10) : undefined,
       });
 
       if (response.status === 200) {
@@ -30,6 +32,7 @@ function AccountSettings() {
         setEmail('');
         setCurrentPassword('');
         setNewPassword('');
+        setRetention('');
       } else {
         setError(response.data.message || 'Account update failed');
       }
@@ -71,6 +74,14 @@ function AccountSettings() {
         value={newPassword}
         onChange={(e) => setNewPassword(e.target.value)}
         margin="normal"
+      />
+      <TextField
+        label="Retention days"
+        type="number"
+        value={retention}
+        onChange={(e) => setRetention(e.target.value)}
+        margin="normal"
+        inputProps={{ min: 1, max: 365 }}
       />
       {error && (
         <Typography color="error" sx={{ mt: 1 }}>
