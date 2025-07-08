@@ -73,3 +73,45 @@ def test_sensitive_data_redacted(tmp_path, monkeypatch):
     assert "user@example.com" not in decrypted
     assert "Bearer [REDACTED]" in decrypted
     assert "[REDACTED_EMAIL]" in decrypted
+
+
+def test_no_rotation_when_retention_zero(tmp_path, monkeypatch):
+    """No rotated files should appear when retention is ``0``."""
+
+    log = tmp_path / "app.log"
+    monkeypatch.setenv("LOG_PATH", str(log))
+    monkeypatch.setenv("LOG_RETENTION_DAYS", "0")
+    enc_key = b64encode(os.urandom(32)).decode()
+    monkeypatch.setenv("ENCRYPTED_LOG_KEY", enc_key)
+
+    logging.getLogger().handlers.clear()
+    init_logging()
+    logger = logging.getLogger("test")
+    handler = logging.getLogger().handlers[0]
+
+    logger.info("alpha")
+    handler.doRollover()
+    logger.info("beta")
+
+    rotated = list(log.parent.glob("app.log.*"))
+    assert rotated == []
+
+
+def test_logging_disabled(tmp_path, monkeypatch):
+    """When ``LOGGING_DISABLED`` is true no log file should be written."""
+
+    log = tmp_path / "disabled.log"
+    monkeypatch.setenv("LOG_PATH", str(log))
+    monkeypatch.setenv("LOGGING_DISABLED", "true")
+
+    logging.getLogger().handlers.clear()
+    init_logging()
+
+    logger = logging.getLogger("disabled")
+    logger.info("no output")
+
+    # Re-enable logging for subsequent tests
+    logging.disable(logging.NOTSET)
+    monkeypatch.delenv("LOGGING_DISABLED")
+
+    assert not log.exists()

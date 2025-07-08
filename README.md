@@ -83,8 +83,10 @@ To run the application, follow these steps:
    * Optional `MAX_FILE_SIZE` to override the default 5&nbsp;MB upload limit.
    * Optional `CONTENT_SECURITY_POLICY` to customize the `Content-Security-Policy` header.
    * Optional `HSTS_ENABLED` to enable the `Strict-Transport-Security` header when served over HTTPS.
-   * `ENCRYPTED_LOG_KEY` – base64 encoded 32 byte key to encrypt log files. Use
-     `LOG_PATH` and `LOG_RETENTION_DAYS` to customize location and retention.
+   * `ENCRYPTED_LOG_KEY` – base64 encoded 32 byte key to encrypt log files.
+     Use `LOG_PATH` and `LOG_RETENTION_DAYS` to customize location and
+     retention. A value of `0` disables rotation entirely.
+   * Optional `LOGGING_DISABLED=true` to disable all logging when needed.
 3. Install backend dependencies with `pip install -r requirements.txt`.
 4. Install frontend dependencies with `npm install` inside the `frontend` directory.
 5. Start the backend with `python backend/app.py` and the frontend with `npm start`.
