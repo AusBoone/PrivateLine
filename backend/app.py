@@ -45,6 +45,10 @@ if sentry_dsn:
 
 # Initialize Flask app and extensions
 app = Flask(__name__)
+# Initialize application-wide logging before other components.
+from .logging_config import init_logging
+init_logging()
+
 
 # Configure allowed origins for CORS and WebSocket connections. A comma
 # separated list in the ``CORS_ORIGINS`` environment variable restricts both
