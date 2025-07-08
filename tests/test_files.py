@@ -199,3 +199,32 @@ def test_max_file_size_env(monkeypatch, client):
     )
     assert resp.status_code == 413
 
+
+def test_file_removed_with_message(client):
+    """Uploaded files should be deleted when the only referencing message is removed."""
+    reg = register_user(client, "zoe")
+    pk = decrypt_private_key(reg)
+    token = login_user(client, "zoe").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    fs = FileStorage(stream=io.BytesIO(b"bye"), filename="bye.txt", content_type="text/plain")
+    resp = client.post(
+        "/api/files", data={"file": fs}, headers=headers, content_type="multipart/form-data"
+    )
+    fid = resp.get_json()["file_id"]
+
+    b64 = base64.b64encode(b"msg").decode()
+    sig = sign_content(pk, b64)
+    resp = client.post(
+        "/api/messages",
+        data={"content": b64, "recipient": "zoe", "file_id": fid, "signature": sig},
+        headers=headers,
+    )
+    mid = resp.get_json()["id"]
+
+    resp = client.delete(f"/api/messages/{mid}", headers=headers)
+    assert resp.status_code == 200
+
+    with app.app_context():
+        assert db.session.get(File, fid) is None
+

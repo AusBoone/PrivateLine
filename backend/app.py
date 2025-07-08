@@ -154,6 +154,9 @@ def clean_expired_messages() -> None:
             for msg in expired:
                 db.session.delete(msg)
             db.session.commit()
+            from .resources import remove_orphan_files
+
+            remove_orphan_files()
 
 
 scheduler.add_job(clean_expired_messages, "interval", minutes=1)
