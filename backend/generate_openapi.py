@@ -430,7 +430,12 @@ def build_spec() -> APISpec:
                         "required": True,
                     }
                 ],
-                "responses": {"200": {"description": "File contents"}},
+                "responses": {
+                    "200": {"description": "File contents"},
+                    "404": {
+                        "description": "File not found or download limit reached"
+                    },
+                },
             }
         },
     )

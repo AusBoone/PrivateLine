@@ -142,6 +142,14 @@ class File(db.Model):
     file_retention_days = db.Column(
         db.Integer, nullable=False, server_default=str(FILE_RETENTION_DAYS)
     )
+    # Maximum number of times this file may be downloaded before it is deleted.
+    # The value defaults to ``1`` so attachments are ephemeral unless the value
+    # is increased via a database migration or manual update.
+    max_downloads = db.Column(db.Integer, nullable=False, server_default="1")
+    # Counter tracking how many times the file has been retrieved. ``download_count``
+    # increments on each successful GET request and is compared against
+    # ``max_downloads`` to determine when the file should be removed.
+    download_count = db.Column(db.Integer, nullable=False, server_default="0")
 
 
 class Message(db.Model):

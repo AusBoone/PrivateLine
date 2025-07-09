@@ -677,7 +677,13 @@ function Chat() {
                         a.click();
                         window.URL.revokeObjectURL(url);
                       } catch (err) {
-                        console.error('Download failed', err);
+                        if (err.response && err.response.status === 404) {
+                          // Inform the user when the attachment was deleted
+                          // after reaching its allowed download count.
+                          alert('Attachment is no longer available');
+                        } else {
+                          console.error('Download failed', err);
+                        }
                       }
                     }}
                     style={{ marginLeft: 8 }}
