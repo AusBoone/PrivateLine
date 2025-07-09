@@ -251,6 +251,8 @@ paths:
       responses:
         '200':
           description: File contents
+        '404':
+          description: File not found or download limit reached
   /api/pinned_keys:
     get:
       summary: List pinned keys
@@ -271,9 +273,6 @@ paths:
   /api/account-settings:
     put:
       summary: Update account
-      description: >-
-        Modify the authenticated user's email, password or message retention
-        policy. ``messageRetentionDays`` must be between 1 and 365.
       responses:
         '200':
           description: Updated

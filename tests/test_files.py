@@ -296,3 +296,78 @@ def test_recent_files_preserved(client):
         assert db.session.get(File, fid) is not None
         assert db.session.get(Message, mid).file_id == fid
 
+
+def test_file_deleted_after_single_download(client):
+    """A file with ``max_downloads=1`` should disappear after one retrieval."""
+    reg = register_user(client, "max1")
+    pk = decrypt_private_key(reg)
+    token = login_user(client, "max1").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    fs = FileStorage(stream=io.BytesIO(b"bye"), filename="bye.txt")
+    resp = client.post(
+        "/api/files", data={"file": fs}, headers=headers, content_type="multipart/form-data"
+    )
+    fid = resp.get_json()["file_id"]
+
+    b64 = base64.b64encode(b"x").decode()
+    sig = sign_content(pk, b64)
+    resp = client.post(
+        "/api/messages",
+        data={"content": b64, "recipient": "max1", "file_id": fid, "signature": sig},
+        headers=headers,
+    )
+    mid = resp.get_json()["id"]
+
+    resp = client.get(f"/api/files/{fid}", headers=headers)
+    assert resp.status_code == 200
+
+    with app.app_context():
+        assert db.session.get(File, fid) is None
+        assert db.session.get(Message, mid).file_id is None
+
+    resp = client.get(f"/api/files/{fid}", headers=headers)
+    assert resp.status_code == 404
+
+
+def test_file_deleted_after_custom_download_limit(client):
+    """Files remain until the configured ``max_downloads`` threshold."""
+    reg = register_user(client, "max2")
+    pk = decrypt_private_key(reg)
+    token = login_user(client, "max2").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    fs = FileStorage(stream=io.BytesIO(b"hold"), filename="hold.txt")
+    resp = client.post(
+        "/api/files", data={"file": fs}, headers=headers, content_type="multipart/form-data"
+    )
+    fid = resp.get_json()["file_id"]
+
+    b64 = base64.b64encode(b"msg").decode()
+    sig = sign_content(pk, b64)
+    resp = client.post(
+        "/api/messages",
+        data={"content": b64, "recipient": "max2", "file_id": fid, "signature": sig},
+        headers=headers,
+    )
+    mid = resp.get_json()["id"]
+
+    # Increase allowed downloads to two
+    with app.app_context():
+        rec = db.session.get(File, fid)
+        rec.max_downloads = 2
+        db.session.commit()
+
+    resp = client.get(f"/api/files/{fid}", headers=headers)
+    assert resp.status_code == 200
+    with app.app_context():
+        assert db.session.get(File, fid) is not None
+        assert db.session.get(File, fid).download_count == 1
+
+    resp = client.get(f"/api/files/{fid}", headers=headers)
+    assert resp.status_code == 200
+    with app.app_context():
+        assert db.session.get(File, fid) is None
+        assert db.session.get(Message, mid).file_id is None
+
+

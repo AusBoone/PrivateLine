@@ -737,6 +737,21 @@ class FileDownload(Resource):
         resp.headers.set("Content-Type", f.mimetype)
         fname = secure_filename(f.filename)
         resp.headers.set("Content-Disposition", f"attachment; filename={fname}")
+        # Increment the download counter and determine if the file has reached
+        # its allowed number of downloads. ``max_downloads`` defaults to one so
+        # attachments are removed after the first successful retrieval unless
+        # explicitly overridden.
+        f.download_count += 1
+        reached_limit = f.download_count >= f.max_downloads
+        if reached_limit:
+            # Detach all messages referencing this file to avoid dangling
+            # foreign key references before deleting the record.
+            Message.query.filter_by(file_id=file_id).update({"file_id": None})
+            db.session.delete(f)
+        db.session.commit()
+        if reached_limit:
+            # Clean up any orphaned file records left from other operations.
+            remove_orphan_files()
         return resp
 
 
