@@ -1,4 +1,10 @@
-"""File upload and download tests."""
+"""File upload and download tests.
+
+These tests exercise the REST API endpoints responsible for handling file
+attachments. They verify that uploads are stored correctly, downloads respect
+authorization and retention rules, and that invalid requests fail gracefully.
+Run with ``pytest``.
+"""
 
 import io
 import base64
@@ -11,6 +17,7 @@ from .conftest import register_user, login_user, decrypt_private_key, sign_conte
 
 
 def test_file_upload_download(client):
+    """Uploading then downloading a file should return the original bytes."""
     reg = register_user(client, "alice")
     pk = decrypt_private_key(reg)
     token = login_user(client, "alice").get_json()["access_token"]
@@ -50,6 +57,7 @@ def test_file_upload_download(client):
 
 
 def test_file_download_authorization(client):
+    """Only the sender or recipient should be able to download a file."""
     reg_a = register_user(client, "alice")
     pk_a = decrypt_private_key(reg_a)
     register_user(client, "bob")
@@ -84,6 +92,7 @@ def test_file_download_authorization(client):
 
 
 def test_filename_sanitization(client):
+    """Uploaded filenames should be sanitized to avoid directory traversal."""
     reg = register_user(client, "alice")
     pk = decrypt_private_key(reg)
     token = login_user(client, "alice").get_json()["access_token"]
@@ -157,6 +166,7 @@ def test_invalid_file_field(client):
 
 
 def test_file_upload_too_large(client):
+    """Uploads exceeding the maximum size should yield HTTP 413."""
     register_user(client, "alice")
     token = login_user(client, "alice").get_json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
@@ -264,6 +274,15 @@ def test_old_files_pruned(client):
     with app.app_context():
         assert db.session.get(File, fid) is None
         assert db.session.get(Message, mid).file_id is None
+
+
+def test_file_download_not_found(client):
+    """Requesting a missing file id should yield HTTP 404."""
+    register_user(client, "nina")
+    token = login_user(client, "nina").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = client.get("/api/files/999", headers=headers)
+    assert resp.status_code == 404
 
 
 def test_recent_files_preserved(client):
