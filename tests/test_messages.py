@@ -1,4 +1,9 @@
-"""Direct message functionality tests."""
+"""Direct message functionality tests.
+
+These tests interact with the messaging API endpoints to ensure messages are
+properly encrypted, stored, and deleted. They also confirm that privacy rules
+and unread counts are enforced. Run with ``pytest``.
+"""
 
 import base64
 
@@ -10,6 +15,7 @@ from .conftest import register_user, login_user, decrypt_private_key, sign_conte
 
 
 def test_message_flow(client):
+    """Simple send/receive flow between two users."""
     reg_a = register_user(client, "alice")
     reg_b = register_user(client, "bob")
     pk_b = decrypt_private_key(reg_b)
@@ -41,6 +47,7 @@ def test_message_flow(client):
 
 
 def test_message_privacy(client):
+    """Users should only see messages addressed to them."""
     reg_eve = register_user(client, "eve")
     register_user(client, "mallory")
     register_user(client, "carol")
@@ -71,6 +78,7 @@ def test_message_privacy(client):
 
 
 def test_rsa_message_roundtrip(client):
+    """Messages encrypted with RSA should deliver intact."""
     register_user(client, "alice")
     reg_bob = register_user(client, "bob")
     pk_bob = decrypt_private_key(reg_bob)
@@ -112,6 +120,7 @@ def test_rsa_message_roundtrip(client):
 
 
 def test_send_unknown_recipient(client):
+    """Posting to a nonexistent recipient should return 404."""
     reg = register_user(client, "alice")
     pk = decrypt_private_key(reg)
     token = login_user(client, "alice").get_json()["access_token"]
@@ -127,7 +136,40 @@ def test_send_unknown_recipient(client):
     assert resp.status_code == 404
 
 
+def test_send_invalid_base64_content(client):
+    """Sending malformed base64 should result in HTTP 400."""
+    reg = register_user(client, "mallory")
+    pk = decrypt_private_key(reg)
+    token = login_user(client, "mallory").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    bad_b64 = "!notbase64!"
+    sig = sign_content(pk, bad_b64)
+    resp = client.post(
+        "/api/messages",
+        data={"content": bad_b64, "recipient": "mallory", "signature": sig},
+        headers=headers,
+    )
+    assert resp.status_code == 400
+
+
+def test_send_invalid_signature(client):
+    """A corrupted signature value should be rejected."""
+    reg = register_user(client, "trent")
+    pk = decrypt_private_key(reg)
+    token = login_user(client, "trent").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    msg = base64.b64encode(b"hello").decode()
+    bad_sig = "invalid=="  # Not a valid base64 signature
+    resp = client.post(
+        "/api/messages",
+        data={"content": msg, "recipient": "trent", "signature": bad_sig},
+        headers=headers,
+    )
+    assert resp.status_code == 400
+
+
 def test_message_delete_and_read(client):
+    """Messages can be read, then removed via the delete endpoint."""
     reg = register_user(client, "alice")
     pk = decrypt_private_key(reg)
     token = login_user(client, "alice").get_json()["access_token"]
@@ -190,6 +232,7 @@ def test_delete_on_read_removes_message(client):
 
 
 def test_messages_pagination(client):
+    """The ``limit`` and ``offset`` query parameters page the results."""
     reg_bob = register_user(client, "bob")
     pk_bob = decrypt_private_key(reg_bob)
     register_user(client, "alice")
