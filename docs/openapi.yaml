@@ -180,6 +180,29 @@ paths:
       responses:
         '200':
           description: Key rotated
+  /api/groups/{group_id}/retention:
+    put:
+      summary: Configure group retention
+      parameters:
+      - in: path
+        name: group_id
+        schema:
+          type: integer
+        required: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                retention_days:
+                  type: integer
+              required:
+              - retention_days
+      responses:
+        '200':
+          description: updated
   /api/groups/{group_id}/messages:
     get:
       summary: List group messages
@@ -331,6 +354,29 @@ paths:
       responses:
         '200':
           description: Count returned
+  /api/conversations/{username}/retention:
+    put:
+      summary: Set conversation retention
+      parameters:
+      - in: path
+        name: username
+        schema:
+          type: string
+        required: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                retention_days:
+                  type: integer
+              required:
+              - retention_days
+      responses:
+        '200':
+          description: updated
 info:
   title: PrivateLine API
   version: 1.0.0
@@ -391,6 +437,8 @@ components:
         expires_at:
           type: string
           format: date-time
+        delete_on_read:
+          type: boolean
         signature:
           type: string
       required:
