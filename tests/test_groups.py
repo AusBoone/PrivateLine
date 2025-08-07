@@ -1,9 +1,24 @@
-"""Group chat related tests."""
-import base64
+"""Group chat integration tests.
 
-from backend.app import app, db
-from backend.models import Group, User
-from .conftest import register_user, login_user, decrypt_private_key, sign_content
+These tests exercise group messaging features including member management,
+message retention policies, and access control rules. Each test simulates
+realistic user interactions to verify that the API enforces permissions and
+cleans up state correctly.
+
+Update: expanded coverage to validate group-specific retention cleanup.
+"""
+
+import base64
+from datetime import datetime, timedelta
+
+from backend.app import app, clean_expired_messages, db
+from backend.models import Group, Message, User
+from .conftest import (
+    decrypt_private_key,
+    login_user,
+    register_user,
+    sign_content,
+)
 
 
 def test_group_message_flow(client):
@@ -191,6 +206,60 @@ def test_group_messages_pagination(client):
     assert resp.status_code == 400
     resp = client.get(f'/api/groups/{gid}/messages?offset=-1', headers=headers_b)
     assert resp.status_code == 400
+
+
+def test_group_retention_cleanup(client):
+    """Old read messages respect group-specific retention policies."""
+
+    # Register two users and create a shared group where retention is tested.
+    reg_a = register_user(client, "alice")
+    pk_a = decrypt_private_key(reg_a)
+    register_user(client, "bob")
+
+    token_a = login_user(client, "alice").get_json()["access_token"]
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    resp = client.post("/api/groups", json={"name": "ttl"}, headers=headers_a)
+    gid = resp.get_json()["id"]
+
+    token_b = login_user(client, "bob").get_json()["access_token"]
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+    client.post(
+        f"/api/groups/{gid}/members", json={"username": "bob"}, headers=headers_a
+    )
+
+    # Alice sends a message that Bob reads, marking it as eligible for retention.
+    b64 = base64.b64encode(b"old").decode()
+    sig = sign_content(pk_a, b64)
+    resp = client.post(
+        f"/api/groups/{gid}/messages",
+        data={"content": b64, "signature": sig},
+        headers=headers_a,
+    )
+    mid = resp.get_json()["id"]
+
+    # Reading the message toggles the ``read`` flag so retention applies.
+    resp = client.post(f"/api/messages/{mid}/read", headers=headers_b)
+    assert resp.status_code == 200
+
+    # Configure a one-day retention period for the group.
+    resp = client.put(
+        f"/api/groups/{gid}/retention",
+        json={"retention_days": 1},
+        headers=headers_a,
+    )
+    assert resp.status_code == 200
+
+    # Manipulate timestamp to simulate an old message past the retention.
+    with app.app_context():
+        msg = db.session.get(Message, mid)
+        msg.timestamp = datetime.utcnow() - timedelta(days=2)
+        db.session.commit()
+
+    # Cleanup should remove the message now that it exceeds the TTL.
+    clean_expired_messages()
+
+    with app.app_context():
+        assert db.session.get(Message, mid) is None
 
 
 def test_message_endpoint_group_membership_required(client):
