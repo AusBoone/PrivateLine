@@ -1,9 +1,13 @@
-"""Generate OpenAPI specification for PrivateLine API using apispec.
+"""Generate OpenAPI specification for PrivateLine API using ``apispec``.
 
-This script defines request and response schemas with marshmallow and
-uses apispec to build an OpenAPI 3 specification describing all REST
-endpoints provided by the Flask backend. Running the script writes the
-specification to ``docs/openapi.yaml``.
+This module defines small Marshmallow schemas representing the payloads used by
+the REST API and maps each Flask-RESTful resource to an OpenAPI path. Running
+the script produces ``docs/openapi.yaml`` which is served by the development
+server for interactive documentation.
+
+2024 update: paths for message retention settings were added and the
+``MessageRequest`` schema gained a ``delete_on_read`` flag to document ephemeral
+messages that disappear once read.
 """
 
 import os
@@ -54,6 +58,11 @@ class MessageRequestSchema(Schema):
     # expire and be removed by the server. Clients may hide expired
     # messages locally as well for a consistent experience.
     expires_at = fields.DateTime(required=False)
+    # When true the server deletes the message immediately after it is marked
+    # as read. This mirrors the ``delete_on_read`` flag accepted by the REST
+    # endpoint so clients know that these messages are never persisted beyond
+    # the first read.
+    delete_on_read = fields.Bool(required=False)
     signature = fields.Str(required=True)
 
 
@@ -348,6 +357,36 @@ def build_spec() -> APISpec:
     )
 
     spec.path(
+        path="/api/groups/{group_id}/retention",
+        operations={
+            "put": {
+                "summary": "Configure group retention",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "group_id",
+                        "schema": {"type": "integer"},
+                        "required": True,
+                    }
+                ],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {"retention_days": {"type": "integer"}},
+                                "required": ["retention_days"],
+                            }
+                        }
+                    },
+                },
+                "responses": {"200": {"description": "updated"}},
+            }
+        },
+    )
+
+    spec.path(
         path="/api/groups/{group_id}/messages",
         operations={
             "get": {
@@ -519,6 +558,36 @@ def build_spec() -> APISpec:
                 "summary": "Get unread message count",
                 "description": "Return the number of unread direct and group messages for the authenticated user.",
                 "responses": {"200": {"description": "Count returned"}},
+            }
+        },
+    )
+
+    spec.path(
+        path="/api/conversations/{username}/retention",
+        operations={
+            "put": {
+                "summary": "Set conversation retention",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "username",
+                        "schema": {"type": "string"},
+                        "required": True,
+                    }
+                ],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {"retention_days": {"type": "integer"}},
+                                "required": ["retention_days"],
+                            }
+                        }
+                    },
+                },
+                "responses": {"200": {"description": "updated"}},
             }
         },
     )
