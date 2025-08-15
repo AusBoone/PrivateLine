@@ -183,6 +183,33 @@ def test_file_upload_too_large(client):
     assert resp.status_code == 413
 
 
+def test_content_length_header_enforced(client):
+    """Explicit ``Content-Length`` above the limit should yield HTTP 413."""
+    import backend.resources as res
+
+    register_user(client, "hank")
+    token = login_user(client, "hank").get_json()["access_token"]
+    # Manually craft a multipart request so we can control the Content-Length
+    # header. The payload is ``MAX_FILE_SIZE + 1`` bytes to trigger rejection
+    # before the server attempts to stream the body.
+    boundary = "boundary123"
+    file_bytes = b"x" * (res.MAX_FILE_SIZE + 1)
+    body = (
+        f"--{boundary}\r\n".encode()
+        + b"Content-Disposition: form-data; name=\"file\"; filename=\"big.bin\"\r\n"
+        + b"Content-Type: application/octet-stream\r\n\r\n"
+        + file_bytes
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "Content-Length": str(len(body)),
+    }
+    resp = client.open("/api/files", method="POST", data=body, headers=headers)
+    assert resp.status_code == 413
+
+
 def test_missing_file_field(client):
     """Submitting no file should return HTTP 400."""
     register_user(client, "bob")
