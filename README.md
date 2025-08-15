@@ -312,8 +312,10 @@ being intercepted.
 
 Several areas could further enhance PrivateLine:
 
-- **Forward secrecy**: adopting a double ratchet protocol so message keys
-  rotate frequently would reduce the impact of any single compromised key.
+- **Forward secrecy**: Server-side forward secrecy is already handled by
+  [`backend/ratchet.py`](backend/ratchet.py). Introducing a client-side
+  double ratchet so message keys rotate frequently could further reduce
+  the impact of any single compromised key.
 - **Expanded test coverage**: adding tests for failure modes like file uploads
   and downloads would catch regressions earlier.
 
