@@ -1,7 +1,5 @@
 """Unit tests for the logging configuration."""
 
-"""Unit tests for the encrypted logging configuration."""
-
 import logging
 import os
 from base64 import b64encode, b64decode
