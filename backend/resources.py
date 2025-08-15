@@ -21,6 +21,10 @@ uploads exceeding ``MAX_FILE_SIZE`` as early as possible.
 2025 update: Base64 decoding for stored message ``nonce`` and ``content`` now
 uses strict validation to detect corruption. Invalid records are skipped so a
 single malformed entry cannot break message retrieval.
+
+2025 update: Message creation now validates that any referenced ``file_id``
+belongs to the sender or target group, rejecting mismatched or unauthorized
+attachments before they are persisted.
 """
 
 # 2024 update: Introduced Argon2 password hashing via ``PasswordHasher`` and
@@ -48,6 +52,7 @@ from cryptography.exceptions import InvalidSignature
 from base64 import b64encode, b64decode
 import binascii
 import os
+from typing import Optional, Tuple
 from .models import User, Message, PinnedKey, PushToken
 from .models import Group, GroupMember, File, ConversationRetention
 from .ratchet import get_ratchet
@@ -126,6 +131,40 @@ message_parser.add_argument(
     location="form",
     type=inputs.boolean,
 )
+
+
+def validate_file_ownership(
+    sender_id: int, group_id: Optional[int], file_id: int
+) -> Tuple[bool, dict, int]:
+    """Ensure ``file_id`` exists and is tied to ``sender_id`` or ``group_id``.
+
+    The server treats uploaded files as unowned until a message references
+    them.  Once attached, subsequent messages may only reuse the file when the
+    original sender (for direct chats) or the same group references it.  This
+    helper enforces that policy by checking existing ``Message`` rows
+    referencing the file.  A tuple of ``(bool, dict, int)`` is returned where
+    the boolean indicates success and the dict/int pair represent an error
+    response when validation fails.
+    """
+
+    record = db.session.get(File, file_id)
+    if not record:
+        # Client supplied a non-existent ``file_id``
+        return False, {"message": "Invalid file id."}, 400
+
+    references = Message.query.filter_by(file_id=file_id).all()
+    for msg in references:
+        if group_id is not None:
+            # Group attachments must only appear in the same group
+            if msg.group_id != group_id:
+                return False, {"message": "Forbidden"}, 403
+        else:
+            # Direct messages require the same sender and must not have been
+            # attached to a group conversation previously
+            if msg.sender_id != sender_id or msg.group_id is not None:
+                return False, {"message": "Forbidden"}, 403
+
+    return True, {}, 200
 
 # --- Retention helpers ------------------------------------------------------
 
@@ -659,6 +698,21 @@ class GroupMessages(Resource):
             )
         except InvalidSignature:
             return {"message": "Signature verification failed."}, 400
+
+        # Validate file ownership when a ``file_id`` is supplied. A mismatched
+        # or nonexistent file results in an error response before any
+        # encryption work takes place.
+        file_id_raw = data.get("file_id")
+        if file_id_raw is not None:
+            try:
+                file_id = int(file_id_raw)
+            except ValueError:
+                return {"message": "Invalid file id."}, 400
+            ok, err, code = validate_file_ownership(uid, group_id, file_id)
+            if not ok:
+                return err, code
+        else:
+            file_id = None
         # Apply the server-side double ratchet so the stored ciphertext is
         # protected even if the database is compromised. Each message uses a
         # unique key derived from the conversation state.
@@ -670,6 +724,7 @@ class GroupMessages(Resource):
             user_id=uid,
             sender_id=uid,
             group_id=group_id,
+            file_id=file_id,
             signature=data["signature"],
             expires_at=(
                 datetime.fromisoformat(data["expires_at"])
@@ -682,7 +737,12 @@ class GroupMessages(Resource):
         db.session.commit()
         socketio.emit(
             "new_message",
-            {"id": m.id, "content": data["content"], "group_id": group_id},
+            {
+                "id": m.id,
+                "content": data["content"],
+                "group_id": group_id,
+                "file_id": file_id,
+            },
             to=str(group_id),
         )
         return {"message": "sent", "id": m.id}, 201
@@ -954,6 +1014,20 @@ class Messages(Resource):
         except InvalidSignature:
             return {"message": "Signature verification failed."}, 400
 
+        # Confirm referenced file exists and belongs to the sender or group.
+        # This guards against attaching arbitrary ``file_id`` values.
+        file_id_raw = data.get("file_id")
+        if file_id_raw is not None:
+            try:
+                file_id = int(file_id_raw)
+            except ValueError:
+                return {"message": "Invalid file id."}, 400
+            ok, err, code = validate_file_ownership(uid, gid, file_id)
+            if not ok:
+                return err, code
+        else:
+            file_id = None
+
         # Encrypt the user-supplied ciphertext using the double ratchet tied to
         # this sender/recipient pair (or group). The ratchet's encrypt method
         # returns both the ciphertext and nonce needed for decryption.
@@ -971,7 +1045,7 @@ class Messages(Resource):
             sender_id=current_user_id,
             recipient_id=recipient.id if recipient else None,
             group_id=gid,
-            file_id=data.get("file_id"),
+            file_id=file_id,
             signature=data["signature"],
             expires_at=(
                 datetime.fromisoformat(data["expires_at"])
@@ -997,7 +1071,7 @@ class Messages(Resource):
                     "content": data["content"],
                     "sender_id": current_user_id,
                     "recipient_id": recipient.id,
-                    "file_id": data.get("file_id"),
+                    "file_id": file_id,
                 },
                 to=str(recipient.id),
             )
@@ -1010,7 +1084,7 @@ class Messages(Resource):
                     "content": data["content"],
                     "sender_id": current_user_id,
                     "group_id": gid,
-                    "file_id": data.get("file_id"),
+                    "file_id": file_id,
                 },
                 to=str(gid),
             )
