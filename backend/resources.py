@@ -12,6 +12,11 @@ original MIME type of uploaded files so downloads return the correct
 remain unique when changed via the settings endpoint to prevent database
 integrity errors. Passwords are hashed with Argon2 while still accepting legacy
 PBKDF2 hashes for seamless upgrades.
+
+2025 update: File uploads now inspect the request ``Content-Length`` and stream
+data in chunks so oversized payloads are rejected before fully loading into
+memory. This guards against memory exhaustion attacks and ensures we abort
+uploads exceeding ``MAX_FILE_SIZE`` as early as possible.
 """
 
 # 2024 update: Introduced Argon2 password hashing via ``PasswordHasher`` and
@@ -673,13 +678,36 @@ class FileUpload(Resource):
 
     @jwt_required()
     def post(self):
-        """Persist an uploaded file encrypted with AES-GCM."""
+        """Persist an uploaded file encrypted with AES-GCM.
+
+        The implementation validates the request's ``Content-Length`` header and
+        streams the file in manageable chunks. This prevents a client from
+        exhausting server memory by advertising a small upload while streaming
+        unbounded data. Chunks are concatenated only after confirming the total
+        size does not exceed ``MAX_FILE_SIZE``.
+        """
+
+        # Ensure a file part was provided before performing any expensive work.
         if "file" not in request.files:
             return {"message": "file required"}, 400
-        f = request.files["file"]
-        data = f.read()
-        if len(data) > MAX_FILE_SIZE:
+
+        # Reject early when the client announces a body larger than allowed.
+        if request.content_length and request.content_length > MAX_FILE_SIZE:
             return {"message": "file too large"}, 413
+
+        f = request.files["file"]
+
+        # Read the stream incrementally so uploads exceeding the limit are
+        # detected without buffering the entire payload in memory.
+        data_chunks = []
+        total = 0
+        for chunk in iter(lambda: f.stream.read(4096), b""):
+            total += len(chunk)
+            if total > MAX_FILE_SIZE:
+                return {"message": "file too large"}, 413
+            data_chunks.append(chunk)
+        data = b"".join(data_chunks)
+
         sanitized = secure_filename(f.filename)
         nonce = os.urandom(12)
         # Encrypt the raw bytes using the server's symmetric key before writing
