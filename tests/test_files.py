@@ -417,3 +417,50 @@ def test_file_deleted_after_custom_download_limit(client):
         assert db.session.get(Message, mid).file_id is None
 
 
+def test_unauthorized_file_id_rejected(client):
+    """Reusing another user's file ID should yield HTTP 403."""
+
+    # Alice uploads a file and sends it to Bob so the file becomes associated
+    # with her account.
+    reg_a = register_user(client, "alice")
+    pk_a = decrypt_private_key(reg_a)
+    register_user(client, "bob")
+    reg_c = register_user(client, "carol")
+    pk_c = decrypt_private_key(reg_c)
+
+    token_a = login_user(client, "alice").get_json()["access_token"]
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    token_c = login_user(client, "carol").get_json()["access_token"]
+    headers_c = {"Authorization": f"Bearer {token_c}"}
+
+    fs = FileStorage(stream=io.BytesIO(b"steal"), filename="steal.txt")
+    resp = client.post(
+        "/api/files",
+        data={"file": fs},
+        headers=headers_a,
+        content_type="multipart/form-data",
+    )
+    fid = resp.get_json()["file_id"]
+
+    b64 = base64.b64encode(b"hi").decode()
+    sig_a = sign_content(pk_a, b64)
+    client.post(
+        "/api/messages",
+        data={"content": b64, "recipient": "bob", "file_id": fid, "signature": sig_a},
+        headers=headers_a,
+    )
+
+    b64_c = base64.b64encode(b"hack").decode()
+    sig_c = sign_content(pk_c, b64_c)
+    resp = client.post(
+        "/api/messages",
+        data={"content": b64_c, "recipient": "alice", "file_id": fid, "signature": sig_c},
+        headers=headers_c,
+    )
+    assert resp.status_code == 403
+
+    # Only Alice's message should exist; Carol's attempt is rejected.
+    with app.app_context():
+        assert Message.query.count() == 1
+
+
