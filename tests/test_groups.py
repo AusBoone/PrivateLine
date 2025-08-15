@@ -275,3 +275,40 @@ def test_message_endpoint_group_membership_required(client):
     sig = sign_content(decrypt_private_key(reg_bob), b64)
     resp = client.post('/api/messages', data={'content': b64, 'group_id': gid, 'signature': sig}, headers=headers_b)
     assert resp.status_code == 403
+
+
+def test_group_skip_corrupt_base64_records(client):
+    """Retrieving group messages skips entries with invalid base64 data.
+
+    The database is manually populated with a malformed message to emulate
+    corruption in the stored ``nonce`` and ``content`` fields. The endpoint
+    should return an empty list yet respond with HTTP 200, demonstrating that
+    corrupted records are ignored rather than causing failures.
+    """
+    reg_a = register_user(client, 'alice')
+    register_user(client, 'bob')
+    token_a = login_user(client, 'alice').get_json()['access_token']
+    headers_a = {'Authorization': f'Bearer {token_a}'}
+    resp = client.post('/api/groups', json={'name': 'corrupt'}, headers=headers_a)
+    gid = resp.get_json()['id']
+    token_b = login_user(client, 'bob').get_json()['access_token']
+    headers_b = {'Authorization': f'Bearer {token_b}'}
+    client.post(f'/api/groups/{gid}/members', json={'username': 'bob'}, headers=headers_a)
+
+    # Insert an intentionally corrupted message directly into the database.
+    with app.app_context():
+        user_a = User.query.filter_by(username='alice').first()
+        corrupted = Message(
+            content='@@@',  # Invalid base64 content
+            nonce='@@@',
+            user_id=user_a.id,
+            sender_id=user_a.id,
+            group_id=gid,
+            signature=base64.b64encode(b'sig').decode(),
+        )
+        db.session.add(corrupted)
+        db.session.commit()
+
+    resp = client.get(f'/api/groups/{gid}/messages', headers=headers_b)
+    assert resp.status_code == 200
+    assert resp.get_json()['messages'] == []

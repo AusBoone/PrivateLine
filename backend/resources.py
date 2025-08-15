@@ -17,6 +17,10 @@ PBKDF2 hashes for seamless upgrades.
 data in chunks so oversized payloads are rejected before fully loading into
 memory. This guards against memory exhaustion attacks and ensures we abort
 uploads exceeding ``MAX_FILE_SIZE`` as early as possible.
+
+2025 update: Base64 decoding for stored message ``nonce`` and ``content`` now
+uses strict validation to detect corruption. Invalid records are skipped so a
+single malformed entry cannot break message retrieval.
 """
 
 # 2024 update: Introduced Argon2 password hashing via ``PasswordHasher`` and
@@ -573,8 +577,19 @@ class GroupMessages(Resource):
         slice_end = len(all_msgs) - offset
         result = []
         for idx, msg in enumerate(all_msgs):
-            nonce = b64decode(msg.nonce)
-            ciphertext = b64decode(msg.content)
+            # Decode the base64-encoded nonce and ciphertext. ``validate=True``
+            # causes ``b64decode`` to raise ``binascii.Error`` if the stored
+            # value contains non-base64 characters, allowing us to detect
+            # database corruption. Corrupted records are skipped so that a
+            # single bad message does not break retrieval for the entire group.
+            try:
+                nonce = b64decode(msg.nonce, validate=True)
+                ciphertext = b64decode(msg.content, validate=True)
+            except binascii.Error:
+                app.logger.warning(
+                    "Skipping message %s with invalid base64 content", msg.id
+                )
+                continue
             # Each group is treated as a unique conversation for the ratchet.
             ratchet = get_ratchet(str(msg.sender_id), f"group:{group_id}")
             plaintext_bytes = ratchet.decrypt(ciphertext, nonce)
@@ -838,8 +853,17 @@ class Messages(Resource):
         slice_end = len(all_msgs) - offset
         message_list = []
         for idx, msg in enumerate(all_msgs):
-            nonce = b64decode(msg.nonce)
-            ciphertext = b64decode(msg.content)
+            # Strictly decode nonce and ciphertext. Invalid base64 indicates
+            # tampering or data corruption. Such messages are skipped so that
+            # clients still receive any remaining valid entries.
+            try:
+                nonce = b64decode(msg.nonce, validate=True)
+                ciphertext = b64decode(msg.content, validate=True)
+            except binascii.Error:
+                app.logger.warning(
+                    "Skipping message %s with invalid base64 content", msg.id
+                )
+                continue
             recipient_ref = (
                 f"group:{msg.group_id}"
                 if msg.group_id is not None

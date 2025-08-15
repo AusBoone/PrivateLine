@@ -168,6 +168,40 @@ def test_send_invalid_signature(client):
     assert resp.status_code == 400
 
 
+def test_skip_corrupt_base64_records(client):
+    """Corrupted database entries should be skipped during retrieval.
+
+    This test manually inserts a message with invalid base64-encoded ``nonce``
+    and ``content`` into the database. The API should detect the malformed
+    values and omit the record rather than raising an error or returning it to
+    the client.
+    """
+    # Register a user and authenticate to perform message retrieval.
+    reg = register_user(client, "alice")
+    token = login_user(client, "alice").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Directly insert a malformed message into the database to simulate a
+    # corrupted row that bypassed API validation.
+    with app.app_context():
+        user = User.query.filter_by(username="alice").first()
+        corrupted = Message(
+            content="@@@",  # Not valid base64 -> decoding should fail.
+            nonce="@@@",
+            user_id=user.id,
+            sender_id=user.id,
+            recipient_id=user.id,
+            signature=base64.b64encode(b"sig").decode(),
+        )
+        db.session.add(corrupted)
+        db.session.commit()
+
+    # Retrieval should return an empty list and not crash the server.
+    resp = client.get("/api/messages", headers=headers)
+    assert resp.status_code == 200
+    assert resp.get_json()["messages"] == []
+
+
 def test_message_delete_and_read(client):
     """Messages can be read, then removed via the delete endpoint."""
     reg = register_user(client, "alice")
