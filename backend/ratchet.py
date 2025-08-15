@@ -11,14 +11,25 @@ The encrypted payload stored in the database consists of the random header
 followed by the ciphertext. The associated nonce is stored separately. Clients
 never interact with this ratchet directly; it protects the ciphertext sent from
 the client to the server.
+
+Concurrency
+-----------
+Requests processed by the web server may access ratchets simultaneously.  To
+prevent race conditions, the global store used by :func:`get_ratchet` and the
+per-conversation cache inside :class:`RatchetStore` employ threading locks.  A
+single store instance is created lazily and reused for all requests, while each
+conversation pair obtains exactly one :class:`DoubleRatchet` instance.
+
+# 2025 update: Introduced synchronization around store creation and lookup to
+# ensure thread-safe behaviour under parallel requests.
 """
 
 from __future__ import annotations
 
 import os
-from base64 import b64encode, b64decode
 from dataclasses import dataclass
 from hashlib import sha256
+from threading import Lock
 from typing import Dict, Tuple
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -70,11 +81,20 @@ class DoubleRatchet:
 
 
 class RatchetStore:
-    """In-memory collection of ratchets keyed by sender and receiver."""
+    """In-memory collection of ratchets keyed by sender and receiver.
+
+    The store caches a :class:`DoubleRatchet` for every conversation pair.  A
+    lock protects the underlying dictionary so multiple threads can request
+    ratchets concurrently without creating duplicate entries.
+    """
 
     def __init__(self, master_key: bytes):
+        # Master key from which per-conversation ratchets are derived.
         self.master_key = master_key
+        # Mapping of (sender, receiver) -> DoubleRatchet instances.
         self._store: Dict[Tuple[str, str], DoubleRatchet] = {}
+        # Lock guarding access to ``_store`` for thread-safe lookups.
+        self._lock = Lock()
 
     def _initial_root(self, a: str, b: str) -> bytes:
         """Derive a deterministic root key for the conversation."""
@@ -89,23 +109,49 @@ class RatchetStore:
         return hkdf.derive(self.master_key)
 
     def get(self, sender: str, receiver: str) -> DoubleRatchet:
-        """Return the ratchet used when ``sender`` sends to ``receiver``."""
+        """Return the ratchet used when ``sender`` sends to ``receiver``.
+
+        The lookup uses "double-checked locking" so threads only acquire
+        ``_lock`` when a ratchet is missing.  This minimizes contention while
+        still ensuring that exactly one :class:`DoubleRatchet` is created per
+        sender/receiver pair.
+        """
         key = (sender, receiver)
-        if key not in self._store:
-            self._store[key] = DoubleRatchet(self._initial_root(*key))
-        return self._store[key]
+        ratchet = self._store.get(key)
+        if ratchet is None:
+            # Two threads may race to create the same ratchet; lock and check
+            # again to ensure only one instance is stored.
+            with self._lock:
+                ratchet = self._store.get(key)
+                if ratchet is None:
+                    ratchet = DoubleRatchet(self._initial_root(*key))
+                    self._store[key] = ratchet
+        return ratchet
 
 
 # Global store used by resources. The AES_KEY constant is imported lazily to
 # avoid circular imports during application startup.
 _store: RatchetStore | None = None
+# Lock guarding creation of the module-level store.  This ensures concurrent
+# calls to :func:`get_ratchet` do not race to create separate instances.
+_store_lock = Lock()
 
 
 def get_ratchet(sender: str, receiver: str) -> DoubleRatchet:
-    """Return the :class:`DoubleRatchet` for ``sender`` -> ``receiver``."""
+    """Return the :class:`DoubleRatchet` for ``sender`` -> ``receiver``.
+
+    The global store is created lazily and protected by ``_store_lock`` so that
+    multiple concurrent requests do not instantiate separate stores.  Once
+    initialised, lookups are delegated to :class:`RatchetStore`, which performs
+    its own synchronization.
+    """
     global _store
     if _store is None:
-        from .resources import AES_KEY  # type: ignore
+        # Double-checked locking: avoid taking the lock on the common fast path
+        # but ensure only one store is created across threads.
+        with _store_lock:
+            if _store is None:
+                from .resources import AES_KEY  # type: ignore
 
-        _store = RatchetStore(AES_KEY)
+                _store = RatchetStore(AES_KEY)
     return _store.get(sender, receiver)
