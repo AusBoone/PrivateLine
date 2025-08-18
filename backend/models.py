@@ -5,6 +5,9 @@ Recent updates add support for per-conversation message retention. Groups may
 specify ``retention_days`` while direct chats store a per-recipient policy in
 ``ConversationRetention``. Scheduled tasks in :mod:`app` rely on these values to
 purge old messages.
+
+2027 update: :class:`File` now tracks ``uploader_id`` so attachments cannot be
+reused by unauthorized users before a message claims them.
 """
 
 from .app import db
@@ -150,6 +153,10 @@ class File(db.Model):
     # increments on each successful GET request and is compared against
     # ``max_downloads`` to determine when the file should be removed.
     download_count = db.Column(db.Integer, nullable=False, server_default="0")
+    # ``uploader_id`` records the user who originally uploaded the file so that
+    # ownership can be enforced before any message references exist. The value
+    # is always set by :class:`~backend.resources.FileUpload` during upload.
+    uploader_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
 
 
 class Message(db.Model):
