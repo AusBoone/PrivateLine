@@ -1,4 +1,10 @@
-"""Push notification helper tests."""
+"""Push notification helper tests.
+
+This suite validates encryption handling for push notification tokens including
+legacy plaintext storage and corrupted ciphertext.
+"""
+
+from base64 import b64decode, b64encode
 
 import backend.resources as res
 from backend.models import PushToken
@@ -10,6 +16,22 @@ def test_push_token_encryption_roundtrip():
     enc = PushToken.encrypt_value(plaintext)
     assert plaintext == PushToken.decrypt_value(enc)
     assert enc != plaintext
+
+
+def test_push_token_legacy_plaintext():
+    """Legacy plaintext values are returned unchanged."""
+    pt = PushToken(token_ciphertext="legacy", user_id=1, platform="web")
+    assert pt.token == "legacy"
+
+
+def test_push_token_corrupted_data():
+    """Corrupted ciphertext falls back to the stored base64 string."""
+    good = PushToken.encrypt_value("abc")
+    raw = bytearray(b64decode(good))
+    raw[-1] ^= 1  # Flip a bit to invalidate the auth tag
+    corrupted = b64encode(raw).decode()
+    pt = PushToken(token_ciphertext=corrupted, user_id=1, platform="web")
+    assert pt.token == corrupted
 
 
 def test_fcm_request(monkeypatch):

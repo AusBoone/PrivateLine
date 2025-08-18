@@ -8,6 +8,8 @@ purge old messages.
 
 2027 update: :class:`File` now tracks ``uploader_id`` so attachments cannot be
 reused by unauthorized users before a message claims them.
+2029 update: :class:`PushToken.token` gracefully handles legacy plaintext
+entries and logs unexpected decryption failures.
 """
 
 from .app import db
@@ -17,10 +19,14 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from cryptography.hazmat.backends import default_backend
+import logging
+import os
 from base64 import b64encode, b64decode
+from binascii import Error as BinasciiError
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from hashlib import sha256
-import os
+from sqlalchemy.orm.attributes import InstrumentedAttribute
 
 # AES-256 key used to encrypt push notification tokens. It mirrors the
 # ``AES_KEY`` defined in :mod:`backend.resources` so encrypted values remain
@@ -245,12 +251,50 @@ class PushToken(db.Model):
 
     @hybrid_property
     def token(self) -> str:
-        """Plaintext push token."""
+        """Plaintext push token.
+
+        The database column ``token_ciphertext`` stores the push identifier in
+        one of two formats:
+
+        * **Encrypted, base64 encoded** – the modern format consisting of a
+          12-byte nonce followed by AES-GCM ciphertext. These values are
+          decrypted transparently.
+        * **Legacy plaintext** – older rows stored the token directly without
+          encryption. These values are returned unchanged to preserve backward
+          compatibility.
+
+        Corrupted or tampered encrypted values that fail decryption likewise
+        fall back to the raw stored string. Unexpected errors are logged for
+        diagnostic purposes.
+        """
+
+        data = self.token_ciphertext
+
+        # When accessed on the class (e.g., inside queries) ``data`` is an
+        # ``InstrumentedAttribute`` representing the underlying column. In this
+        # context we simply return the column object so SQLAlchemy can build the
+        # appropriate SQL expression.
+        if isinstance(data, InstrumentedAttribute):
+            return data
+
+        # Detect legacy plaintext rows by validating and decoding the base64
+        # representation first. ``validate=True`` rejects non-base64 characters
+        # so plaintext tokens fall through to the ``except`` block below.
         try:
-            return self.decrypt_value(self.token_ciphertext)
-        except Exception:
-            # Backward compatibility for unencrypted rows
-            return self.token_ciphertext
+            raw = b64decode(data, validate=True)
+        except BinasciiError:
+            return data
+
+        # Decrypt the base64 decoded value. The first 12 bytes store the nonce
+        # followed by the AES-GCM ciphertext.
+        try:
+            nonce, ct = raw[:12], raw[12:]
+            return _aesgcm.decrypt(nonce, ct, None).decode()
+        except InvalidTag:
+            return data
+        except Exception:  # Unexpected failure: log and return stored value
+            logging.exception("Unexpected error decrypting push token")
+            return data
 
     @token.setter
     def token(self, value: str) -> None:
