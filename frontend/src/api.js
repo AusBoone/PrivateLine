@@ -8,6 +8,11 @@ import Cookies from 'js-cookie';
  * For state-changing operations the backend expects the CSRF token stored in
  * the ``csrf_access_token`` cookie to be provided via the ``X-CSRF-TOKEN``
  * header. An interceptor automatically attaches this header when present.
+ *
+ * Modification summary:
+ * - The request interceptor now defensively initializes ``config.headers``
+ *   so that requests lacking a headers object do not throw when the CSRF
+ *   token is attached.
  */
 
 // Axios instance used throughout the React app. ``withCredentials`` ensures
@@ -21,6 +26,13 @@ const api = axios.create({
 // satisfies Flask-JWT-Extended's CSRF double submit check.
 api.interceptors.request.use((config) => {
   const csrf = Cookies.get('csrf_access_token');
+
+  // Axios may supply a config without a ``headers`` object (e.g., simple GET
+  // requests). Initialize it so setting the CSRF header does not attempt to
+  // assign to ``undefined`` which would raise a TypeError.
+  // eslint-disable-next-line no-param-reassign
+  config.headers = config.headers || {};
+
   if (csrf) {
     // eslint-disable-next-line no-param-reassign
     config.headers['X-CSRF-TOKEN'] = csrf;
