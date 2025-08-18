@@ -25,6 +25,9 @@ single malformed entry cannot break message retrieval.
 2025 update: Message creation now validates that any referenced ``file_id``
 belongs to the sender or target group, rejecting mismatched or unauthorized
 attachments before they are persisted.
+2026 update: ``verify_password`` now guards against malformed legacy hashes by
+catching both ``TypeError`` and ``ValueError`` from ``check_password_hash`` so
+unexpected inputs simply cause authentication to fail rather than error.
 """
 
 # 2024 update: Introduced Argon2 password hashing via ``PasswordHasher`` and
@@ -99,18 +102,32 @@ def verify_password(stored_hash: str, candidate: str) -> bool:
 
     The function first attempts verification using Argon2. If ``stored_hash``
     contains an unsupported format, the legacy PBKDF2 check from Werkzeug is
-    used for backward compatibility.
+    used for backward compatibility. Any error encountered during either
+    verification method results in ``False`` to prevent exception leakage.
     """
 
     try:
         return password_hasher.verify(stored_hash, candidate)
     except VerifyMismatchError:
+        # The provided password is definitively incorrect
         return False
     except InvalidHash:
+        # ``stored_hash`` is not a valid Argon2 digest; fall back to Werkzeug's
+        # PBKDF2 helper used by older accounts.
         try:
             return check_password_hash(stored_hash, candidate)
-        except TypeError:
+        except (TypeError, ValueError):
+            # Werkzeug raises ``TypeError`` when ``candidate`` is not a string
+            # and ``ValueError`` for malformed hashes. In both cases we treat
+            # the password as invalid instead of bubbling up the error.
             return False
+        except Exception:
+            # Defensive catch-all for any other unexpected issues during
+            # legacy verification.
+            return False
+    except Exception:
+        # Any other exception from Argon2 verification indicates failure.
+        return False
 
 
 # Request parser for messages

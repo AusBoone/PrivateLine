@@ -1,10 +1,17 @@
-"""Authentication and account management tests for PrivateLine."""
+"""Authentication and account management tests for PrivateLine.
+
+These tests cover typical user flows (registration, login, account updates) and
+edge cases around password verification to ensure the authentication layer
+gracefully handles malformed inputs.
+"""
 
 import base64
 import io
 
 from backend.app import app
 from backend.models import User, PushToken
+from backend.resources import verify_password
+from werkzeug.security import generate_password_hash
 from .conftest import (
     register_user,
     login_user,
@@ -365,6 +372,22 @@ def test_legacy_pbkdf2_login(client):
     resp = client.post("/api/login", json={"username": "legacy", "password": "secret"})
     assert resp.status_code == 200
     assert "access_token" in resp.get_json()
+
+
+def test_verify_password_type_error_returns_false():
+    """Non-string password candidates should not raise errors."""
+    # Generate a legacy PBKDF2 hash and pass ``None`` as the candidate to
+    # trigger the TypeError path in ``check_password_hash``.
+    stored_hash = generate_password_hash("secret", method="pbkdf2:sha256")
+    assert verify_password(stored_hash, None) is False
+
+
+def test_verify_password_value_error_returns_false():
+    """Malformed PBKDF2 hashes should be treated as invalid passwords."""
+    # ``bad_hash`` lacks the required segments so ``check_password_hash`` would
+    # raise ``ValueError`` without our protective catch.
+    bad_hash = "pbkdf2:sha256:260000$"
+    assert verify_password(bad_hash, "secret") is False
 
 
 def _get_csrf_token(resp):
