@@ -3,7 +3,8 @@
 These tests exercise the REST API endpoints responsible for handling file
 attachments. They verify that uploads are stored correctly, downloads respect
 authorization and retention rules, and that invalid requests fail gracefully.
-Run with ``pytest``.
+Recent additions cover ownership semantics, ensuring only rightful uploaders or
+conversation participants may reuse files. Run with ``pytest``.
 """
 
 import io
@@ -462,5 +463,100 @@ def test_unauthorized_file_id_rejected(client):
     # Only Alice's message should exist; Carol's attempt is rejected.
     with app.app_context():
         assert Message.query.count() == 1
+
+
+def test_first_attachment_requires_uploader(client):
+    """Non-uploaders cannot attach an unreferenced file in direct messages."""
+
+    # Alice uploads a file but does not yet reference it in a message.
+    register_user(client, "alice")
+    register_user(client, "bob")
+    pk_b = decrypt_private_key(reg_b)
+
+    token_a = login_user(client, "alice").get_json()["access_token"]
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    fs = FileStorage(stream=io.BytesIO(b"oops"), filename="oops.txt")
+    resp = client.post(
+        "/api/files",
+        data={"file": fs},
+        headers=headers_a,
+        content_type="multipart/form-data",
+    )
+    fid = resp.get_json()["file_id"]
+
+    token_b = login_user(client, "bob").get_json()["access_token"]
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+    b64 = base64.b64encode(b"hi").decode()
+    sig = sign_content(pk_b, b64)
+    resp = client.post(
+        "/api/messages",
+        data={"content": b64, "recipient": "alice", "file_id": fid, "signature": sig},
+        headers=headers_b,
+    )
+    assert resp.status_code == 403
+
+
+def test_group_attachment_requires_uploader_membership(client):
+    """Group messages may reference a file only if the uploader is a member."""
+
+    reg_a = register_user(client, "alice")
+    reg_b = register_user(client, "bob")
+    pk_b = decrypt_private_key(reg_b)
+
+    token_a = login_user(client, "alice").get_json()["access_token"]
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    token_b = login_user(client, "bob").get_json()["access_token"]
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+
+    # Bob creates a group without adding Alice.
+    resp = client.post("/api/groups", json={"name": "solo"}, headers=headers_b)
+    gid = resp.get_json()["id"]
+
+    # Alice uploads a file not yet referenced by any message.
+    fs = FileStorage(stream=io.BytesIO(b"grp"), filename="grp.txt")
+    resp = client.post(
+        "/api/files",
+        data={"file": fs},
+        headers=headers_a,
+        content_type="multipart/form-data",
+    )
+    fid = resp.get_json()["file_id"]
+
+    b64 = base64.b64encode(b"hi").decode()
+    sig = sign_content(pk_b, b64)
+    resp = client.post(
+        f"/api/groups/{gid}/messages",
+        data={"content": b64, "signature": sig, "file_id": fid},
+        headers=headers_b,
+    )
+    assert resp.status_code == 403
+
+
+def test_uploader_can_download_unattached_file(client):
+    """Original uploader may fetch a file before it appears in any message."""
+
+    register_user(client, "alice")
+    register_user(client, "bob")
+    token_a = login_user(client, "alice").get_json()["access_token"]
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    token_b = login_user(client, "bob").get_json()["access_token"]
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+    fs = FileStorage(stream=io.BytesIO(b"raw"), filename="raw.txt")
+    resp = client.post(
+        "/api/files",
+        data={"file": fs},
+        headers=headers_a,
+        content_type="multipart/form-data",
+    )
+    fid = resp.get_json()["file_id"]
+
+    # Non-uploader should be denied even though the file has no references yet.
+    resp = client.get(f"/api/files/{fid}", headers=headers_b)
+    assert resp.status_code == 403
+
+    # Uploader should be able to download once.
+    resp = client.get(f"/api/files/{fid}", headers=headers_a)
+    assert resp.status_code == 200
+    assert resp.data == b"raw"
 
 

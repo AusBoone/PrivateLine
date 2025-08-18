@@ -28,6 +28,9 @@ attachments before they are persisted.
 2026 update: ``verify_password`` now guards against malformed legacy hashes by
 catching both ``TypeError`` and ``ValueError`` from ``check_password_hash`` so
 unexpected inputs simply cause authentication to fail rather than error.
+2027 update: File uploads now record ``uploader_id`` and downloads permit
+original uploaders to retrieve unreferenced files. ``validate_file_ownership``
+uses this information to block unauthorized reuse of attachments.
 """
 
 # 2024 update: Introduced Argon2 password hashing via ``PasswordHasher`` and
@@ -155,13 +158,13 @@ def validate_file_ownership(
 ) -> Tuple[bool, dict, int]:
     """Ensure ``file_id`` exists and is tied to ``sender_id`` or ``group_id``.
 
-    The server treats uploaded files as unowned until a message references
-    them.  Once attached, subsequent messages may only reuse the file when the
-    original sender (for direct chats) or the same group references it.  This
-    helper enforces that policy by checking existing ``Message`` rows
-    referencing the file.  A tuple of ``(bool, dict, int)`` is returned where
-    the boolean indicates success and the dict/int pair represent an error
-    response when validation fails.
+    The server now records an ``uploader_id`` with each :class:`File`. Before a
+    file is first attached to a message, only the original uploader may send it
+    directly and group attachments require that the uploader belong to the
+    target group. After a file has been referenced, reuse is limited to the
+    original sender (for direct chats) or the same group. A tuple of
+    ``(bool, dict, int)`` is returned where the boolean indicates success and
+    the dict/int pair represent an error response when validation fails.
     """
 
     record = db.session.get(File, file_id)
@@ -170,6 +173,21 @@ def validate_file_ownership(
         return False, {"message": "Invalid file id."}, 400
 
     references = Message.query.filter_by(file_id=file_id).all()
+    if not references:
+        if group_id is not None:
+            # Ensure the uploader is a member of the target group before the
+            # first attachment occurs.
+            member = GroupMember.query.filter_by(
+                group_id=group_id, user_id=record.uploader_id
+            ).first()
+            if not member:
+                return False, {"message": "Forbidden"}, 403
+        else:
+            # For direct messages only the uploader may send the file prior to
+            # any message references.
+            if record.uploader_id != sender_id:
+                return False, {"message": "Forbidden"}, 403
+        return True, {}, 200
     for msg in references:
         if group_id is not None:
             # Group attachments must only appear in the same group
@@ -788,6 +806,7 @@ class FileUpload(Resource):
             return {"message": "file too large"}, 413
 
         f = request.files["file"]
+        uid = int(get_jwt_identity())
 
         # Read the stream incrementally so uploads exceeding the limit are
         # detected without buffering the entire payload in memory.
@@ -813,6 +832,9 @@ class FileUpload(Resource):
             # Use the global default retention unless changed later via a
             # database migration or explicit update.
             file_retention_days=FILE_RETENTION_DAYS,
+            # Associate the upload with the current user so later requests can
+            # verify ownership even before the file is attached to a message.
+            uploader_id=uid,
         )
         db.session.add(file_rec)
         db.session.commit()
@@ -829,21 +851,22 @@ class FileDownload(Resource):
         f = db.session.get(File, file_id)
         if not f:
             return {"message": "Not found"}, 404
-
-        # Verify the requesting user is associated with a message that
-        # references this file either directly or via group membership.
-        msgs = Message.query.filter_by(file_id=file_id).all()
-        authorized = False
-        for msg in msgs:
-            if msg.group_id:
-                if GroupMember.query.filter_by(
-                    group_id=msg.group_id, user_id=uid
-                ).first():
+        # Verify the requester either uploaded the file or is associated with a
+        # message that references it. This allows the original uploader to
+        # retrieve the file even before it is attached to any message.
+        authorized = f.uploader_id == uid
+        if not authorized:
+            msgs = Message.query.filter_by(file_id=file_id).all()
+            for msg in msgs:
+                if msg.group_id:
+                    if GroupMember.query.filter_by(
+                        group_id=msg.group_id, user_id=uid
+                    ).first():
+                        authorized = True
+                        break
+                elif msg.sender_id == uid or msg.recipient_id == uid:
                     authorized = True
                     break
-            elif msg.sender_id == uid or msg.recipient_id == uid:
-                authorized = True
-                break
 
         if not authorized:
             return {"message": "Forbidden"}, 403
