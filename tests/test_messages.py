@@ -202,6 +202,48 @@ def test_skip_corrupt_base64_records(client):
     assert resp.get_json()["messages"] == []
 
 
+def test_message_rate_limit(client):
+    """Exceeding message send rate limit should return HTTP 429.
+
+    The Messages endpoint is limited to 50 requests per minute per user. This
+    test sends 51 quick POST requests and verifies that the final one is
+    rejected with ``HTTP 429 Too Many Requests``.
+    """
+    from backend.app import limiter
+
+    # Prepare sender and recipient accounts.
+    register_user(client, "alice")
+    reg_bob = register_user(client, "bob")
+    pk_bob = decrypt_private_key(reg_bob)
+
+    token_bob = login_user(client, "bob").get_json()["access_token"]
+    headers_bob = {"Authorization": f"Bearer {token_bob}"}
+    b64 = base64.b64encode(b"spam").decode()
+    sig = sign_content(pk_bob, b64)
+
+    # Reset limiter state to avoid interference from prior tests.
+    limiter.reset()
+
+    # Send the maximum allowed number of messages.
+    for _ in range(50):
+        client.post(
+            "/api/messages",
+            data={"content": b64, "recipient": "alice", "signature": sig},
+            headers=headers_bob,
+        )
+
+    # The 51st request should be rejected due to rate limiting.
+    resp = client.post(
+        "/api/messages",
+        data={"content": b64, "recipient": "alice", "signature": sig},
+        headers=headers_bob,
+    )
+    assert resp.status_code == 429
+
+    # Clean up limiter for subsequent tests.
+    limiter.reset()
+
+
 def test_message_delete_and_read(client):
     """Messages can be read, then removed via the delete endpoint."""
     reg = register_user(client, "alice")

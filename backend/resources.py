@@ -921,6 +921,9 @@ class Messages(Resource):
     encryption layer.
     """
 
+    decorators = [limiter.limit("50/minute")]
+    # Apply per-user rate limiting to prevent abuse of the messaging endpoint.
+
     # Retrieve all messages. Requires a valid JWT token.
     @jwt_required()
     def get(self):
@@ -1005,7 +1008,7 @@ class Messages(Resource):
                 )
         return {"messages": list(reversed(message_list))}
 
-    # Send a new message. Rate limited via the limiter in app.py
+    # Send a new message. Rate limited via the class-level ``decorators``.
     @jwt_required()
     def post(self):
         """Store an encrypted message and broadcast it to clients."""

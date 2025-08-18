@@ -355,7 +355,9 @@ def socket_connect():
 
 
 # Apply rate limiting on the messages resource
-limiter.limit("50/minute")(Messages)
+#
+# ``Messages`` enforces a ``50/minute`` limit via its class-level ``decorators``
+# attribute. No additional wrapper is needed at registration time.
 
 # Register resources and routes
 api.add_resource(Register, "/api/register")
