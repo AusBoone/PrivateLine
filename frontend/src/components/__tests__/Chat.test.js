@@ -31,7 +31,11 @@ beforeAll(() => {
       encrypt: jest.fn().mockResolvedValue(new ArrayBuffer(1)),
       decrypt: jest.fn().mockResolvedValue(new ArrayBuffer(1)),
     },
+    getRandomValues: jest.fn((arr) => arr),
   };
+  // Ensure window.crypto is available for modules relying on Web Crypto API
+  // methods such as ``getRandomValues``.
+  global.window.crypto = global.crypto;
   if (!global.TextEncoder) {
     global.TextEncoder = require('util').TextEncoder;
   }

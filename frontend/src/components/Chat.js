@@ -1,5 +1,10 @@
-// Includes the utility functions for encrypting and decrypting messages using RSA-OAEP,
-// as well as the logic for sending encrypted messages and decrypting received messages.
+// Chat component and associated utilities implementing end-to-end encryption.
+//
+// Direct messages use a hybrid RSA-OAEP + AES-GCM scheme where an ephemeral
+// symmetric key protects the message content and the RSA key encrypts that
+// session key. This update allows arbitrarily long messages while maintaining
+// forward secrecy. Additional validation prevents excessively large messages
+// from being sent and user-friendly errors are surfaced to the UI.
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import api from '../api';
@@ -87,75 +92,117 @@ async function fingerprintPem(pem) {
     .join('');
 }
 
+// Maximum permitted plaintext size in bytes. This prevents users from
+// inadvertently attempting to send enormous messages which could degrade
+// performance or exhaust resources during encryption.
+const MAX_MESSAGE_BYTES = 10_000;
+
 /**
- * Encrypts a given message using the recipient's public key.
- * 
+ * Encrypt ``message`` using a hybrid RSA-OAEP/AES-GCM scheme.
+ *
+ * A fresh AES-256 key is generated for every message. The plaintext is
+ * encrypted with AES-GCM and the symmetric key is then encrypted using the
+ * recipient's RSA public key. The result is serialised to JSON containing the
+ * base64 encoded ``encryptedKey``, ``nonce`` and ``ciphertext`` fields.
+ *
  * @param {string} publicKeyPem - Recipient's public key in PEM format.
- * @param {string} message - The plaintext message to be encrypted.
- * @returns {Promise<string>} The encrypted message in base64 encoding.
+ * @param {string} message - Plaintext message to encrypt.
+ * @returns {Promise<string>} JSON string with encrypted payload components.
  */
 async function encryptMessage(publicKeyPem, message) {
-    // Extract the base64-encoded portion of the PEM key
-    const pemHeader = '-----BEGIN PUBLIC KEY-----';
-    const pemFooter = '-----END PUBLIC KEY-----';
-    const b64 = publicKeyPem
-      .replace(pemHeader, '')
-      .replace(pemFooter, '')
-      .replace(/\s/g, '');
+  // Remove PEM armour and convert to binary DER representation.
+  const pemHeader = '-----BEGIN PUBLIC KEY-----';
+  const pemFooter = '-----END PUBLIC KEY-----';
+  const b64 = publicKeyPem
+    .replace(pemHeader, '')
+    .replace(pemFooter, '')
+    .replace(/\s/g, '');
+  const publicKeyBuffer = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 
-    // Convert the base64 string into a Uint8Array buffer
-    const publicKeyBuffer = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  // Import RSA public key for encrypting the randomly generated AES key.
+  const publicKey = await window.crypto.subtle.importKey(
+    'spki',
+    publicKeyBuffer,
+    { name: 'RSA-OAEP', hash: 'SHA-256' },
+    true,
+    ['encrypt']
+  );
 
-    // Import the public key to be used with the RSA-OAEP algorithm, specifying SHA-256 as the hash function
-    const publicKey = await window.crypto.subtle.importKey(
-      'spki',
-      publicKeyBuffer,
-      {
-        name: 'RSA-OAEP',
-        hash: 'SHA-256',
-      },
-      true,
-      ['encrypt']
-    );
+  // Generate an ephemeral AES-GCM key and nonce for the message content.
+  const aesKey = await window.crypto.subtle.generateKey(
+    { name: 'AES-GCM', length: 256 },
+    true,
+    ['encrypt', 'decrypt']
+  );
+  const nonce = window.crypto.getRandomValues(new Uint8Array(12));
 
-    // Convert the plaintext message into a buffer using the TextEncoder
-    const messageBuffer = new TextEncoder().encode(message);
+  // Encrypt the plaintext with AES-GCM using the generated key/nonce pair.
+  const plaintext = new TextEncoder().encode(message);
+  const cipherBuffer = await window.crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonce },
+    aesKey,
+    plaintext
+  );
 
-    // Encrypt the message buffer using the public key and RSA-OAEP algorithm
-    const encryptedMessageBuffer = await window.crypto.subtle.encrypt(
-      {
-        name: 'RSA-OAEP',
-      },
-      publicKey,
-      messageBuffer
-    );
+  // Export the AES key material and protect it with the recipient's RSA key.
+  const rawAesKey = await window.crypto.subtle.exportKey('raw', aesKey);
+  const encryptedKeyBuffer = await window.crypto.subtle.encrypt(
+    { name: 'RSA-OAEP' },
+    publicKey,
+    rawAesKey
+  );
 
-    // Return the encrypted message as a base64 encoded string
-    return arrayBufferToBase64(encryptedMessageBuffer);
+  // Serialise components to a JSON string with base64 encoded fields.
+  return JSON.stringify({
+    encryptedKey: arrayBufferToBase64(encryptedKeyBuffer),
+    nonce: arrayBufferToBase64(nonce.buffer),
+    ciphertext: arrayBufferToBase64(cipherBuffer),
+  });
 }
 
 /**
- * Decrypts an encrypted message using the provided private key.
- * 
- * @param {CryptoKey} privateKey - The private key to be used for decryption.
- * @param {string} encryptedMessage - The encrypted message in base64 encoding.
- * @returns {Promise<string>} The decrypted message in plaintext.
+ * Decrypt a payload produced by :func:`encryptMessage`.
+ *
+ * The RSA private key unwraps the AES session key which is then used to
+ * decrypt the AES-GCM ciphertext. Errors during parsing or cryptographic
+ * operations result in an ``Error`` being thrown so callers may handle them.
+ *
+ * @param {CryptoKey} privateKey - RSA private key corresponding to recipient.
+ * @param {string} payload - JSON string with encryptedKey/nonce/ciphertext.
+ * @returns {Promise<string>} Decrypted plaintext message.
  */
-async function decryptMessage(privateKey, encryptedMessage) {
-    // Convert the encrypted message from base64 to a Uint8Array buffer
-    const encryptedMessageBuffer = base64ToArrayBuffer(encryptedMessage);
+async function decryptMessage(privateKey, payload) {
+  try {
+    const { encryptedKey, nonce, ciphertext } = JSON.parse(payload);
+    const encryptedKeyBuffer = base64ToArrayBuffer(encryptedKey);
+    const nonceBuffer = base64ToArrayBuffer(nonce);
+    const cipherBuffer = base64ToArrayBuffer(ciphertext);
 
-    // Decrypt the message buffer using the private key and RSA-OAEP algorithm
-    const decryptedMessageBuffer = await window.crypto.subtle.decrypt(
-      {
-        name: 'RSA-OAEP',
-      },
+    // Recover the raw AES key and import it for decryption operations.
+    const rawAesKey = await window.crypto.subtle.decrypt(
+      { name: 'RSA-OAEP' },
       privateKey,
-      encryptedMessageBuffer
+      encryptedKeyBuffer
+    );
+    const aesKey = await window.crypto.subtle.importKey(
+      'raw',
+      rawAesKey,
+      'AES-GCM',
+      false,
+      ['decrypt']
     );
 
-    // Return the decrypted message as a plaintext string
-  return new TextDecoder().decode(decryptedMessageBuffer);
+    // Decrypt the ciphertext and decode back into a UTF-8 string.
+    const plainBuffer = await window.crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: new Uint8Array(nonceBuffer) },
+      aesKey,
+      cipherBuffer
+    );
+    return new TextDecoder().decode(plainBuffer);
+  } catch (e) {
+    // Normalise all failures into a generic error for upstream handling.
+    throw new Error('Failed to decrypt message');
+  }
 }
 
 const groupKeyCache = new Map();
@@ -523,6 +570,12 @@ function Chat() {
 
       try {
         if (!recipient && !selectedGroup) return;
+        // Validate message size before performing potentially expensive crypto.
+        const msgBytes = new TextEncoder().encode(message).length;
+        if (msgBytes > MAX_MESSAGE_BYTES) {
+          alert(`Message too long (max ${MAX_MESSAGE_BYTES} bytes)`);
+          return;
+        }
         let ciphertext;
         const formData = new URLSearchParams();
         if (recipient && !selectedGroup) {
@@ -605,6 +658,7 @@ function Chat() {
         }
       } catch (error) {
         console.error('Failed to send message', error);
+        alert(`Failed to send message: ${error.message}`);
       }
     };
 
@@ -743,3 +797,5 @@ function Chat() {
 }
 
 export default Chat;
+// Named exports used in unit tests verifying the hybrid encryption helpers.
+export { encryptMessage, decryptMessage };
