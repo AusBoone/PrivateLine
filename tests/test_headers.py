@@ -1,8 +1,11 @@
-import os
-import base64
-import importlib
+"""Validation tests for response headers and CORS behaviour.
 
-from backend.app import app
+This module exercises the backend's handling of security-related HTTP headers
+and verifies that cross-origin requests are rejected unless explicitly allowed
+via the ``CORS_ORIGINS`` environment variable. Tests focus on typical cases and
+regressions that could weaken browser-side protections.
+"""
+
 from .conftest import register_user, login_user
 
 
@@ -27,3 +30,16 @@ def test_hsts_enabled(monkeypatch, client):
     monkeypatch.setenv("HSTS_ENABLED", "true")
     resp = client.get("/api/openapi.yaml")
     assert resp.headers["Strict-Transport-Security"].startswith("max-age=")
+
+
+def test_cors_rejects_unlisted_origin(client):
+    """Requests from origins not listed in CORS_ORIGINS must not receive CORS headers."""
+    # The test client inherits the default configuration where ``CORS_ORIGINS``
+    # was never set. Any cross-origin request should therefore be ignored by the
+    # server because no allowed origins are known.
+    resp = client.get("/api/openapi.yaml", headers={"Origin": "http://evil.com"})
+
+    # Flask-CORS leaves the ``Access-Control-Allow-Origin`` header unset in this
+    # case, prompting browsers to block the response from being read by scripts
+    # running on untrusted origins.
+    assert "Access-Control-Allow-Origin" not in resp.headers

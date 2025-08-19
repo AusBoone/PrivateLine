@@ -72,8 +72,9 @@ To run the application, follow these steps:
    * `AES_KEY` – base64 encoded 32 byte key used to encrypt persisted messages. A convenient way to generate one is `openssl rand -base64 32`.
    * Optional `DATABASE_URI` if you want to use a database other than the default SQLite file.
    * Optional `REDIS_URL` for persistent rate limiting and token blocklist storage.
-   * Optional `CORS_ORIGINS` to restrict allowed origins for both REST and
-     WebSocket connections.
+   * Required `CORS_ORIGINS` to enumerate origins permitted to access the REST
+     and WebSocket APIs. If unset, the backend rejects cross-origin requests to
+     prevent accidental exposure.
    * Optional cookie security settings: `JWT_COOKIE_SECURE`,
      `JWT_COOKIE_SAMESITE` and `JWT_COOKIE_CSRF_PROTECT`.
    * Optional push notification settings: `APNS_CERT`, `APNS_TOPIC`,

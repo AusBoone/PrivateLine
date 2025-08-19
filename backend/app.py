@@ -12,6 +12,9 @@ cookies are used.
 
 2025 refactor: message cleanup now uses set-based SQL statements instead of
 per-user loops so large deployments prune expired data efficiently.
+
+2026 security hardening: cross-origin requests are disabled by default until
+the ``CORS_ORIGINS`` environment variable explicitly lists allowed origins.
 """
 
 import os
@@ -61,10 +64,20 @@ init_logging()
 
 # Configure allowed origins for CORS and WebSocket connections. A comma
 # separated list in the ``CORS_ORIGINS`` environment variable restricts both
-# Flask and Socket.IO traffic. The default "*" permits all origins.
-_cors_origins = os.environ.get("CORS_ORIGINS", "*")
-if _cors_origins != "*":
-    _cors_origins = [o.strip() for o in _cors_origins.split(",")]
+# Flask and Socket.IO traffic. Without an explicit setting, cross-origin
+# requests are denied to avoid unintentionally exposing the API.
+_cors_origins = os.environ.get("CORS_ORIGINS")
+if _cors_origins:
+    # Split the comma separated list and strip whitespace so entries such as
+    # "https://example.com, https://other.com" are handled correctly. Empty
+    # segments are ignored to prevent accidental wildcard matches.
+    _cors_origins = [origin.strip() for origin in _cors_origins.split(",") if origin.strip()]
+else:
+    # An empty list means no origins are allowed. Browsers will refuse to expose
+    # responses to scripts from other origins because the ``Access-Control-Allow-Origin``
+    # header is absent. This requires deployers to deliberately opt in by setting
+    # ``CORS_ORIGINS``.
+    _cors_origins = []
 
 # Enable Cross-Origin Resource Sharing (CORS) for the app
 CORS(app, supports_credentials=True, origins=_cors_origins)
