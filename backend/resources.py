@@ -31,6 +31,9 @@ unexpected inputs simply cause authentication to fail rather than error.
 2027 update: File uploads now record ``uploader_id`` and downloads permit
 original uploaders to retrieve unreferenced files. ``validate_file_ownership``
 uses this information to block unauthorized reuse of attachments.
+2028 update: File downloads now detect tampered ciphertext by catching
+``InvalidTag`` during AES-GCM decryption and respond with an HTTP 400
+"Corrupted file" error instead of raising an exception.
 """
 
 # 2024 update: Introduced Argon2 password hashing via ``PasswordHasher`` and
@@ -54,7 +57,7 @@ from cryptography.hazmat.primitives.serialization import (
     NoEncryption,
 )
 from cryptography.hazmat.backends import default_backend
-from cryptography.exceptions import InvalidSignature
+from cryptography.exceptions import InvalidSignature, InvalidTag
 from base64 import b64encode, b64decode
 import binascii
 import os
@@ -872,7 +875,13 @@ class FileDownload(Resource):
             return {"message": "Forbidden"}, 403
         nonce = f.data[:12]
         ciphertext = f.data[12:]
-        plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+        try:
+            # AES-GCM raises ``InvalidTag`` when the ciphertext or authentication
+            # tag has been tampered with. Returning a 400 helps clients handle
+            # corruption gracefully instead of surfacing a server error.
+            plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+        except InvalidTag:
+            return {"message": "Corrupted file"}, 400
         from flask import make_response
 
         resp = make_response(plaintext)
