@@ -179,3 +179,51 @@ it('includes expires_at when sending a message', async () => {
   const body = api.post.mock.calls[0][1];
   expect(body.get('expires_at')).toBeTruthy();
 });
+
+// New tests verifying that user-facing error notifications appear via the
+// shared Snackbar component instead of relying on ``alert`` or console logs.
+
+it('displays an error when the message exceeds the size limit', async () => {
+  const socket = { on: jest.fn(), disconnect: jest.fn() };
+  io.mockReturnValue(socket);
+  api.get.mockResolvedValueOnce({ status: 200, data: { groups: [] } });
+  api.get.mockResolvedValueOnce({ status: 200, data: { messages: [] } });
+  api.get.mockResolvedValueOnce({ status: 200, data: { users: ['alice'] } });
+
+  render(<Chat />);
+
+  await waitFor(() => screen.getByText('alice'));
+  fireEvent.click(screen.getByText('alice'));
+
+  const longMsg = 'a'.repeat(10001); // one byte over the limit
+  fireEvent.change(screen.getByPlaceholderText('Type your message'), {
+    target: { value: longMsg },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+  await screen.findByText('Message too long (max 10000 bytes)');
+});
+
+it('displays an error when sending the message fails', async () => {
+  const socket = { on: jest.fn(), disconnect: jest.fn() };
+  io.mockReturnValue(socket);
+  api.get.mockImplementation((url) => {
+    if (url === '/api/groups') return Promise.resolve({ status: 200, data: { groups: [] } });
+    if (url === '/api/messages') return Promise.resolve({ status: 200, data: { messages: [] } });
+    if (url === '/api/users') return Promise.resolve({ status: 200, data: { users: ['alice'] } });
+    if (url.startsWith('/api/public_key/')) return Promise.resolve({ status: 200, data: { public_key: 'pk' } });
+    return Promise.resolve({ status: 200, data: {} });
+  });
+  api.post.mockRejectedValueOnce(new Error('network'));
+
+  render(<Chat />);
+
+  await waitFor(() => screen.getByText('alice'));
+  fireEvent.click(screen.getByText('alice'));
+  fireEvent.change(screen.getByPlaceholderText('Type your message'), {
+    target: { value: 'hi' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+  await screen.findByText('Failed to send message: network');
+});
