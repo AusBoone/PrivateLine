@@ -208,6 +208,46 @@ def test_group_messages_pagination(client):
     assert resp.status_code == 400
 
 
+def test_group_messages_pagination_boundaries(client):
+    """Group message listing handles empty ranges and large limits."""
+    reg_a = register_user(client, 'alice')
+    pk_a = decrypt_private_key(reg_a)
+    register_user(client, 'bob')
+
+    token_a = login_user(client, 'alice').get_json()['access_token']
+    headers_a = {'Authorization': f'Bearer {token_a}'}
+    resp = client.post('/api/groups', json={'name': 'edge'}, headers=headers_a)
+    gid = resp.get_json()['id']
+
+    token_b = login_user(client, 'bob').get_json()['access_token']
+    headers_b = {'Authorization': f'Bearer {token_b}'}
+    client.post(f'/api/groups/{gid}/members', json={'username': 'bob'}, headers=headers_a)
+
+    ids = []
+    for i in range(2):
+        b64 = base64.b64encode(f'g{i}'.encode()).decode()
+        sig = sign_content(pk_a, b64)
+        resp = client.post(
+            f'/api/groups/{gid}/messages',
+            data={'content': b64, 'signature': sig},
+            headers=headers_a,
+        )
+        ids.append(resp.get_json()['id'])
+
+    # Offset beyond total count returns an empty list rather than erroring.
+    resp = client.get(f'/api/groups/{gid}/messages?limit=5&offset=5', headers=headers_b)
+    assert resp.status_code == 200
+    assert resp.get_json()['messages'] == []
+
+    # A generous limit simply returns all remaining messages.
+    resp = client.get(f'/api/groups/{gid}/messages?limit=10&offset=0', headers=headers_b)
+    assert resp.status_code == 200
+    msgs = resp.get_json()['messages']
+    assert len(msgs) == 2
+    assert msgs[0]['id'] == ids[-1]
+    assert msgs[1]['id'] == ids[-2]
+
+
 def test_group_retention_cleanup(client):
     """Old read messages respect group-specific retention policies."""
 
