@@ -18,6 +18,7 @@ from werkzeug.utils import secure_filename
 
 from backend.app import app, db
 from backend.models import File, Message
+from backend.resources import remove_orphan_files
 from .conftest import register_user, login_user, decrypt_private_key, sign_content
 
 
@@ -604,5 +605,39 @@ def test_uploader_can_download_unattached_file(client):
     resp = client.get(f"/api/files/{fid}", headers=headers_a)
     assert resp.status_code == 200
     assert resp.data == b"raw"
+
+
+def test_orphan_file_records_removed(client):
+    """Orphaned file database rows should be purged by ``remove_orphan_files``.
+
+    A file that is uploaded but never referenced by any message should not linger
+    in the database. This test creates such a file, runs the cleanup routine and
+    verifies the record is gone.
+    """
+
+    # Register and authenticate a user to upload a file.
+    reg = register_user(client, "alice")
+    token = login_user(client, "alice").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Upload a file without attaching it to any message.
+    fs = FileStorage(stream=io.BytesIO(b"tmp"), filename="tmp.txt")
+    resp = client.post(
+        "/api/files",
+        data={"file": fs},
+        headers=headers,
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 201
+    fid = resp.get_json()["file_id"]
+
+    # Ensure the file exists prior to cleanup.
+    with app.app_context():
+        assert db.session.get(File, fid) is not None
+
+    # Run the orphan cleanup routine and confirm the record is removed.
+    remove_orphan_files()
+    with app.app_context():
+        assert db.session.get(File, fid) is None
 
 
