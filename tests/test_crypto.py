@@ -3,6 +3,10 @@
 These unit tests exercise the helper routines used for end-to-end encryption.
 They confirm that normal encryption/decryption succeeds and that tampering or
 using the wrong key fails as expected. Run with ``pytest``.
+
+Modification:
+    Added a regression test for :func:`PasswordChannel.decrypt` ensuring that
+    an invalid password results in a clear ``ValueError``.
 """
 
 import base64
@@ -29,6 +33,18 @@ def test_password_channel_encryption():
     nonce, ct = channel.encrypt(password, b"top")
     pt = channel.decrypt(password, nonce, ct)
     assert pt == b"top"
+
+
+def test_password_channel_decryption_failure():
+    """Wrong password should raise ``ValueError`` for clarity."""
+    channel = PasswordChannel.create()
+    password = "hunter2"
+    nonce, ct = channel.encrypt(password, b"secret")
+    # Attempt to decrypt with an incorrect password. The underlying AES-GCM
+    # layer would raise ``InvalidTag``; our wrapper converts it to ``ValueError``
+    # so callers receive a consistent, implementation-agnostic error.
+    with pytest.raises(ValueError, match="decryption failed"):
+        channel.decrypt("badpass", nonce, ct)
 
 
 def test_decrypt_message_wrong_key():
