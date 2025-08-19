@@ -5,6 +5,10 @@ attachments. They verify that uploads are stored correctly, downloads respect
 authorization and retention rules, and that invalid requests fail gracefully.
 Recent additions cover ownership semantics, ensuring only rightful uploaders or
 conversation participants may reuse files. Run with ``pytest``.
+
+2028 update: Introduces a corruption test ensuring that tampered encrypted
+payloads result in a ``400`` "Corrupted file" response rather than a server
+error during download.
 """
 
 import io
@@ -90,6 +94,48 @@ def test_file_download_authorization(client):
     headers_c = {"Authorization": f"Bearer {token_c}"}
     resp = client.get(f"/api/files/{fid}", headers=headers_c)
     assert resp.status_code == 403
+
+
+def test_corrupted_file_returns_400(client):
+    """Tampering with stored ciphertext should yield a 400 error on download."""
+    reg = register_user(client, "mallory")
+    pk = decrypt_private_key(reg)
+    token = login_user(client, "mallory").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Upload a file and attach it to a self-directed message so the user is
+    # authorized to retrieve it later.
+    fs = FileStorage(
+        stream=io.BytesIO(b"secret"), filename="secret.txt", content_type="text/plain"
+    )
+    resp = client.post(
+        "/api/files",
+        data={"file": fs},
+        headers=headers,
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 201
+    fid = resp.get_json()["file_id"]
+
+    b64 = base64.b64encode(b"msg").decode()
+    sig = sign_content(pk, b64)
+    client.post(
+        "/api/messages",
+        data={"content": b64, "recipient": "mallory", "file_id": fid, "signature": sig},
+        headers=headers,
+    )
+
+    # Corrupt the stored ciphertext to trigger AES-GCM authentication failure.
+    with app.app_context():
+        record = db.session.get(File, fid)
+        corrupted = bytearray(record.data)
+        corrupted[-1] ^= 0x01  # Flip the last bit to invalidate the tag.
+        record.data = bytes(corrupted)
+        db.session.commit()
+
+    resp = client.get(f"/api/files/{fid}", headers=headers)
+    assert resp.status_code == 400
+    assert resp.get_json() == {"message": "Corrupted file"}
 
 
 def test_filename_sanitization(client):
