@@ -5,6 +5,10 @@
 // session key. This update allows arbitrarily long messages while maintaining
 // forward secrecy. Additional validation prevents excessively large messages
 // from being sent and user-friendly errors are surfaced to the UI.
+//
+// Revision: Replaces legacy `alert` and `console.error` calls with a unified
+// Material UI Snackbar/Alert system so that all errors are presented
+// consistently to users rather than relying on browser dialogs or silent logs.
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import api from '../api';
@@ -17,6 +21,8 @@ import {
   IconButton,
   TextField,
   Button,
+  Snackbar,
+  Alert,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import './Chat.css';
@@ -28,7 +34,7 @@ import { loadMessages, saveMessages } from '../utils/messageCache';
 import {
   saveKey as saveGroupKey,
   loadKey as loadGroupKey,
-  listGroupIds as listStoredGroupIds,
+  listGroupIds,
 } from '../utils/groupKeyStore';
 import Cookies from 'js-cookie';
 
@@ -349,6 +355,27 @@ function Chat() {
   // Per-conversation TTL in days. Empty string leaves the setting unchanged.
   const [convRetention, setConvRetention] = useState('');
 
+  // Snackbar state handling user-visible error notifications. Each error is
+  // surfaced through this component instead of using ``alert`` or logging to
+  // the developer console.
+  const [snackbar, setSnackbar] = useState({ open: false, message: '' });
+
+  /**
+   * Display an error message using the shared Snackbar component.
+   *
+   * @param {string} msg - Description of the failure.
+   * @param {Error} [err] - Optional error instance for additional context.
+   */
+  const showError = (msg, err) => {
+    const detail = err && err.message ? `: ${err.message}` : '';
+    setSnackbar({ open: true, message: `${msg}${detail}` });
+  };
+
+  /** Close the Snackbar after the auto-hide duration or user action. */
+  const handleCloseSnackbar = () => {
+    setSnackbar((prev) => ({ ...prev, open: false }));
+  };
+
   /**
    * Update the server-side retention policy for the active conversation.
    */
@@ -365,7 +392,7 @@ function Chat() {
       }
       setConvRetention('');
     } catch (err) {
-      console.error('Failed to set retention', err);
+      showError('Failed to set retention', err);
     }
   };
   // Element at the end of the message list so we can smoothly scroll
@@ -399,7 +426,7 @@ function Chat() {
             const sk = await pemToCryptoKey(pem, 'sign');
             setSignKey(sk);
           } catch (e) {
-            console.error('Failed to import private key', e);
+            showError('Failed to import private key', e);
           }
         } else {
           // Ensure IndexedDB is initialized
@@ -407,7 +434,7 @@ function Chat() {
         }
 
         // Preload persisted group chat keys so messages can be decrypted
-        const ids = await listStoredGroupIds();
+        const ids = (await listGroupIds()) || [];
         for (const id of ids) {
           const b64 = await loadGroupKey(id);
           if (b64) {
@@ -442,13 +469,13 @@ function Chat() {
                       selectedGroup || m.group_id
                     );
                   } catch (e) {
-                    console.error('Failed to decrypt group message', e);
+                    showError('Failed to decrypt group message', e);
                   }
                 } else if (privateKey) {
                   try {
                     text = await decryptMessage(privateKey, m.content);
                   } catch (e) {
-                    console.error('Failed to decrypt message', e);
+                    showError('Failed to decrypt message', e);
                   }
                 }
                 return {
@@ -464,14 +491,14 @@ function Chat() {
             setMessages(decrypted.filter((m) => !isExpired(m)));
           }
         } catch (err) {
-          console.error('Failed to fetch messages', err);
+          showError('Failed to fetch messages', err);
           try {
             const cached = await loadMessages();
             if (cached.length) {
               setMessages(cached.filter((m) => !isExpired(m)));
             }
           } catch (e) {
-            console.error('Failed to load cached messages', e);
+            showError('Failed to load cached messages', e);
           }
         }
 
@@ -486,13 +513,13 @@ function Chat() {
             try {
               text = await decryptGroupMessage(payload.content, payload.group_id);
             } catch (e) {
-              console.error('Failed to decrypt incoming group message', e);
+              showError('Failed to decrypt incoming group message', e);
             }
           } else if (privateKey) {
             try {
               text = await decryptMessage(privateKey, payload.content);
             } catch (e) {
-              console.error('Failed to decrypt incoming message', e);
+              showError('Failed to decrypt incoming message', e);
             }
           }
           if (
@@ -528,7 +555,7 @@ function Chat() {
       const maybePromise = saveMessages(messages.filter((m) => !isExpired(m)));
       if (maybePromise && typeof maybePromise.catch === 'function') {
         maybePromise.catch((e) => {
-          console.error('Failed to cache messages', e);
+          showError('Failed to cache messages', e);
         });
       }
     }, [messages]);
@@ -541,7 +568,7 @@ function Chat() {
             setUsers(resp.data.users);
           }
         } catch (e) {
-          console.error('Failed to fetch users', e);
+          showError('Failed to fetch users', e);
         }
       }
       fetchUsers();
@@ -557,7 +584,7 @@ function Chat() {
         await api.delete(`/api/messages/${id}`);
         setMessages((prev) => prev.filter((m) => m.id !== id));
       } catch (e) {
-        console.error('Delete failed', e);
+        showError('Delete failed', e);
       }
     };
 
@@ -573,7 +600,7 @@ function Chat() {
         // Validate message size before performing potentially expensive crypto.
         const msgBytes = new TextEncoder().encode(message).length;
         if (msgBytes > MAX_MESSAGE_BYTES) {
-          alert(`Message too long (max ${MAX_MESSAGE_BYTES} bytes)`);
+          showError(`Message too long (max ${MAX_MESSAGE_BYTES} bytes)`);
           return;
         }
         let ciphertext;
@@ -657,13 +684,13 @@ function Chat() {
           setFile(null);
         }
       } catch (error) {
-        console.error('Failed to send message', error);
-        alert(`Failed to send message: ${error.message}`);
+        showError('Failed to send message', error);
       }
     };
 
 
     return (
+      <>
       <Box sx={{ display: 'flex', height: 'calc(100vh - 64px)' }}>
         <Drawer variant="permanent" sx={{ width: 240, flexShrink: 0 }}>
           <List className="conversation-list" sx={{ width: 240 }}>
@@ -734,9 +761,9 @@ function Chat() {
                         if (err.response && err.response.status === 404) {
                           // Inform the user when the attachment was deleted
                           // after reaching its allowed download count.
-                          alert('Attachment is no longer available');
+                          showError('Attachment is no longer available');
                         } else {
-                          console.error('Download failed', err);
+                          showError('Download failed', err);
                         }
                       }
                     }}
@@ -793,6 +820,20 @@ function Chat() {
           </Box>
         </Box>
       </Box>
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={handleCloseSnackbar}
+      >
+        <Alert
+          onClose={handleCloseSnackbar}
+          severity="error"
+          sx={{ width: '100%' }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
+      </>
     );
 }
 
