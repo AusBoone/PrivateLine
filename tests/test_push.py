@@ -1,10 +1,12 @@
 """Push notification helper tests.
 
 This suite validates encryption handling for push notification tokens including
-legacy plaintext storage and corrupted ciphertext.
+legacy plaintext storage, corrupted ciphertext, and the new random nonce and
+hash-based deduplication scheme.
 """
 
 from base64 import b64decode, b64encode
+from hashlib import sha256
 
 import backend.resources as res
 from backend.models import PushToken
@@ -16,6 +18,18 @@ def test_push_token_encryption_roundtrip():
     enc = PushToken.encrypt_value(plaintext)
     assert plaintext == PushToken.decrypt_value(enc)
     assert enc != plaintext
+
+
+def test_push_token_random_nonce():
+    """Repeated encryption should yield distinct ciphertext due to random nonce."""
+    token = "tok123"
+    first = PushToken.encrypt_value(token)
+    second = PushToken.encrypt_value(token)
+    # Even though the nonce is random, decryption must still recover the original
+    # plaintext for both ciphertexts.
+    assert first != second
+    assert PushToken.decrypt_value(first) == token
+    assert PushToken.decrypt_value(second) == token
 
 
 def test_push_token_legacy_plaintext():
@@ -70,4 +84,29 @@ def test_push_token_db_encrypted(client):
         pt = PushToken.query.first()
         assert pt.token == "abc"
         assert pt.token_ciphertext != "abc"
+        # The SHA-256 hash should be stored to facilitate deduplication.
+        assert pt.token_hash == sha256(b"abc").hexdigest()
+
+
+def test_push_token_deduplication(client):
+    """Reposting the same token should not create duplicate rows."""
+    from .conftest import register_user, login_user
+    from backend.app import app
+
+    register_user(client, "alice")
+    token = login_user(client, "alice").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Store the token twice; the second request should update the existing row
+    # rather than inserting a duplicate because uniqueness is enforced via
+    # ``token_hash``.
+    client.post(
+        "/api/push-token", json={"token": "dup", "platform": "web"}, headers=headers
+    )
+    client.post(
+        "/api/push-token", json={"token": "dup", "platform": "web"}, headers=headers
+    )
+
+    with app.app_context():
+        assert PushToken.query.count() == 1
 

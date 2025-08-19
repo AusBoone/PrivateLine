@@ -7,6 +7,7 @@ gracefully handles malformed inputs.
 
 import base64
 import io
+from hashlib import sha256
 
 from backend.app import app
 from backend.models import User, PushToken
@@ -250,8 +251,9 @@ def test_push_token_delete(client):
     resp = client.delete("/api/push-token", json={"token": "tok"}, headers=headers)
     assert resp.status_code == 200
     with app.app_context():
-        enc = PushToken.encrypt_value("tok")
-        assert PushToken.query.filter_by(token=enc).first() is None
+        # Deletion should remove the row identified by the token's hash.
+        h = sha256(b"tok").hexdigest()
+        assert PushToken.query.filter_by(token_hash=h).first() is None
 
 
 def test_push_token_cleanup(monkeypatch, client):
@@ -272,8 +274,8 @@ def test_push_token_cleanup(monkeypatch, client):
     clean_expired_push_tokens()
 
     with app.app_context():
-        enc = PushToken.encrypt_value("oldtok")
-        assert PushToken.query.filter_by(token=enc).first() is None
+        h = sha256(b"oldtok").hexdigest()
+        assert PushToken.query.filter_by(token_hash=h).first() is None
 
 
 def test_users_endpoint(client):
