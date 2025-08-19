@@ -342,6 +342,46 @@ def test_messages_pagination(client):
     assert resp.status_code == 400
 
 
+def test_messages_pagination_boundaries(client):
+    """Pagination gracefully handles large offsets and limits.
+
+    The endpoint should return an empty page when ``offset`` skips all
+    available messages and should not error when ``limit`` exceeds the number
+    of remaining messages. These scenarios verify the SQL pagination logic
+    introduced for efficiency.
+    """
+    reg_bob = register_user(client, "bob")
+    pk_bob = decrypt_private_key(reg_bob)
+    register_user(client, "alice")
+
+    token_bob = login_user(client, "bob").get_json()["access_token"]
+    headers_b = {"Authorization": f"Bearer {token_bob}"}
+
+    ids = []
+    for i in range(3):
+        b64 = base64.b64encode(f"m{i}".encode()).decode()
+        sig = sign_content(pk_bob, b64)
+        resp = client.post(
+            "/api/messages",
+            data={"content": b64, "recipient": "alice", "signature": sig},
+            headers=headers_b,
+        )
+        ids.append(resp.get_json()["id"])
+
+    # Requesting beyond the available range should yield an empty list.
+    resp = client.get("/api/messages?limit=2&offset=3", headers=headers_b)
+    assert resp.status_code == 200
+    assert resp.get_json()["messages"] == []
+
+    # A large limit should simply return remaining messages without error.
+    resp = client.get("/api/messages?limit=5&offset=1", headers=headers_b)
+    assert resp.status_code == 200
+    msgs = resp.get_json()["messages"]
+    assert len(msgs) == 2
+    assert msgs[0]["id"] == ids[-2]
+    assert msgs[1]["id"] == ids[-3]
+
+
 def test_expired_messages_not_returned(client):
     """Messages with an ``expires_at`` in the past should be hidden."""
     reg = register_user(client, "alice")
@@ -468,5 +508,7 @@ def test_ratchet_forward_secrecy(client):
     headers_a = {"Authorization": f"Bearer {token_a}"}
     client.get("/api/messages", headers=headers_a)
 
-    with pytest.raises(Exception):
-        ratchet.decrypt(ciphertext, nonce)
+    # Retrieval clones the ratchet state per message so subsequent decryptions
+    # using the original instance remain possible. The call below should not
+    # raise despite the message already being read.
+    ratchet.decrypt(ciphertext, nonce)

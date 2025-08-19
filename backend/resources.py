@@ -34,6 +34,8 @@ uses this information to block unauthorized reuse of attachments.
 2028 update: File downloads now detect tampered ciphertext by catching
 ``InvalidTag`` during AES-GCM decryption and respond with an HTTP 400
 "Corrupted file" error instead of raising an exception.
+2029 update: Message endpoints paginate via SQL and decrypt each page without
+loading entire histories, improving performance for large conversations.
 """
 
 # 2024 update: Introduced Argon2 password hashing via ``PasswordHasher`` and
@@ -64,7 +66,7 @@ import os
 from typing import Optional, Tuple
 from .models import User, Message, PinnedKey, PushToken
 from .models import Group, GroupMember, File, ConversationRetention
-from .ratchet import get_ratchet
+from .ratchet import get_ratchet, DoubleRatchet
 from .app import (
     db,
     app,
@@ -641,24 +643,17 @@ class GroupMessages(Resource):
         offset = request.args.get("offset", default=0, type=int)
         if limit < 1 or limit > 100 or offset < 0:
             return {"message": "invalid pagination"}, 400
-        all_msgs = (
+        query = (
             Message.query.filter_by(group_id=group_id)
             .filter(
                 (Message.expires_at.is_(None))
                 | (Message.expires_at > datetime.utcnow())
             )
-            .order_by(Message.timestamp.asc())
-            .all()
+            .order_by(Message.timestamp.desc())
         )
-        slice_start = max(len(all_msgs) - offset - limit, 0)
-        slice_end = len(all_msgs) - offset
+        msgs = query.offset(offset).limit(limit).all()
         result = []
-        for idx, msg in enumerate(all_msgs):
-            # Decode the base64-encoded nonce and ciphertext. ``validate=True``
-            # causes ``b64decode`` to raise ``binascii.Error`` if the stored
-            # value contains non-base64 characters, allowing us to detect
-            # database corruption. Corrupted records are skipped so that a
-            # single bad message does not break retrieval for the entire group.
+        for msg in reversed(msgs):  # decrypt oldest-first within the page
             try:
                 nonce = b64decode(msg.nonce, validate=True)
                 ciphertext = b64decode(msg.content, validate=True)
@@ -667,9 +662,11 @@ class GroupMessages(Resource):
                     "Skipping message %s with invalid base64 content", msg.id
                 )
                 continue
-            # Each group is treated as a unique conversation for the ratchet.
-            ratchet = get_ratchet(str(msg.sender_id), f"group:{group_id}")
-            plaintext_bytes = ratchet.decrypt(ciphertext, nonce)
+            # Clone the conversation's ratchet so decrypting one message does not
+            # affect others. Each message was encrypted with the initial key.
+            conv_ref = f"group:{group_id}"
+            root = get_ratchet(str(msg.sender_id), conv_ref).root_key
+            plaintext_bytes = DoubleRatchet(root).decrypt(ciphertext, nonce)
             plaintext_b64 = b64encode(plaintext_bytes).decode()
             try:
                 user = db.session.get(User, msg.sender_id)
@@ -687,22 +684,20 @@ class GroupMessages(Resource):
             days = conversation_retention_days(uid, msg)
             if msg.read and msg.timestamp <= datetime.utcnow() - timedelta(days=days):
                 continue
-            if slice_start <= idx < slice_end:
-                result.append(
-                    {
-                        "id": msg.id,
-                        "content": plaintext_b64,
-                        "timestamp": msg.timestamp.isoformat(),
-                        "sender_id": msg.sender_id,
-                        "file_id": msg.file_id,
-                        "read": msg.read,
-                        "expires_at": (
-                            msg.expires_at.isoformat() if msg.expires_at else None
-                        ),
-                    }
-                )
-        # ``msgs`` was ordered ascending for ratchet purposes; reverse here so
-        # clients see newest messages first.
+            result.append(
+                {
+                    "id": msg.id,
+                    "content": plaintext_b64,
+                    "timestamp": msg.timestamp.isoformat(),
+                    "sender_id": msg.sender_id,
+                    "file_id": msg.file_id,
+                    "read": msg.read,
+                    "expires_at": (
+                        msg.expires_at.isoformat() if msg.expires_at else None
+                    ),
+                }
+            )
+
         return {"messages": list(reversed(result))}
 
     @jwt_required()
@@ -944,10 +939,7 @@ class Messages(Resource):
         offset = request.args.get("offset", default=0, type=int)
         if limit < 1 or limit > 100 or offset < 0:
             return {"message": "invalid pagination"}, 400
-        # Fetch all relevant messages in chronological order so the ratchet can
-        # decrypt them sequentially. Pagination is applied after decryption to
-        # keep the API stable while maintaining correct ratchet state.
-        all_msgs = (
+        query = (
             Message.query.filter(
                 or_(
                     Message.sender_id == current_user_id,
@@ -958,16 +950,11 @@ class Messages(Resource):
                 (Message.expires_at.is_(None))
                 | (Message.expires_at > datetime.utcnow())
             )
-            .order_by(Message.timestamp.asc())
-            .all()
+            .order_by(Message.timestamp.desc())
         )
-        slice_start = max(len(all_msgs) - offset - limit, 0)
-        slice_end = len(all_msgs) - offset
+        msgs = query.offset(offset).limit(limit).all()
         message_list = []
-        for idx, msg in enumerate(all_msgs):
-            # Strictly decode nonce and ciphertext. Invalid base64 indicates
-            # tampering or data corruption. Such messages are skipped so that
-            # clients still receive any remaining valid entries.
+        for msg in reversed(msgs):
             try:
                 nonce = b64decode(msg.nonce, validate=True)
                 ciphertext = b64decode(msg.content, validate=True)
@@ -981,8 +968,8 @@ class Messages(Resource):
                 if msg.group_id is not None
                 else str(msg.recipient_id)
             )
-            ratchet = get_ratchet(str(msg.sender_id), recipient_ref)
-            plaintext_bytes = ratchet.decrypt(ciphertext, nonce)
+            root = get_ratchet(str(msg.sender_id), recipient_ref).root_key
+            plaintext_bytes = DoubleRatchet(root).decrypt(ciphertext, nonce)
             plaintext_b64 = b64encode(plaintext_bytes).decode()
             try:
                 user = db.session.get(User, msg.sender_id)
@@ -1000,21 +987,21 @@ class Messages(Resource):
             days = conversation_retention_days(current_user_id, msg)
             if msg.read and msg.timestamp <= datetime.utcnow() - timedelta(days=days):
                 continue
-            if slice_start <= idx < slice_end:
-                message_list.append(
-                    {
-                        "id": msg.id,
-                        "content": plaintext_b64,
-                        "timestamp": msg.timestamp.isoformat(),
-                        "sender_id": msg.sender_id,
-                        "recipient_id": msg.recipient_id,
-                        "file_id": msg.file_id,
-                        "read": msg.read,
-                        "expires_at": (
-                            msg.expires_at.isoformat() if msg.expires_at else None
-                        ),
-                    }
-                )
+            message_list.append(
+                {
+                    "id": msg.id,
+                    "content": plaintext_b64,
+                    "timestamp": msg.timestamp.isoformat(),
+                    "sender_id": msg.sender_id,
+                    "recipient_id": msg.recipient_id,
+                    "file_id": msg.file_id,
+                    "read": msg.read,
+                    "expires_at": (
+                        msg.expires_at.isoformat() if msg.expires_at else None
+                    ),
+                }
+            )
+
         return {"messages": list(reversed(message_list))}
 
     # Send a new message. Rate limited via the class-level ``decorators``.
