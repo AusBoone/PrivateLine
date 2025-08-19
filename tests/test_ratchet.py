@@ -7,6 +7,7 @@ is created per conversation.
 """
 
 from concurrent.futures import ThreadPoolExecutor
+import time
 
 from backend.ratchet import DoubleRatchet, RatchetStore, get_ratchet
 
@@ -63,4 +64,41 @@ def test_global_get_ratchet_thread_safe():
 
     assert ratchet_module._store is not None
     assert len(ratchet_module._store._store) == 1
+
+
+def test_store_lru_eviction(monkeypatch):
+    """Least recently used entries should be discarded when capacity is hit."""
+
+    # Configure the store to only keep two ratchets in memory. TTL disabled to
+    # isolate LRU behaviour.
+    monkeypatch.setenv("RATCHET_MAX_CACHE", "2")
+    monkeypatch.setenv("RATCHET_CACHE_TTL", "0")
+    store = RatchetStore(b"0" * 32)
+
+    store.get("alice", "bob")  # Entry A
+    store.get("bob", "carol")  # Entry B
+    store.get("alice", "bob")  # Touch A so B becomes LRU
+    store.get("carol", "dave")  # Entry C triggers eviction
+
+    # B should have been evicted as the least recently used entry.
+    assert ("bob", "carol") not in store._store
+    assert len(store._store) == 2
+
+
+def test_store_ttl_eviction(monkeypatch):
+    """Entries older than the TTL should be evicted on access."""
+
+    # Very small TTL so the first entry expires before the second lookup.
+    monkeypatch.setenv("RATCHET_CACHE_TTL", "0.1")
+    monkeypatch.setenv("RATCHET_MAX_CACHE", "10")
+    store = RatchetStore(b"0" * 32)
+
+    store.get("alice", "bob")
+    assert ("alice", "bob") in store._store
+
+    # Sleep slightly longer than the TTL to guarantee expiry.
+    time.sleep(0.2)
+    store.get("bob", "carol")  # Trigger clean-up of expired entries
+
+    assert ("alice", "bob") not in store._store
 
