@@ -36,6 +36,8 @@ uses this information to block unauthorized reuse of attachments.
 "Corrupted file" error instead of raising an exception.
 2029 update: Message endpoints paginate via SQL and decrypt each page without
 loading entire histories, improving performance for large conversations.
+2030 update: ``remove_orphan_files`` now performs a bulk SQL deletion to purge
+unreferenced uploads in a single transaction, reducing session overhead.
 """
 
 # 2024 update: Introduced Argon2 password hashing via ``PasswordHasher`` and
@@ -903,15 +905,22 @@ class FileDownload(Resource):
 
 
 def remove_orphan_files() -> None:
-    """Delete uploaded files that are not referenced by any message."""
+    """Delete uploaded files that are not referenced by any message.
+
+    Using :meth:`Query.delete` issues a single bulk SQL statement that removes
+    all unreferenced :class:`File` rows in one transaction. This avoids loading
+    each orphan into memory and individually deleting it, which previously
+    required multiple round-trips to the database. The ``synchronize_session``
+    flag is disabled because no in-memory objects need to be updated.
+    """
 
     from sqlalchemy import exists
 
-    orphans = File.query.filter(~exists().where(Message.file_id == File.id)).all()
-    if not orphans:
-        return
-    for record in orphans:
-        db.session.delete(record)
+    (  # Perform set-based deletion of all orphaned ``File`` records at once.
+        File.query.filter(~exists().where(Message.file_id == File.id))
+        .delete(synchronize_session=False)
+    )
+    # Commit once to finalize the cleanup regardless of how many rows were removed.
     db.session.commit()
 
 
