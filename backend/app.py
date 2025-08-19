@@ -9,6 +9,9 @@ Messages flagged ``delete_on_read`` are purged immediately once read.
 ``JWT_COOKIE_CSRF_PROTECT``. All POST/PUT/DELETE endpoints therefore require the
 ``X-CSRF-TOKEN`` header or a ``csrf_token`` form field when authentication
 cookies are used.
+
+2025 refactor: message cleanup now uses set-based SQL statements instead of
+per-user loops so large deployments prune expired data efficiently.
 """
 
 import os
@@ -164,64 +167,107 @@ scheduler = BackgroundScheduler()
 
 
 def clean_expired_messages() -> None:
-    """Remove messages past their expiration or conversation retention."""
-    from datetime import timedelta
-    from .models import (
-        Message,
-        User,
-        Group,
-        GroupMember,
-        ConversationRetention,
-    )
+    """Remove messages past their expiration or retention policies.
+
+    The previous implementation iterated over every user and evaluated
+    retention rules in Python. That approach issued numerous small queries and
+    scaled poorly. The refactored version below performs set-based ``DELETE``
+    statements driven by SQL subqueries so that cleanup cost grows primarily
+    with the number of messages requiring removal rather than total user
+    count. All deletions are committed in a single transaction.
+    """
+
+    from sqlalchemy import and_, func, literal, or_, select
+    from .models import ConversationRetention, Group, Message, User
 
     with app.app_context():
         now = datetime.utcnow()
+        now_seconds = int(now.timestamp())
 
-        def _retention_for(uid: int, msg: Message) -> int:
-            """Return retention days for ``msg`` from ``uid``'s perspective."""
-            if msg.group_id:
-                grp = db.session.get(Group, msg.group_id)
-                if grp and grp.retention_days:
-                    return grp.retention_days
-            else:
-                peer = msg.recipient_id if msg.sender_id == uid else msg.sender_id
-                rec = ConversationRetention.query.filter_by(owner_id=uid, peer_id=peer).first()
-                if rec:
-                    return rec.retention_days
-            user = db.session.get(User, uid)
-            return user.message_retention_days
+        # ``strftime`` is SQLite specific while ``extract`` works for PostgreSQL.
+        # Selecting the appropriate function keeps the comparison portable.
+        if db.session.bind.dialect.name == "sqlite":
+            msg_ts = func.strftime("%s", Message.timestamp)
+        else:  # pragma: no cover - exercised in non-sqlite deployments
+            msg_ts = func.extract("epoch", Message.timestamp)
 
-        # Delete any messages with an explicit expires_at timestamp in the past.
-        expired = Message.query.filter(
+        # --- Explicit per-message expiration ---------------------------------
+        expired_stmt = db.delete(Message).where(
             Message.expires_at.is_not(None), Message.expires_at <= now
-        ).all()
-        for msg in expired:
-            if db.session.get(Message, msg.id) is None:
-                continue
-            db.session.delete(msg)
+        )
+        db.session.execute(expired_stmt.execution_options(synchronize_session=False))
 
-        # Per-user retention policy: prune read messages older than the user's
-        # configured duration. Each message may be checked multiple times if it
-        # involves multiple users, but deletion is idempotent.
-        users = User.query.all()
-        for user in users:
-            msgs = Message.query.filter(
-                Message.read.is_(True),
-                ((Message.sender_id == user.id) | (Message.recipient_id == user.id)),
-            ).all()
-            for msg in msgs:
-                days = _retention_for(user.id, msg)
-                cutoff = now - timedelta(days=days)
-                if msg.timestamp <= cutoff:
-                    if db.session.get(Message, msg.id) is None:
-                        continue
-                    db.session.delete(msg)
+        # --- Direct conversation retention -----------------------------------
+        sender_retention = func.coalesce(
+            # Retention override defined by the sender
+            select(ConversationRetention.retention_days)
+            .where(
+                ConversationRetention.owner_id == Message.sender_id,
+                ConversationRetention.peer_id == Message.recipient_id,
+            )
+            .correlate(Message)
+            .scalar_subquery(),
+            # Fallback to the sender's default retention setting
+            select(User.message_retention_days)
+            .where(User.id == Message.sender_id)
+            .correlate(Message)
+            .scalar_subquery(),
+        )
 
-        if expired or users:
-            db.session.commit()
-            from .resources import remove_orphan_files
+        recipient_retention = func.coalesce(
+            select(ConversationRetention.retention_days)
+            .where(
+                ConversationRetention.owner_id == Message.recipient_id,
+                ConversationRetention.peer_id == Message.sender_id,
+            )
+            .correlate(Message)
+            .scalar_subquery(),
+            select(User.message_retention_days)
+            .where(User.id == Message.recipient_id)
+            .correlate(Message)
+            .scalar_subquery(),
+        )
 
-            remove_orphan_files()
+        sender_seconds = sender_retention * literal(86400)
+        recipient_seconds = recipient_retention * literal(86400)
+
+        direct_condition = and_(
+            Message.group_id.is_(None),
+            Message.read.is_(True),
+            or_(
+                now_seconds - msg_ts >= sender_seconds,
+                now_seconds - msg_ts >= recipient_seconds,
+            ),
+        )
+
+        # --- Group conversation retention ------------------------------------
+        group_retention = func.coalesce(
+            select(Group.retention_days)
+            .where(Group.id == Message.group_id)
+            .correlate(Message)
+            .scalar_subquery(),
+            select(User.message_retention_days)
+            .where(User.id == Message.sender_id)
+            .correlate(Message)
+            .scalar_subquery(),
+        )
+        group_seconds = group_retention * literal(86400)
+
+        group_condition = and_(
+            Message.group_id.is_not(None),
+            Message.read.is_(True),
+            now_seconds - msg_ts >= group_seconds,
+        )
+
+        retention_stmt = db.delete(Message).where(or_(direct_condition, group_condition))
+        db.session.execute(retention_stmt.execution_options(synchronize_session=False))
+
+        # Commit once after all deletions to minimize database overhead.
+        db.session.commit()
+
+        from .resources import remove_orphan_files
+
+        remove_orphan_files()
 
 
 def clean_expired_push_tokens() -> None:

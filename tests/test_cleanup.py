@@ -1,4 +1,10 @@
-"""Verify that expired messages are removed by the background job."""
+"""Regression tests for the periodic message cleanup routine.
+
+These tests exercise the edge cases for :func:`clean_expired_messages`,
+including expired timestamps, user and conversation retention rules and the
+overall transaction behavior.  The intent is to ensure that the set-based SQL
+implementation continues to behave correctly as the code evolves.
+"""
 
 from datetime import datetime, timedelta
 import base64
@@ -158,3 +164,62 @@ def test_conversation_longer_retention(client):
 
     with app.app_context():
         assert db.session.get(Message, mid) is not None
+
+
+def test_cleanup_commits_once(monkeypatch, client):
+    """Cleanup should commit a single transaction even for many deletions.
+
+    The refactored cleanup uses set-based statements and must therefore only
+    call ``db.session.commit`` once regardless of how many messages qualify for
+    removal. This test patches ``commit`` to count invocations and ensures that
+    multiple deletions still result in a single commit.
+    """
+
+    reg = register_user(client, "alice")
+    pk = decrypt_private_key(reg)
+    token = login_user(client, "alice").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    payload = base64.b64encode(b"tmp").decode()
+    sig = sign_content(pk, payload)
+
+    # One message expires explicitly, another relies on retention policy
+    past = (datetime.utcnow() - timedelta(days=2)).isoformat()
+    resp1 = client.post(
+        "/api/messages",
+        data={"content": payload, "recipient": "alice", "signature": sig, "expires_at": past},
+        headers=headers,
+    )
+    resp2 = client.post(
+        "/api/messages",
+        data={"content": payload, "recipient": "alice", "signature": sig},
+        headers=headers,
+    )
+    mid2 = resp2.get_json()["id"]
+    client.post(f"/api/messages/{mid2}/read", headers=headers)
+
+    # Retain read messages for only one day
+    client.put(
+        "/api/account-settings",
+        json={"messageRetentionDays": 1},
+        headers=headers,
+    )
+    with app.app_context():
+        msg = db.session.get(Message, mid2)
+        msg.timestamp = datetime.utcnow() - timedelta(days=2)
+        db.session.commit()
+
+    commits = {"count": 0}
+    original_commit = db.session.commit
+
+    def counting_commit():
+        commits["count"] += 1
+        original_commit()
+
+    monkeypatch.setattr(db.session, "commit", counting_commit)
+
+    clean_expired_messages()
+
+    with app.app_context():
+        assert commits["count"] == 1
+        assert Message.query.count() == 0
