@@ -38,6 +38,8 @@ uses this information to block unauthorized reuse of attachments.
 loading entire histories, improving performance for large conversations.
 2030 update: ``remove_orphan_files`` now performs a bulk SQL deletion to purge
 unreferenced uploads in a single transaction, reducing session overhead.
+2031 update: Push token endpoints deduplicate tokens via SHA-256 hashes to
+support random nonces during encryption.
 """
 
 # 2024 update: Introduced Argon2 password hashing via ``PasswordHasher`` and
@@ -65,6 +67,7 @@ from cryptography.exceptions import InvalidSignature, InvalidTag
 from base64 import b64encode, b64decode
 import binascii
 import os
+from hashlib import sha256
 from typing import Optional, Tuple
 from .models import User, Message, PinnedKey, PushToken
 from .models import Group, GroupMember, File, ConversationRetention
@@ -1311,8 +1314,12 @@ class PushTokenResource(Resource):
 
         platform = data.get("platform", "ios")
         user_id = int(get_jwt_identity())
-        enc = PushToken.encrypt_value(token)
-        pt = PushToken.query.filter_by(user_id=user_id, token=enc).first()
+        # Hash the plaintext token so duplicate tokens can be detected without
+        # storing deterministic ciphertext. The hash is used in queries instead
+        # of encrypting the value again, which now yields a random nonce each
+        # time.
+        token_hash = sha256(token.encode()).hexdigest()
+        pt = PushToken.query.filter_by(user_id=user_id, token_hash=token_hash).first()
         if pt:
             pt.platform = platform
         else:
@@ -1334,8 +1341,11 @@ class PushTokenResource(Resource):
             return {"message": "Token is required."}, 400
 
         user_id = int(get_jwt_identity())
-        enc = PushToken.encrypt_value(token)
-        pt = PushToken.query.filter_by(user_id=user_id, token=enc).first()
+        # Recompute the hash to locate the existing row for deletion. The actual
+        # ciphertext stored in ``token`` cannot be reproduced because a random
+        # nonce was used during encryption.
+        token_hash = sha256(token.encode()).hexdigest()
+        pt = PushToken.query.filter_by(user_id=user_id, token_hash=token_hash).first()
         if pt:
             db.session.delete(pt)
             try:

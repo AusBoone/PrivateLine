@@ -10,6 +10,8 @@ purge old messages.
 reused by unauthorized users before a message claims them.
 2029 update: :class:`PushToken.token` gracefully handles legacy plaintext
 entries and logs unexpected decryption failures.
+2031 update: :class:`PushToken` now uses a random nonce and stored hash to
+deduplicate tokens without leaking plaintext.
 """
 
 from .app import db
@@ -209,17 +211,20 @@ class PinnedKey(db.Model):
 class PushToken(db.Model):
     """Store push notification tokens for a user.
 
-    The ``token`` property transparently encrypts values using AES-GCM so the
-    database never stores plaintext push identifiers. The encrypted bytes are
-    base64 encoded for portability. A deterministic nonce derived from the
-    plaintext ensures the same ciphertext is produced for duplicate tokens,
-    allowing the existing unique constraint to function as before.
+    Tokens are encrypted with AES-GCM using a **random 12-byte nonce** so the
+    database never stores plaintext push identifiers. The nonce is prefixed to
+    the ciphertext before base64 encoding. Because random nonces produce unique
+    ciphertext for identical tokens, a SHA-256 ``token_hash`` column tracks a
+    deterministic digest to enforce uniqueness per user without revealing the
+    original token.
     """
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     # Encrypted push token stored as base64 nonce+ciphertext
     token_ciphertext = db.Column("token", db.Text, nullable=False)
+    # SHA-256 hash of the plaintext token used for deduplication
+    token_hash = db.Column(db.String(64), nullable=False, index=True)
     platform = db.Column(db.String(16), nullable=False)
     # ``created_at`` records when the token was stored so old entries can be
     # removed automatically by a cleanup job. The timestamp defaults to the
@@ -227,18 +232,20 @@ class PushToken(db.Model):
     created_at = db.Column(
         db.DateTime, nullable=False, default=datetime.utcnow, index=True
     )
-    __table_args__ = (db.UniqueConstraint("user_id", "token", name="uix_user_token"),)
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "token_hash", name="uix_user_token"),
+    )
 
     # --- Encryption helpers -------------------------------------------------
     @staticmethod
-    def _derive_nonce(token: str) -> bytes:
-        """Return a 12-byte nonce derived from ``token``."""
-        return sha256(token.encode()).digest()[:12]
+    def _generate_nonce() -> bytes:
+        """Return a cryptographically secure random 12-byte nonce."""
+        return os.urandom(12)
 
     @classmethod
     def encrypt_value(cls, token: str) -> str:
-        """Return base64-encoded ciphertext for ``token``."""
-        nonce = cls._derive_nonce(token)
+        """Return base64-encoded nonce+ciphertext for ``token``."""
+        nonce = cls._generate_nonce()
         ciphertext = _aesgcm.encrypt(nonce, token.encode(), None)
         return b64encode(nonce + ciphertext).decode()
 
@@ -298,4 +305,11 @@ class PushToken(db.Model):
 
     @token.setter
     def token(self, value: str) -> None:
+        """Encrypt ``value`` and store ciphertext and hash.
+
+        An empty token is rejected to avoid storing meaningless values.
+        """
+        if not value:
+            raise ValueError("Token must be non-empty")
         self.token_ciphertext = self.encrypt_value(value)
+        self.token_hash = sha256(value.encode()).hexdigest()
