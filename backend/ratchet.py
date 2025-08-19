@@ -22,15 +22,20 @@ conversation pair obtains exactly one :class:`DoubleRatchet` instance.
 
 # 2025 update: Introduced synchronization around store creation and lookup to
 # ensure thread-safe behaviour under parallel requests.
+# 2025 update 2: Added configurable in-memory cache with LRU/TTL eviction to
+# bound memory usage of per-conversation ratchets.  Entries are evicted when
+# exceeding ``RATCHET_MAX_CACHE`` or after ``RATCHET_CACHE_TTL`` seconds.
 """
 
 from __future__ import annotations
 
 import os
+from collections import OrderedDict
 from dataclasses import dataclass
 from hashlib import sha256
 from threading import Lock
-from typing import Dict, Tuple
+from time import time
+from typing import Tuple
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -83,18 +88,84 @@ class DoubleRatchet:
 class RatchetStore:
     """In-memory collection of ratchets keyed by sender and receiver.
 
-    The store caches a :class:`DoubleRatchet` for every conversation pair.  A
-    lock protects the underlying dictionary so multiple threads can request
-    ratchets concurrently without creating duplicate entries.
+    The store caches a :class:`DoubleRatchet` for every conversation pair.  To
+    prevent unbounded memory growth the cache supports two eviction strategies:
+
+    * **LRU** – when the number of entries exceeds ``RATCHET_MAX_CACHE`` the
+      least recently used ratchet is discarded.
+    * **TTL** – if ``RATCHET_CACHE_TTL`` is greater than zero, ratchets older
+      than the configured number of seconds are removed on each lookup.
+
+    Both settings are optional; defaults allow unlimited entries with no
+    expiration.  A lock protects all cache operations so multiple threads may
+    interact safely.
     """
 
     def __init__(self, master_key: bytes):
+        """Create a new store with configurable eviction policies.
+
+        Environment variables are consulted to configure cache behaviour:
+
+        ``RATCHET_MAX_CACHE``
+            Maximum number of active ratchets to retain. ``0`` means unlimited.
+        ``RATCHET_CACHE_TTL``
+            Time-to-live for each ratchet in seconds. ``0`` disables expiry.
+
+        Invalid values raise :class:`ValueError` to fail fast during start-up.
+        """
+
         # Master key from which per-conversation ratchets are derived.
         self.master_key = master_key
-        # Mapping of (sender, receiver) -> DoubleRatchet instances.
-        self._store: Dict[Tuple[str, str], DoubleRatchet] = {}
+
+        # Parse configuration knobs from environment variables with validation.
+        self.max_cache = self._read_env_int("RATCHET_MAX_CACHE", default=0)
+        self.ttl = self._read_env_float("RATCHET_CACHE_TTL", default=0.0)
+
+        # Ordered mapping of (sender, receiver) -> (DoubleRatchet, last access).
+        # ``OrderedDict`` enables efficient LRU eviction by popping the oldest
+        # item when the cache exceeds ``max_cache``.
+        self._store: "OrderedDict[Tuple[str, str], Tuple[DoubleRatchet, float]]" = OrderedDict()
+
         # Lock guarding access to ``_store`` for thread-safe lookups.
         self._lock = Lock()
+
+    @staticmethod
+    def _read_env_int(name: str, default: int) -> int:
+        """Return a non-negative integer from ``name`` or ``default``.
+
+        Raises ``ValueError`` when the environment variable contains a negative
+        or non-integer value. A value of ``0`` indicates "no limit".
+        """
+
+        value = os.getenv(name)
+        if value is None:
+            return default
+        try:
+            result = int(value)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be an integer") from exc
+        if result < 0:
+            raise ValueError(f"{name} must be >= 0")
+        return result
+
+    @staticmethod
+    def _read_env_float(name: str, default: float) -> float:
+        """Return a non-negative float from ``name`` or ``default``.
+
+        Negative or non-numeric values raise ``ValueError``. ``0`` disables the
+        associated feature (e.g. TTL).
+        """
+
+        value = os.getenv(name)
+        if value is None:
+            return default
+        try:
+            result = float(value)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be a number") from exc
+        if result < 0:
+            raise ValueError(f"{name} must be >= 0")
+        return result
 
     def _initial_root(self, a: str, b: str) -> bytes:
         """Derive a deterministic root key for the conversation."""
@@ -108,25 +179,62 @@ class RatchetStore:
         )
         return hkdf.derive(self.master_key)
 
+    def _evict_expired(self, now: float) -> None:
+        """Remove cached ratchets whose age exceeds ``ttl``.
+
+        Iterates from the least recently used item forward, exiting early once a
+        fresh entry is encountered. This keeps the check efficient even for
+        larger caches.
+        """
+
+        if self.ttl <= 0:
+            return
+        while self._store:
+            key, (_, ts) = next(iter(self._store.items()))
+            if now - ts > self.ttl:
+                # Discard oldest item and continue in case multiple expired.
+                self._store.popitem(last=False)
+            else:
+                break
+
+    def _enforce_size(self) -> None:
+        """Ensure cache size stays within ``max_cache`` via LRU eviction."""
+
+        if self.max_cache > 0 and len(self._store) > self.max_cache:
+            # ``popitem(last=False)`` removes the least recently used entry.
+            self._store.popitem(last=False)
+
     def get(self, sender: str, receiver: str) -> DoubleRatchet:
         """Return the ratchet used when ``sender`` sends to ``receiver``.
 
-        The lookup uses "double-checked locking" so threads only acquire
-        ``_lock`` when a ratchet is missing.  This minimizes contention while
-        still ensuring that exactly one :class:`DoubleRatchet` is created per
-        sender/receiver pair.
+        All lookups are wrapped in a lock so that eviction and timestamp updates
+        remain consistent across threads. The caller receives a
+        :class:`DoubleRatchet` instance; expired entries are transparently
+        recreated.
         """
+
         key = (sender, receiver)
-        ratchet = self._store.get(key)
-        if ratchet is None:
-            # Two threads may race to create the same ratchet; lock and check
-            # again to ensure only one instance is stored.
-            with self._lock:
-                ratchet = self._store.get(key)
-                if ratchet is None:
-                    ratchet = DoubleRatchet(self._initial_root(*key))
-                    self._store[key] = ratchet
-        return ratchet
+        now = time()
+        with self._lock:
+            # Drop any entries that exceeded their TTL prior to servicing this
+            # request. Eviction occurs outside of ``get`` calls as well because
+            # new accesses may trigger clean-up of stale items.
+            self._evict_expired(now)
+
+            ratchet_entry = self._store.get(key)
+            if ratchet_entry is None:
+                ratchet = DoubleRatchet(self._initial_root(*key))
+            else:
+                ratchet = ratchet_entry[0]
+
+            # Record the access time and maintain recency ordering for LRU.
+            self._store[key] = (ratchet, now)
+            self._store.move_to_end(key)
+
+            # Bound memory usage after inserting the new/updated entry.
+            self._enforce_size()
+
+            return ratchet
 
 
 # Global store used by resources. The AES_KEY constant is imported lazily to
