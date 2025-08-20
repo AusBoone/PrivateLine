@@ -40,6 +40,9 @@ loading entire histories, improving performance for large conversations.
 unreferenced uploads in a single transaction, reducing session overhead.
 2031 update: Push token endpoints deduplicate tokens via SHA-256 hashes to
 support random nonces during encryption.
+2032 update: File downloads now authorize access via a single SQL join query,
+eliminating per-message iteration when verifying group membership or
+conversation participation.
 """
 
 # 2024 update: Introduced Argon2 password hashing via ``PasswordHasher`` and
@@ -854,22 +857,47 @@ class FileDownload(Resource):
         f = db.session.get(File, file_id)
         if not f:
             return {"message": "Not found"}, 404
-        # Verify the requester either uploaded the file or is associated with a
-        # message that references it. This allows the original uploader to
-        # retrieve the file even before it is attached to any message.
+        # Determine if the requester is permitted to access the file.  A user is
+        # authorized when they originally uploaded the file *or* when at least
+        # one message referencing the file involves them.  Previous versions
+        # loaded every related message and iterated in Python to check group
+        # membership or direct-message participation.  The logic below performs
+        # a single SQL query joining ``Message`` and ``GroupMember`` so the
+        # database handles the checks efficiently.
         authorized = f.uploader_id == uid
         if not authorized:
-            msgs = Message.query.filter_by(file_id=file_id).all()
-            for msg in msgs:
-                if msg.group_id:
-                    if GroupMember.query.filter_by(
-                        group_id=msg.group_id, user_id=uid
-                    ).first():
-                        authorized = True
-                        break
-                elif msg.sender_id == uid or msg.recipient_id == uid:
-                    authorized = True
-                    break
+            from sqlalchemy import and_, or_
+
+            authorized = (
+                db.session.query(Message.id)
+                .outerjoin(
+                    GroupMember,
+                    and_(
+                        Message.group_id == GroupMember.group_id,
+                        GroupMember.user_id == uid,
+                    ),
+                )
+                .filter(
+                    Message.file_id == file_id,
+                    or_(
+                        # Direct messages: group_id is NULL and the user is the
+                        # sender or recipient.
+                        and_(
+                            Message.group_id.is_(None),
+                            or_(
+                                Message.sender_id == uid,
+                                Message.recipient_id == uid,
+                            ),
+                        ),
+                        # Group messages: a matching ``GroupMember`` row proves
+                        # membership in the group referencing the file.
+                        GroupMember.id.isnot(None),
+                    ),
+                )
+                .limit(1)
+                .first()
+                is not None
+            )
 
         if not authorized:
             return {"message": "Forbidden"}, 403

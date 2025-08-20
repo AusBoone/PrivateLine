@@ -67,7 +67,7 @@ def test_file_upload_download(client):
 
 
 def test_file_download_authorization(client):
-    """Only the sender or recipient should be able to download a file."""
+    """Direct message participants may download the file while others are denied."""
     reg_a = register_user(client, "alice")
     pk_a = decrypt_private_key(reg_a)
     register_user(client, "bob")
@@ -95,8 +95,79 @@ def test_file_download_authorization(client):
         headers=headers_a,
     )
 
+    # Allow two downloads so both authorized and unauthorized checks can run.
+    with app.app_context():
+        record = db.session.get(File, fid)
+        record.max_downloads = 2
+        db.session.commit()
+
+    # Recipient should succeed in retrieving the attachment.
+    token_b = login_user(client, "bob").get_json()["access_token"]
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+    resp = client.get(f"/api/files/{fid}", headers=headers_b)
+    assert resp.status_code == 200
+    assert resp.data == b"secret"
+
+    # Unrelated users must be rejected even if a message references the file.
     token_c = login_user(client, "carol").get_json()["access_token"]
     headers_c = {"Authorization": f"Bearer {token_c}"}
+    resp = client.get(f"/api/files/{fid}", headers=headers_c)
+    assert resp.status_code == 403
+
+
+def test_group_file_download_authorization(client):
+    """Group members should download shared files, outsiders must be denied."""
+    reg_a = register_user(client, "alice")
+    pk_a = decrypt_private_key(reg_a)
+    register_user(client, "bob")
+    register_user(client, "carol")
+
+    # Authenticate all users for subsequent requests.
+    token_a = login_user(client, "alice").get_json()["access_token"]
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    token_b = login_user(client, "bob").get_json()["access_token"]
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+    token_c = login_user(client, "carol").get_json()["access_token"]
+    headers_c = {"Authorization": f"Bearer {token_c}"}
+
+    # Alice creates a group and invites Bob.
+    resp = client.post("/api/groups", json={"name": "team"}, headers=headers_a)
+    gid = resp.get_json()["id"]
+    client.post(
+        f"/api/groups/{gid}/members", json={"username": "bob"}, headers=headers_a
+    )
+
+    # Alice uploads a file and attaches it to a group message.
+    fs = FileStorage(
+        stream=io.BytesIO(b"groupdata"), filename="g.txt", content_type="text/plain"
+    )
+    resp = client.post(
+        "/api/files",
+        data={"file": fs},
+        headers=headers_a,
+        content_type="multipart/form-data",
+    )
+    fid = resp.get_json()["file_id"]
+    b64 = base64.b64encode(b"hello").decode()
+    sig = sign_content(pk_a, b64)
+    client.post(
+        f"/api/groups/{gid}/messages",
+        data={"content": b64, "signature": sig, "file_id": fid},
+        headers=headers_a,
+    )
+
+    # Permit two downloads so both membership checks can run.
+    with app.app_context():
+        record = db.session.get(File, fid)
+        record.max_downloads = 2
+        db.session.commit()
+
+    # Group member Bob should retrieve the file successfully.
+    resp = client.get(f"/api/files/{fid}", headers=headers_b)
+    assert resp.status_code == 200
+    assert resp.data == b"groupdata"
+
+    # Carol is not in the group and must be denied access.
     resp = client.get(f"/api/files/{fid}", headers=headers_c)
     assert resp.status_code == 403
 
