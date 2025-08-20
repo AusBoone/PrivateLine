@@ -269,22 +269,33 @@ def test_push_token_cleanup(monkeypatch, client):
     )
 
     # Move creation time far into the past so the cleanup job will remove it
-    # regardless of scheduling delays during test execution.
+    # regardless of scheduling delays during test execution. The cleanup is run
+    # inside the same application context so the in-memory SQLite database
+    # remains accessible when ``clean_expired_push_tokens`` opens its own session.
     with app.app_context():
         db.create_all()
         tok = PushToken.query.first()
         tok.created_at = datetime.utcnow() - timedelta(days=1)
         db.session.commit()
+        # Detach the instance so the cleanup routine can operate with a
+        # fresh session without encountering cross-session conflicts.
+        db.session.expunge_all()
 
-    # Set the TTL to zero days so all existing tokens qualify for deletion.
-    monkeypatch.setattr("backend.app.PUSH_TOKEN_TTL_DAYS", 0)
-    from backend.app import clean_expired_push_tokens
+        # Set the TTL to zero days so all existing tokens qualify for deletion.
+        import backend.app as appmod
 
-    clean_expired_push_tokens()
+        _orig_ttl = appmod.PUSH_TOKEN_TTL_DAYS
+        appmod.PUSH_TOKEN_TTL_DAYS = 0
+        try:
+            from backend.app import clean_expired_push_tokens
 
-    with app.app_context():
-        h = sha256(b"oldtok").hexdigest()
-        assert PushToken.query.filter_by(token_hash=h).first() is None
+            clean_expired_push_tokens()
+
+            h = sha256(b"oldtok").hexdigest()
+            assert PushToken.query.filter_by(token_hash=h).first() is None
+        finally:
+            # Restore original TTL for subsequent tests.
+            appmod.PUSH_TOKEN_TTL_DAYS = _orig_ttl
 
 
 def test_users_endpoint(client):

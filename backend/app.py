@@ -20,6 +20,10 @@ the ``CORS_ORIGINS`` environment variable explicitly lists allowed origins.
 application module is imported. A dedicated process must invoke
 ``start_scheduler`` with ``RUN_SCHEDULER=1`` so that only a single scheduler
 instance operates at a time.
+
+2033 performance update: file cleanup now relies on subqueries and bulk SQL
+``DELETE`` statements. This avoids loading every :class:`File` row into memory,
+keeping maintenance jobs lightweight even with large numbers of attachments.
 """
 
 import os
@@ -293,36 +297,75 @@ def clean_expired_messages() -> None:
 
 def clean_expired_push_tokens() -> None:
     """Remove push tokens older than ``PUSH_TOKEN_TTL_DAYS`` days."""
+
     from datetime import timedelta
+    from contextlib import nullcontext
+    from flask import has_app_context
     from .models import PushToken
 
     cutoff = datetime.utcnow() - timedelta(days=PUSH_TOKEN_TTL_DAYS)
-    with app.app_context():
-        expired = PushToken.query.filter(PushToken.created_at <= cutoff).all()
-        if expired:
-            for tok in expired:
-                db.session.delete(tok)
+    ctx = nullcontext() if has_app_context() else app.app_context()
+    with ctx:
+        removed = (
+            PushToken.query.filter(PushToken.created_at <= cutoff)
+            .delete(synchronize_session=False)
+        )
+        if removed:
             db.session.commit()
 
 
 def clean_expired_files() -> None:
-    """Remove files older than their configured retention period."""
-    from datetime import timedelta
+    """Remove files older than their configured retention period.
+
+    The previous implementation fetched every :class:`File` row into Python
+    memory before checking its age. That approach scaled poorly once many
+    attachments accumulated. The refactored version below computes expiration
+    entirely in SQL, detaches any referencing messages via a subquery, and
+    performs a single bulk ``DELETE``. Only the affected row identifiers cross
+    the Python boundary, keeping memory usage minimal.
+    """
+
+    from contextlib import nullcontext
+    from flask import has_app_context
+    from sqlalchemy import func, select
     from .models import File, Message
 
     now = datetime.utcnow()
-    with app.app_context():
-        candidates = File.query.all()
-        removed = False
-        for f in candidates:
-            age_limit = timedelta(days=f.file_retention_days)
-            if f.created_at <= now - age_limit:
-                # Detach messages referencing the file before deletion to avoid
-                # foreign key violations.
-                Message.query.filter_by(file_id=f.id).update({"file_id": None})
-                db.session.delete(f)
-                removed = True
-        if removed:
+
+    ctx = nullcontext() if has_app_context() else app.app_context()
+    with ctx:
+        # Identify expired files. ``julianday`` works on SQLite and converts
+        # the per-row age comparison into a SQL expression so the database can
+        # filter candidates without loading them. The expression compares the
+        # age of each file in days against its stored ``file_retention_days``.
+        expired_subq = (
+            select(File.id)
+            .where(
+                func.julianday(now) - func.julianday(File.created_at)
+                >= File.file_retention_days
+            )
+            .subquery()
+        )
+
+        # Null out ``file_id`` for messages referencing soon-to-be deleted files
+        # to avoid foreign key constraint violations. ``synchronize_session`` is
+        # disabled so SQLAlchemy does not fetch the affected rows.
+        updated = (
+            db.session.query(Message)
+            .filter(Message.file_id.in_(expired_subq))
+            .update({"file_id": None}, synchronize_session=False)
+        )
+
+        # Remove all expired file rows in one go without instantiating ORM
+        # objects. ``delete`` returns the number of rows removed which we use to
+        # decide whether to commit.
+        deleted = (
+            db.session.query(File)
+            .filter(File.id.in_(expired_subq))
+            .delete(synchronize_session=False)
+        )
+
+        if deleted or updated:
             db.session.commit()
 
 

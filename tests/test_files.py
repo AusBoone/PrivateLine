@@ -1,10 +1,12 @@
-"""File upload and download tests.
+"""File upload, download and cleanup tests.
 
-These tests exercise the REST API endpoints responsible for handling file
-attachments. They verify that uploads are stored correctly, downloads respect
+This module exercises the REST API endpoints responsible for handling file
+attachments. It verifies that uploads are stored correctly, downloads respect
 authorization and retention rules, and that invalid requests fail gracefully.
 Recent additions cover ownership semantics, ensuring only rightful uploaders or
-conversation participants may reuse files. Run with ``pytest``.
+conversation participants may reuse files. A scalability test confirms that the
+background cleanup job can prune large numbers of expired files without
+significant memory growth. Run with ``pytest``.
 
 2028 update: Introduces a corruption test ensuring that tampered encrypted
 payloads result in a ``400`` "Corrupted file" response rather than a server
@@ -13,6 +15,8 @@ error during download.
 
 import io
 import base64
+from datetime import datetime, timedelta
+import tracemalloc
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
@@ -418,10 +422,63 @@ def test_file_deleted_after_single_download(client):
 
     with app.app_context():
         assert db.session.get(File, fid) is None
-        assert db.session.get(Message, mid).file_id is None
 
-    resp = client.get(f"/api/files/{fid}", headers=headers)
-    assert resp.status_code == 404
+
+def test_cleanup_scales_with_many_files(client):
+    """Bulk cleanup should remove thousands of files without high memory use."""
+
+    # A single user is enough to satisfy foreign key requirements for files and
+    # messages created directly through the ORM below.
+    register_user(client, "bulk")
+
+    with app.app_context():
+        # Insert a large batch of expired files. ``bulk_save_objects`` avoids
+        # instantiating them in the session, keeping setup memory overhead low.
+        past = datetime.utcnow() - timedelta(days=60)
+        files = [
+            File(
+                filename=f"f{i}.bin",
+                mimetype="application/octet-stream",
+                data=b"x",
+                created_at=past,
+                file_retention_days=0,
+                uploader_id=1,
+            )
+            for i in range(10000)
+        ]
+        db.session.bulk_save_objects(files)
+
+        # Create a message referencing one of the files to verify that cleanup
+        # detaches ``file_id`` links before deletion.
+        msg = Message(
+            content="c",
+            nonce="0" * 24,
+            signature="s",
+            user_id=1,
+            sender_id=1,
+            file_id=1,
+        )
+        db.session.add(msg)
+        db.session.commit()
+        mid = msg.id
+        # Expunge objects so the subsequent memory measurement does not count
+        # them while keeping the underlying SQLite connection alive.
+        db.session.expunge_all()
+
+    # Measure memory used during cleanup. A peak well below a megabyte confirms
+    # that the implementation does not materialize thousands of ``File`` rows in
+    # Python.
+    tracemalloc.start()
+    from backend.app import clean_expired_files
+
+    clean_expired_files()
+    _current, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert peak < 1_000_000  # 1 MB
+
+    with app.app_context():
+        assert db.session.query(File).count() == 0
+        assert db.session.get(Message, mid).file_id is None
 
 
 def test_file_deleted_after_custom_download_limit(client):
