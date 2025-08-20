@@ -907,8 +907,13 @@ class FileDownload(Resource):
         return resp
 
 
-def remove_orphan_files() -> None:
+def remove_orphan_files(commit: bool = True) -> None:
     """Delete uploaded files that are not referenced by any message.
+
+    Parameters:
+        commit: When ``True`` (the default), the function commits the transaction
+            after removing orphans. Callers performing multiple cleanup steps in
+            a single transaction may pass ``False`` and commit manually.
 
     Using :meth:`Query.delete` issues a single bulk SQL statement that removes
     all unreferenced :class:`File` rows in one transaction. This avoids loading
@@ -923,8 +928,9 @@ def remove_orphan_files() -> None:
         File.query.filter(~exists().where(Message.file_id == File.id))
         .delete(synchronize_session=False)
     )
-    # Commit once to finalize the cleanup regardless of how many rows were removed.
-    db.session.commit()
+    # Commit once to finalize the cleanup unless the caller will handle it.
+    if commit:
+        db.session.commit()
 
 
 class Messages(Resource):

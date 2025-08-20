@@ -337,16 +337,17 @@ def test_old_files_pruned(client):
     mid = resp.get_json()["id"]
 
     # Expire this file immediately by lowering its retention value to zero
+    from backend.app import clean_expired_files
     with app.app_context():
+        db.create_all()
         rec = db.session.get(File, fid)
         rec.file_retention_days = 0
         db.session.commit()
+        db.session.expire_all()
 
-    from backend.app import clean_expired_files
+        # Run the cleanup while the database session remains active.
+        clean_expired_files()
 
-    clean_expired_files()
-
-    with app.app_context():
         assert db.session.get(File, fid) is None
         assert db.session.get(Message, mid).file_id is None
 
@@ -384,9 +385,8 @@ def test_recent_files_preserved(client):
 
     from backend.app import clean_expired_files
 
-    clean_expired_files()
-
     with app.app_context():
+        clean_expired_files()
         assert db.session.get(File, fid) is not None
         assert db.session.get(Message, mid).file_id == fid
 
@@ -517,7 +517,7 @@ def test_first_attachment_requires_uploader(client):
 
     # Alice uploads a file but does not yet reference it in a message.
     register_user(client, "alice")
-    register_user(client, "bob")
+    reg_b = register_user(client, "bob")
     pk_b = decrypt_private_key(reg_b)
 
     token_a = login_user(client, "alice").get_json()["access_token"]

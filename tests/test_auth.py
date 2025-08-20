@@ -8,8 +8,9 @@ gracefully handles malformed inputs.
 import base64
 import io
 from hashlib import sha256
+from datetime import datetime, timedelta
 
-from backend.app import app
+from backend.app import app, db
 from backend.models import User, PushToken
 from backend.resources import verify_password
 from werkzeug.security import generate_password_hash
@@ -266,6 +267,14 @@ def test_push_token_cleanup(monkeypatch, client):
         json={"token": "oldtok", "platform": "web"},
         headers=headers,
     )
+
+    # Move creation time far into the past so the cleanup job will remove it
+    # regardless of scheduling delays during test execution.
+    with app.app_context():
+        db.create_all()
+        tok = PushToken.query.first()
+        tok.created_at = datetime.utcnow() - timedelta(days=1)
+        db.session.commit()
 
     # Set the TTL to zero days so all existing tokens qualify for deletion.
     monkeypatch.setattr("backend.app.PUSH_TOKEN_TTL_DAYS", 0)

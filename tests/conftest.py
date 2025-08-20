@@ -4,8 +4,9 @@ import os
 import base64
 import io
 
-# Flag that ensures the Flask app does not start background schedulers when
-# imported for the test suite.
+# Flag indicating that tests are running. The application no longer starts the
+# background scheduler automatically, but other components may still consult this
+# variable to tweak behaviour during tests.
 os.environ.setdefault("TESTING", "1")
 import pytest
 from base64 import b64decode
