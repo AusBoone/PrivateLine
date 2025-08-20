@@ -24,6 +24,9 @@ instance operates at a time.
 2033 performance update: file cleanup now relies on subqueries and bulk SQL
 ``DELETE`` statements. This avoids loading every :class:`File` row into memory,
 keeping maintenance jobs lightweight even with large numbers of attachments.
+
+2034 security update: Redis is now required for startup and each revoked JWT
+identifier in the blocklist expires automatically to avoid unbounded growth.
 """
 
 import os
@@ -41,7 +44,7 @@ from flask_jwt_extended import (
 )
 from flask_jwt_extended.exceptions import JWTExtendedException
 from flask_socketio import SocketIO, disconnect, join_room
-from datetime import datetime
+from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
 import redis
@@ -138,9 +141,21 @@ def rate_limit_key():
 
 
 _redis_url = os.environ.get("REDIS_URL")
-_limiter_kwargs = {"key_func": rate_limit_key, "app": app}
-if _redis_url:
-    _limiter_kwargs["storage_uri"] = _redis_url
+if not _redis_url:
+    # Persisting JWT revocations across restarts requires a shared Redis
+    # instance. Failing fast on startup avoids silently falling back to an
+    # in-memory set that would forget revoked tokens after a restart.
+    raise RuntimeError("REDIS_URL environment variable not set")
+
+# The rate limiter also relies on a storage backend. In normal operation Redis
+# is used so counters are shared across processes. During tests the ``memory://``
+# backend keeps dependencies lightweight and avoids Redis-specific Lua commands
+# that ``fakeredis`` does not implement.
+_limiter_storage = _redis_url
+if os.environ.get("TESTING") == "1":
+    _limiter_storage = "memory://"
+
+_limiter_kwargs = {"key_func": rate_limit_key, "app": app, "storage_uri": _limiter_storage}
 limiter = Limiter(**_limiter_kwargs)
 
 # Configure app settings. Values can be overridden via environment variables.
@@ -403,32 +418,57 @@ def start_scheduler() -> None:
         atexit.register(lambda: scheduler.shutdown())
 
 # --- JWT Token Blocklist ---
-# Token identifiers (jti) are stored in memory by default.  When a REDIS_URL is
-# configured, use Redis so revoked tokens persist across restarts.
+# Revoked JWT identifiers (JTIs) are stored in Redis so that token revocations
+# survive process restarts. Each entry expires automatically after the JWT's
+# lifetime to prevent the store from growing without bound.
 
 
 class RedisBlocklist:
-    """Simple set-like interface backed by Redis."""
+    """TTL-based token blocklist persisted in Redis.
 
-    def __init__(self, client):
+    The blocklist maintains each revoked token's JTI as an individual key with
+    an expiration. Storing keys separately rather than in a set allows Redis to
+    expire them automatically after ``ttl_seconds``.
+    """
+
+    def __init__(self, client, ttl_seconds: int):
         self.client = client
+        self.ttl_seconds = ttl_seconds
+
+    def _key(self, jti: str) -> str:
+        """Return the Redis key used for ``jti``.
+
+        A dedicated prefix avoids collisions with other application keys.
+        """
+
+        return f"token_block:{jti}"
 
     def add(self, jti: str) -> None:
-        self.client.sadd("token_blocklist", jti)
+        """Store ``jti`` in Redis with an expiration.
+
+        ``setex`` writes the key and sets its TTL atomically so entries are
+        removed automatically once the JWT would have naturally expired.
+        """
+
+        self.client.setex(self._key(jti), self.ttl_seconds, 1)
 
     def __contains__(self, jti: str) -> bool:  # pragma: no cover - trivial
-        return bool(self.client.sismember("token_blocklist", jti))
+        return bool(self.client.exists(self._key(jti)))
 
 
-if _redis_url:
-    try:
-        _redis_client = redis.from_url(_redis_url)
-        token_blocklist = RedisBlocklist(_redis_client)
-    except redis.RedisError:
-        # Fallback to in-memory store if Redis is unreachable
-        token_blocklist = set()
-else:
-    token_blocklist = set()
+# Calculate how long a revoked token should be remembered based on the access
+# token's configured lifetime.
+_exp = app.config.get("JWT_ACCESS_TOKEN_EXPIRES", timedelta(minutes=15))
+_blocklist_ttl = int(_exp if isinstance(_exp, int) else _exp.total_seconds())
+
+try:
+    _redis_client = redis.from_url(_redis_url)
+except redis.RedisError as exc:
+    # Without Redis we cannot persist revocations across restarts, so treat this
+    # as a fatal configuration error.
+    raise RuntimeError("Failed to connect to Redis") from exc
+
+token_blocklist = RedisBlocklist(_redis_client, _blocklist_ttl)
 
 
 @jwt.token_in_blocklist_loader
