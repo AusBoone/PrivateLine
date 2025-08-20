@@ -10,7 +10,8 @@ import io
 from hashlib import sha256
 from datetime import datetime, timedelta
 
-from backend.app import app, db
+import backend.app as backend_app
+from backend.app import app, db, RedisBlocklist
 from backend.models import User, PushToken
 from backend.resources import verify_password
 from werkzeug.security import generate_password_hash
@@ -151,6 +152,36 @@ def test_token_revocation(client):
     new_token = login_user(client, "gina").get_json()["access_token"]
     resp = client.get("/api/messages", headers={"Authorization": f"Bearer {new_token}"})
     assert resp.status_code == 200
+
+
+def test_revoked_token_persists_after_restart(client, monkeypatch):
+    """Revoked tokens remain invalid after a simulated application restart.
+
+    The test revokes a token, recreates the blocklist object to mimic process
+    restart, and ensures the token is still rejected. This confirms that
+    revocations are persisted in Redis and not merely in memory.
+    """
+
+    register_user(client, "iris")
+    token = login_user(client, "iris").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Revoke the token and verify the operation succeeded.
+    assert client.post("/api/revoke", headers=headers).status_code == 200
+
+    # Simulate an application restart by constructing a new RedisBlocklist using
+    # the same underlying ``fakeredis`` instance. Revoked entries should still
+    # exist because Redis persists them until the configured TTL elapses.
+    redis_client = backend_app.token_blocklist.client
+    exp = app.config["JWT_ACCESS_TOKEN_EXPIRES"]
+    ttl = int(exp if isinstance(exp, int) else exp.total_seconds())
+    restarted_blocklist = RedisBlocklist(redis_client, ttl)
+    monkeypatch.setattr("backend.app.token_blocklist", restarted_blocklist)
+    monkeypatch.setattr("backend.resources.token_blocklist", restarted_blocklist)
+
+    # The previously revoked token must still be rejected after "restart".
+    resp = client.get("/api/messages", headers=headers)
+    assert resp.status_code == 401
 
 
 def test_account_deletion(client):

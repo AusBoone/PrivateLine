@@ -8,12 +8,24 @@ import io
 # background scheduler automatically, but other components may still consult this
 # variable to tweak behaviour during tests.
 os.environ.setdefault("TESTING", "1")
+
+# The application now requires Redis at startup. Provide a dummy URL and patch
+# ``redis.from_url`` to use an in-memory fake so tests do not depend on a real
+# Redis instance.
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+
 import pytest
 from base64 import b64decode
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.backends import default_backend
+import fakeredis
+import redis
+
+# Patch ``redis.from_url`` before ``backend.app`` is imported so the application
+# receives a fake client during initialization.
+redis.from_url = lambda *args, **kwargs: fakeredis.FakeRedis()
 
 # Ensure deterministic keys for tests
 os.environ.setdefault("AES_KEY", base64.b64encode(os.urandom(32)).decode())
@@ -26,10 +38,17 @@ from backend.models import User
 
 @pytest.fixture(autouse=True)
 def fake_blocklist(monkeypatch):
-    """Provide an in-memory token blocklist for tests."""
-    import fakeredis
+    """Provide an isolated in-memory token blocklist for tests.
 
-    blocklist = RedisBlocklist(fakeredis.FakeRedis())
+    Each test receives a fresh ``fakeredis`` instance so revocations do not leak
+    between tests. The blocklist uses the same TTL as the application to mimic
+    production behaviour.
+    """
+
+    store = fakeredis.FakeRedis()
+    exp = app.config.get("JWT_ACCESS_TOKEN_EXPIRES")
+    ttl = int(exp if isinstance(exp, int) else exp.total_seconds())
+    blocklist = RedisBlocklist(store, ttl)
     monkeypatch.setattr("backend.app.token_blocklist", blocklist)
     monkeypatch.setattr("backend.resources.token_blocklist", blocklist)
     yield
