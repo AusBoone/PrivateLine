@@ -15,6 +15,11 @@ per-user loops so large deployments prune expired data efficiently.
 
 2026 security hardening: cross-origin requests are disabled by default until
 the ``CORS_ORIGINS`` environment variable explicitly lists allowed origins.
+
+2027 update: background maintenance jobs no longer start automatically when the
+application module is imported. A dedicated process must invoke
+``start_scheduler`` with ``RUN_SCHEDULER=1`` so that only a single scheduler
+instance operates at a time.
 """
 
 import os
@@ -275,12 +280,15 @@ def clean_expired_messages() -> None:
         retention_stmt = db.delete(Message).where(or_(direct_condition, group_condition))
         db.session.execute(retention_stmt.execution_options(synchronize_session=False))
 
-        # Commit once after all deletions to minimize database overhead.
-        db.session.commit()
-
         from .resources import remove_orphan_files
 
-        remove_orphan_files()
+        # Remove any file records left without referencing messages as part of the
+        # same transaction so a single commit finalizes both message and file
+        # cleanup operations.
+        remove_orphan_files(commit=False)
+
+        # Commit once after all deletions to minimize database overhead.
+        db.session.commit()
 
 
 def clean_expired_push_tokens() -> None:
@@ -322,11 +330,34 @@ scheduler.add_job(clean_expired_messages, "interval", minutes=1)
 scheduler.add_job(clean_expired_push_tokens, "interval", hours=1)
 scheduler.add_job(clean_expired_files, "interval", hours=1)
 
-# Avoid background threads during unit tests which manipulate the database
-# concurrently. The scheduler only runs in normal operation.
-if os.environ.get("TESTING") != "1":
-    scheduler.start()
-    atexit.register(lambda: scheduler.shutdown())
+
+def start_scheduler() -> None:
+    """Launch background cleanup jobs when explicitly requested.
+
+    The scheduler performs periodic maintenance such as purging expired
+    messages, stale push tokens and obsolete file uploads. It must run in a
+    single dedicated process to prevent duplicate work or database contention.
+
+    Deployments should start it by running ``backend/scheduler_service.py`` or
+    any custom entry point that sets ``RUN_SCHEDULER=1``. The check below guards
+    against accidental execution when the application module is merely
+    imported, for instance by a WSGI server or the test suite.
+
+    Raises:
+        RuntimeError: if the ``RUN_SCHEDULER`` environment variable is not set
+            to ``"1"``. This prevents the scheduler from running unexpectedly.
+    """
+
+    if os.environ.get("RUN_SCHEDULER") != "1":
+        raise RuntimeError("RUN_SCHEDULER=1 required to start background scheduler")
+
+    # ``scheduler.start`` is idempotent but we guard against multiple invocations
+    # so a misconfigured deployment cannot spawn duplicate threads.
+    if not scheduler.running:
+        scheduler.start()
+        # Ensure the scheduler shuts down cleanly on process exit, releasing
+        # any resources such as database connections.
+        atexit.register(lambda: scheduler.shutdown())
 
 # --- JWT Token Blocklist ---
 # Token identifiers (jti) are stored in memory by default.  When a REDIS_URL is

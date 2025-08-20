@@ -91,7 +91,15 @@ To run the application, follow these steps:
 3. Install backend dependencies with `pip install -r requirements.txt`.
 4. Install frontend dependencies with `npm install` inside the `frontend` directory.
 5. Start the backend with `python backend/app.py` and the frontend with `npm start`.
-6. Open a browser and navigate to the frontend's URL to use the application.
+6. Launch the background scheduler in a **separate process** so cleanup tasks run
+   exactly once. See [docs/scheduler.md](docs/scheduler.md) for detailed
+   instructions. A quick start looks like:
+
+   ```bash
+   RUN_SCHEDULER=1 python -m backend.scheduler_service
+   ```
+
+7. Open a browser and navigate to the frontend's URL to use the application.
 7. After registering a user, persist the returned `encrypted_private_key`, `salt` and `nonce`. The React client stores these values in IndexedDB so the private key can be decrypted on login. The iOS client saves the same values securely in the Keychain.
 
 ### Enabling Secure Cookies
