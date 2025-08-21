@@ -8,6 +8,9 @@ package com.example.privateline
  * TLS certificate pinning now loads the fingerprint from ``BuildConfig`` and
  * the service accepts an optional ``OkHttpClient.Builder`` allowing tests to
  * inject custom trust managers.
+ * login has been refactored to use OkHttp's asynchronous ``enqueue`` API and
+ * dispatches results back to the main thread, preventing UI freezes during
+ * authentication.
  */
 
 /**
@@ -41,6 +44,11 @@ import com.example.privateline.TokenStore
 import com.example.privateline.BuildConfig
 import com.google.gson.Gson
 import com.google.gson.JsonObject
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.Response
+import android.os.Handler
+import android.os.Looper
 
 /**
  * Minimal networking helper mirroring the iOS APIService. Encryption is
@@ -132,34 +140,55 @@ class APIService(private val baseUrl: String, clientBuilder: OkHttpClient.Builde
     }
 
     /**
-     * Perform a login request and cache the returned JWT token. When a
-     * ``context`` is supplied the token is also persisted using
-     * ``TokenStore`` so it can be unlocked later with biometrics.
+     * Perform a login request asynchronously and cache the returned JWT token.
+     * ``callback`` is invoked on the main thread with ``true`` when
+     * authentication succeeds. When ``context`` is supplied the token is also
+     * persisted using ``TokenStore`` so it can later be retrieved with
+     * biometrics.
      */
-    fun login(username: String, password: String, context: Context? = null): Boolean {
+    fun login(
+        username: String,
+        password: String,
+        context: Context? = null,
+        callback: (Boolean) -> Unit
+    ) {
         val body = "{\"username\":\"$username\",\"password\":\"$password\"}"
         val req = Request.Builder()
             .url("$baseUrl/api/login")
             .post(okhttp3.RequestBody.create(okhttp3.MediaType.parse("application/json"), body))
             .build()
-        client.newCall(req).execute().use { resp ->
-            if (resp.isSuccessful) {
-                val jsonStr = resp.body?.string() ?: return false
-                return try {
-                    val obj = Gson().fromJson(jsonStr, JsonObject::class.java)
-                    val tok = obj.get("access_token").asString
-                    token = tok
-                    if (context != null) {
-                        TokenStore.saveToken(context, tok)
-                        TokenStore.saveUsername(context, username)
-                    }
-                    true
-                } catch (_: Exception) {
-                    false
-                }
+        // Execute the request without blocking the caller so the UI remains
+        // responsive while the network operation is in flight.
+        client.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: java.io.IOException) {
+                // Propagate failure back on the main thread to allow UI widgets
+                // to react safely.
+                Handler(Looper.getMainLooper()).post { callback(false) }
             }
-        }
-        return false
+
+            override fun onResponse(call: Call, response: Response) {
+                var success = false
+                if (response.isSuccessful) {
+                    val jsonStr = response.body?.string()
+                    if (jsonStr != null) {
+                        try {
+                            val obj = Gson().fromJson(jsonStr, JsonObject::class.java)
+                            val tok = obj.get("access_token").asString
+                            token = tok
+                            if (context != null) {
+                                TokenStore.saveToken(context, tok)
+                                TokenStore.saveUsername(context, username)
+                            }
+                            success = true
+                        } catch (_: Exception) {
+                            success = false
+                        }
+                    }
+                }
+                // Notify caller on the main thread regardless of success.
+                Handler(Looper.getMainLooper()).post { callback(success) }
+            }
+        })
     }
 
     /** Register a new account. */
