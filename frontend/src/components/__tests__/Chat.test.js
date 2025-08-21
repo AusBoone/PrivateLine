@@ -268,3 +268,57 @@ it('notifies the user on disconnect and reconnect events', async () => {
   });
   await screen.findByText('Reconnected to server');
 });
+
+// New test ensuring that a malformed encrypted payload received via the
+// WebSocket triggers a user-visible alert and logs an error for diagnostics.
+it('alerts when an incoming message payload cannot be decrypted', async () => {
+  const handlers = {};
+  const socket = {
+    on: jest.fn((event, cb) => {
+      handlers[event] = cb;
+      return socket;
+    }),
+    disconnect: jest.fn(),
+  };
+  io.mockReturnValue(socket);
+
+  // Minimal API responses to satisfy initial data fetching.
+  api.get.mockResolvedValueOnce({ status: 200, data: { groups: [] } });
+  api.get.mockResolvedValueOnce({ status: 200, data: { messages: [] } });
+  api.get.mockResolvedValueOnce({ status: 200, data: { users: [] } });
+
+  // Provide a stub private key so the component attempts decryption.
+  document.cookie = `private_key_pem=${encodeURIComponent(
+    '-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----',
+  )}`;
+
+  render(<Chat />);
+
+  // Flush pending effects to ensure keys are imported before emitting events.
+  await act(async () => { await Promise.resolve(); });
+  await act(async () => { await Promise.resolve(); });
+  await act(async () => { await Promise.resolve(); });
+  await act(async () => { await Promise.resolve(); });
+  await act(async () => { await Promise.resolve(); });
+
+  // Wait for the message handler to be registered.
+  await waitFor(() => {
+    expect(socket.on).toHaveBeenCalledWith('new_message', expect.any(Function));
+  });
+
+  const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+  // Emit a malformed payload which lacks the expected JSON structure.
+  await act(async () => {
+    await handlers.new_message({ id: 123, content: 'not-json', sender_id: 2 });
+  });
+
+  // The user should be notified via the shared Snackbar component.
+  await screen.findByText(
+    'Unable to decrypt incoming message: Failed to decrypt message',
+  );
+
+  // And a console error should be recorded for developers.
+  expect(spy).toHaveBeenCalled();
+  spy.mockRestore();
+});
