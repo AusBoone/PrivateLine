@@ -32,6 +32,10 @@ identifier in the blocklist expires automatically to avoid unbounded growth.
 message deletions and orphan file removal roll back together if any step
 fails. This prevents dangling uploads when ``clean_expired_messages``
 encounters an unexpected error.
+
+2036 auth update: JWT tokens may now be supplied via standard Authorization
+headers in addition to cookies, enabling header-based authentication for mobile
+WebSocket clients.
 """
 
 import os
@@ -172,6 +176,9 @@ _jwt_secret = os.environ.get("JWT_SECRET_KEY")
 if not _jwt_secret:
     raise RuntimeError("JWT_SECRET_KEY environment variable not set")
 app.config["JWT_SECRET_KEY"] = _jwt_secret
+# Accept JWTs from both Authorization headers and cookies. Header support is
+# essential for WebSocket clients which cannot leverage browser-managed
+# cookies during the handshake.
 app.config["JWT_TOKEN_LOCATION"] = ["headers", "cookies"]
 app.config["JWT_COOKIE_SECURE"] = (
     os.environ.get("JWT_COOKIE_SECURE", "false").lower() == "true"

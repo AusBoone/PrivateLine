@@ -1,3 +1,6 @@
+// build.gradle - Gradle configuration for the Android application module.
+// 2028 update: adds instrumentation test dependencies and runner to verify
+// WebSocket authentication headers.
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android' version '1.8.22'
@@ -13,6 +16,9 @@ android {
         targetSdk 34
         versionCode 1
         versionName '1.0'
+        // Specify the instrumentation runner so ``connectedAndroidTest`` can
+        // discover and execute tests under ``androidTest``.
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_11; targetCompatibility JavaVersion.VERSION_11 }
     kotlinOptions { jvmTarget = '11' }
@@ -27,4 +33,8 @@ dependencies {
     implementation 'androidx.security:security-crypto:1.0.0'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'com.squareup.okhttp3:mockwebserver:4.11.0'
+    // Dependencies used by instrumentation tests verifying WebSocket auth.
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
+    androidTestImplementation 'androidx.test:runner:1.5.2'
+    androidTestImplementation 'com.squareup.okhttp3:mockwebserver:4.11.0'
 }
