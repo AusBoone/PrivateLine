@@ -11,6 +11,9 @@ package com.example.privateline
  * login has been refactored to use OkHttp's asynchronous ``enqueue`` API and
  * dispatches results back to the main thread, preventing UI freezes during
  * authentication.
+ * connectWebSocketWithRetry introduces automatic reconnection using
+ * ``ReconnectingWebSocketListener`` so the UI is notified when the socket goes
+ * offline and retries occur with exponential backoff.
  */
 
 /**
@@ -122,6 +125,50 @@ class APIService(private val baseUrl: String, clientBuilder: OkHttpClient.Builde
         // Initiate the asynchronous WebSocket connection. ``socket`` retains
         // a reference so callers may close the connection later if needed.
         socket = client.newWebSocket(req, listener)
+    }
+
+    /**
+     * Establish a WebSocket that automatically reconnects on failures using
+     * exponential backoff. ``offlineCallback`` allows the UI to react when the
+     * socket cannot be reached (e.g., by displaying an offline banner).
+     *
+     * @param token JWT used for authentication.
+     * @param listener Delegate receiving standard WebSocket events such as
+     *                 ``onMessage``.
+     * @param offlineCallback Invoked when the socket transitions offline due to
+     *                        network failures.
+     * @param baseDelayMs Initial backoff delay in milliseconds. Tests may
+     *                    supply a small value for fast execution.
+     * @param maxDelayMs Maximum delay between reconnection attempts.
+     * @return The ``ReconnectingWebSocketListener`` managing the connection so
+     *         callers may stop retries when appropriate.
+     */
+    fun connectWebSocketWithRetry(
+        token: String,
+        listener: WebSocketListener,
+        offlineCallback: () -> Unit,
+        baseDelayMs: Long = 1000,
+        maxDelayMs: Long = 16000
+    ): ReconnectingWebSocketListener {
+        // Factory to generate a fresh request for each attempt. Using a lambda
+        // ensures headers are rebuilt and tokens refreshed when reconnections
+        // occur.
+        val requestFactory = {
+            Request.Builder()
+                .url("$baseUrl/socket.io/")
+                .addHeader("Authorization", "Bearer $token")
+                .build()
+        }
+        val reconnecting = ReconnectingWebSocketListener(
+            requestFactory = requestFactory,
+            client = client,
+            delegate = listener,
+            offlineCallback = offlineCallback,
+            baseDelayMs = baseDelayMs,
+            maxDelayMs = maxDelayMs
+        )
+        reconnecting.start()
+        return reconnecting
     }
 
     /**
