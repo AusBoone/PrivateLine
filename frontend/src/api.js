@@ -13,12 +13,43 @@ import Cookies from 'js-cookie';
  * - The request interceptor now defensively initializes ``config.headers``
  *   so that requests lacking a headers object do not throw when the CSRF
  *   token is attached.
+ * - ``REACT_APP_API_URL`` now defaults to ``https://localhost:5000`` with a
+ *   visible warning when omitted.
+ * - Production builds enforce HTTPS and abort if an insecure base URL is
+ *   supplied.
  */
+
+// Read relevant environment variables once so testing and runtime logic share
+// a single source of truth.
+const { REACT_APP_API_URL, NODE_ENV } = process.env;
+
+// Determine the API base URL. When the application is launched without an
+// explicit ``REACT_APP_API_URL`` environment variable the developer almost
+// certainly intends to target a locally running backend. To make that scenario
+// safe-by-default we point to a local HTTPS server and emit a warning so the
+// oversight is obvious.
+let baseURL = REACT_APP_API_URL;
+if (!baseURL) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    'REACT_APP_API_URL is not set; defaulting to https://localhost:5000',
+  );
+  baseURL = 'https://localhost:5000';
+}
+
+// In production builds plaintext HTTP requests are disallowed to prevent
+// accidental leakage of authentication cookies or other sensitive information.
+// Failing fast here avoids subtle runtime errors later.
+if (NODE_ENV === 'production' && !baseURL.startsWith('https://')) {
+  throw new Error(
+    `Insecure API URL "${baseURL}" rejected: HTTPS is required in production.`,
+  );
+}
 
 // Axios instance used throughout the React app. ``withCredentials`` ensures
 // the JWT cookies issued by the backend are sent with each request.
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:5000',
+  baseURL,
   withCredentials: true,
 });
 
