@@ -12,6 +12,9 @@
 // Revision: Adds Socket.IO connection state notifications (connect errors,
 // disconnects and successful reconnects) so users are aware of networking
 // issues impacting message delivery.
+// Revision: Adds defensive try/catch around `decryptMessage` invocations so
+// malformed payloads surface a descriptive Snackbar alert while logging
+// non-sensitive diagnostics to the console.
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import api from '../api';
@@ -497,7 +500,16 @@ function Chat() {
                   try {
                     text = await decryptMessage(privateKey, m.content);
                   } catch (e) {
-                    showError('Failed to decrypt message', e);
+                    // Log diagnostic details without exposing encrypted or
+                    // decrypted content to avoid leaking sensitive data.  The
+                    // identifier helps correlate logs with server-side
+                    // information when debugging.
+                    // eslint-disable-next-line no-console
+                    console.error('decryptMessage failed during history load', {
+                      messageId: m.id,
+                      error: e,
+                    });
+                    showError('Unable to decrypt message', e);
                   }
                 }
                 return {
@@ -557,7 +569,14 @@ function Chat() {
             try {
               text = await decryptMessage(privateKey, payload.content);
             } catch (e) {
-              showError('Failed to decrypt incoming message', e);
+              // Capture enough context for debugging while avoiding plaintext
+              // leakage.  Only metadata and the error object are logged.
+              // eslint-disable-next-line no-console
+              console.error('decryptMessage failed for incoming message', {
+                messageId: payload.id,
+                error: e,
+              });
+              showError('Unable to decrypt incoming message', e);
             }
           }
           if (
