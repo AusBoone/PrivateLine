@@ -30,6 +30,8 @@ beforeAll(() => {
       importKey: jest.fn().mockResolvedValue('key'),
       encrypt: jest.fn().mockResolvedValue(new ArrayBuffer(1)),
       decrypt: jest.fn().mockResolvedValue(new ArrayBuffer(1)),
+      generateKey: jest.fn().mockResolvedValue('gkey'),
+      exportKey: jest.fn().mockResolvedValue(new ArrayBuffer(1)),
     },
     getRandomValues: jest.fn((arr) => arr),
   };
@@ -118,7 +120,7 @@ it('uses selected recipient when sending a message', async () => {
   });
 
   // interactions skipped in this environment; ensure Send button is present
-  expect(screen.getByText('Send')).toBeInTheDocument();
+  expect(screen.getByText('Send')).toBeTruthy();
 });
 
 it('loads cached messages when the API request fails', async () => {
@@ -226,4 +228,43 @@ it('displays an error when sending the message fails', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
   await screen.findByText('Failed to send message: network');
+});
+
+// New test verifying that the component surfaces connection status changes via
+// Snackbar alerts so users understand when the real-time channel is
+// unavailable and when it recovers.
+it('notifies the user on disconnect and reconnect events', async () => {
+  const handlers = {};
+  const socket = {
+    on: jest.fn((event, cb) => {
+      handlers[event] = cb;
+      return socket;
+    }),
+    disconnect: jest.fn(),
+  };
+  io.mockReturnValue(socket);
+
+  api.get.mockResolvedValueOnce({ status: 200, data: { groups: [] } });
+  api.get.mockResolvedValueOnce({ status: 200, data: { messages: [] } });
+  api.get.mockResolvedValueOnce({ status: 200, data: { users: [] } });
+
+  render(<Chat />);
+
+  // Wait for the connection event handlers to be registered.
+  await waitFor(() => {
+    expect(socket.on).toHaveBeenCalledWith('disconnect', expect.any(Function));
+    expect(socket.on).toHaveBeenCalledWith('reconnect', expect.any(Function));
+  });
+
+  // Simulate a lost connection and ensure the warning is shown.
+  act(() => {
+    handlers.disconnect();
+  });
+  await screen.findByText('Disconnected from server. Attempting to reconnect…');
+
+  // Simulate the client successfully reconnecting to the server.
+  act(() => {
+    handlers.reconnect();
+  });
+  await screen.findByText('Reconnected to server');
 });

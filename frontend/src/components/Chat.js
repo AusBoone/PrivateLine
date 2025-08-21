@@ -9,6 +9,9 @@
 // Revision: Replaces legacy `alert` and `console.error` calls with a unified
 // Material UI Snackbar/Alert system so that all errors are presented
 // consistently to users rather than relying on browser dialogs or silent logs.
+// Revision: Adds Socket.IO connection state notifications (connect errors,
+// disconnects and successful reconnects) so users are aware of networking
+// issues impacting message delivery.
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import api from '../api';
@@ -355,20 +358,39 @@ function Chat() {
   // Per-conversation TTL in days. Empty string leaves the setting unchanged.
   const [convRetention, setConvRetention] = useState('');
 
-  // Snackbar state handling user-visible error notifications. Each error is
-  // surfaced through this component instead of using ``alert`` or logging to
-  // the developer console.
-  const [snackbar, setSnackbar] = useState({ open: false, message: '' });
+  // Snackbar state handling user-visible notifications.  Each message carries
+  // a ``severity`` to determine the alert style (e.g. 'error', 'warning',
+  // 'success').  This generalisation allows the component to report both
+  // failures and informational connection status events.
+  const [snackbar, setSnackbar] = useState({
+    open: false,
+    message: '',
+    severity: 'info',
+  });
 
   /**
-   * Display an error message using the shared Snackbar component.
+   * Display a Snackbar message with an optional severity.  Used both for error
+   * handling and for surfacing connection state changes.
+   *
+   * @param {string} msg - Human readable description of the event.
+   * @param {('error'|'warning'|'info'|'success')} [severity='error'] - Alert
+   *   style applied to the Snackbar.
+   * @param {Error} [err] - Optional error instance for context.  When supplied
+   *   its message is appended to ``msg``.
+   */
+  const showSnackbar = (msg, severity = 'error', err) => {
+    const detail = err && err.message ? `: ${err.message}` : '';
+    setSnackbar({ open: true, message: `${msg}${detail}` , severity });
+  };
+
+  /**
+   * Convenience wrapper emitting an ``error`` severity notification.
    *
    * @param {string} msg - Description of the failure.
    * @param {Error} [err] - Optional error instance for additional context.
    */
   const showError = (msg, err) => {
-    const detail = err && err.message ? `: ${err.message}` : '';
-    setSnackbar({ open: true, message: `${msg}${detail}` });
+    showSnackbar(msg, 'error', err);
   };
 
   /** Close the Snackbar after the auto-hide duration or user action. */
@@ -503,6 +525,22 @@ function Chat() {
         }
 
         s = io(process.env.REACT_APP_API_URL || 'http://localhost:5000');
+
+        // Notify the user about connection issues and recovery attempts. Socket.IO
+        // automatically retries connections, so the handlers merely surface the
+        // state changes via the Snackbar.
+        s.on('connect_error', (err) => {
+          showSnackbar('Unable to connect to server', 'error', err);
+        });
+        s.on('disconnect', () => {
+          showSnackbar(
+            'Disconnected from server. Attempting to reconnect…',
+            'warning',
+          );
+        });
+        s.on('reconnect', () => {
+          showSnackbar('Reconnected to server', 'success');
+        });
 
         s.on('new_message', async (payload) => {
           if (payload.sender_id === uid) {
@@ -827,7 +865,7 @@ function Chat() {
       >
         <Alert
           onClose={handleCloseSnackbar}
-          severity="error"
+          severity={snackbar.severity}
           sx={{ width: '100%' }}
         >
           {snackbar.message}
