@@ -19,7 +19,15 @@ android {
         // Specify the instrumentation runner so ``connectedAndroidTest`` can
         // discover and execute tests under ``androidTest``.
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        // SHA-256 fingerprint of the production TLS certificate. Update this
+        // value whenever the backend certificate changes. It is exposed to
+        // Kotlin via ``BuildConfig.CERTIFICATE_SHA256`` so different build
+        // variants may supply their own pin if desired.
+        buildConfigField 'String', 'CERTIFICATE_SHA256', '"sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="'
     }
+    // Enable generation of BuildConfig so custom fields like
+    // CERTIFICATE_SHA256 are available to the codebase.
+    buildFeatures { buildConfig true }
     compileOptions { sourceCompatibility JavaVersion.VERSION_11; targetCompatibility JavaVersion.VERSION_11 }
     kotlinOptions { jvmTarget = '11' }
 }
