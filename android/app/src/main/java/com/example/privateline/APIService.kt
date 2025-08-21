@@ -1,5 +1,12 @@
 package com.example.privateline
 
+/*
+ * Modification summary:
+ * connectWebSocket now transmits the JWT via an Authorization header rather
+ * than as a query parameter, preventing token leakage in URLs and matching the
+ * backend's header-based authentication expectations.
+ */
+
 /**
  * Networking utility responsible for talking to the Flask backend. This class
  * mirrors the Swift implementation so the Android client can participate in the
@@ -69,11 +76,26 @@ class APIService(private val baseUrl: String) {
     }
 
     /**
-     * Establish a WebSocket connection using the provided JWT token.
-     * ``listener`` receives all socket events.
+     * Establish a WebSocket connection using the provided JWT token. The token
+     * is sent in the ``Authorization`` header to align with backend
+     * expectations and avoid exposing credentials in the URL. ``listener``
+     * receives all socket events.
+     *
+     * @param token JSON Web Token used for authentication. An empty or malformed
+     * token results in server-side authentication failure.
+     * @param listener Callback receiving WebSocket lifecycle events.
      */
     fun connectWebSocket(token: String, listener: WebSocketListener) {
-        val req = Request.Builder().url("$baseUrl/socket.io/?token=$token").build()
+        // Build the request for the Socket.IO endpoint, attaching the JWT in an
+        // Authorization header so intermediary logs or caches never see it in
+        // the URL. This mirrors how standard HTTP endpoints authenticate.
+        val req = Request.Builder()
+            .url("$baseUrl/socket.io/")
+            .addHeader("Authorization", "Bearer $token")
+            .build()
+
+        // Initiate the asynchronous WebSocket connection. ``socket`` retains
+        // a reference so callers may close the connection later if needed.
         socket = client.newWebSocket(req, listener)
     }
 
