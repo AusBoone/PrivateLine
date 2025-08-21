@@ -5,6 +5,9 @@ package com.example.privateline
  * connectWebSocket now transmits the JWT via an Authorization header rather
  * than as a query parameter, preventing token leakage in URLs and matching the
  * backend's header-based authentication expectations.
+ * TLS certificate pinning now loads the fingerprint from ``BuildConfig`` and
+ * the service accepts an optional ``OkHttpClient.Builder`` allowing tests to
+ * inject custom trust managers.
  */
 
 /**
@@ -35,17 +38,27 @@ import javax.crypto.Cipher
 import android.util.Base64
 import android.content.Context
 import com.example.privateline.TokenStore
+import com.example.privateline.BuildConfig
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 
 /**
  * Minimal networking helper mirroring the iOS APIService. Encryption is
  * performed locally using RSA and AES via standard JCA providers.
+ *
+ * @param baseUrl Base URL of the backend server.
+ * @param clientBuilder Optional OkHttpClient builder used primarily in tests to
+ *                      inject custom SSL settings when validating certificate
+ *                      pinning behaviour. Production callers may ignore it.
  */
-class APIService(private val baseUrl: String) {
+class APIService(private val baseUrl: String, clientBuilder: OkHttpClient.Builder? = null) {
     companion object {
-        /** SHA256 pin for the backend certificate. Replace with actual value. */
-        private const val PINNED_SHA256 = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        /**
+         * SHA-256 pin for the backend certificate. Loaded from BuildConfig so
+         * that each build variant can supply its own fingerprint without code
+         * changes.
+         */
+        private val PINNED_SHA256: String = BuildConfig.CERTIFICATE_SHA256
     }
 
     private val client: OkHttpClient
@@ -54,7 +67,11 @@ class APIService(private val baseUrl: String) {
         val pinner = CertificatePinner.Builder()
             .add(host, PINNED_SHA256)
             .build()
-        client = OkHttpClient.Builder()
+        // Use the provided builder when available (e.g., in tests) so a custom
+        // trust manager can be supplied. Otherwise fall back to a default
+        // builder that trusts the system certificate store.
+        val builder = clientBuilder ?: OkHttpClient.Builder()
+        client = builder
             .certificatePinner(pinner)
             .build()
     }

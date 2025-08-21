@@ -41,6 +41,27 @@ If the wrapper JAR is missing (it is not stored in the repository),
 run `gradle wrapper` once to generate it. This step is handled automatically
 in CI so the project remains buildable.
 
+## Updating TLS Certificate Pin
+
+The app verifies the server's identity using [certificate pinning]. Whenever the
+backend TLS certificate changes you **must** update the pinned fingerprint or
+connections will fail.
+
+1. Obtain the new certificate file (`cert.pem`) from the production server.
+2. Generate the SHA-256 fingerprint:
+
+   ```bash
+   openssl x509 -in cert.pem -noout -pubkey \
+     | openssl pkey -pubin -outform der \
+     | openssl dgst -sha256 -binary \
+     | base64
+   ```
+3. Replace the value of `CERTIFICATE_SHA256` in `app/build.gradle` with the
+   output from step 2.
+4. Rebuild the project so the new pin is embedded in `BuildConfig`.
+
+[certificate pinning]: https://square.github.io/okhttp/features/certificate_pinner/
+
 ## Local Message Storage
 
 `MessageStore.kt` provides a minimal persistence layer for encrypted messages.
