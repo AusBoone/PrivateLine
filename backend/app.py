@@ -27,6 +27,11 @@ keeping maintenance jobs lightweight even with large numbers of attachments.
 
 2034 security update: Redis is now required for startup and each revoked JWT
 identifier in the blocklist expires automatically to avoid unbounded growth.
+
+2035 reliability update: message cleanup uses a nested transaction so that
+message deletions and orphan file removal roll back together if any step
+fails. This prevents dangling uploads when ``clean_expired_messages``
+encounters an unexpected error.
 """
 
 import os
@@ -216,95 +221,106 @@ def clean_expired_messages() -> None:
 
     from sqlalchemy import and_, func, literal, or_, select
     from .models import ConversationRetention, Group, Message, User
+    from .resources import remove_orphan_files
 
     with app.app_context():
         now = datetime.utcnow()
         now_seconds = int(now.timestamp())
 
-        # ``strftime`` is SQLite specific while ``extract`` works for PostgreSQL.
-        # Selecting the appropriate function keeps the comparison portable.
-        if db.session.bind.dialect.name == "sqlite":
-            msg_ts = func.strftime("%s", Message.timestamp)
-        else:  # pragma: no cover - exercised in non-sqlite deployments
-            msg_ts = func.extract("epoch", Message.timestamp)
+        # ``begin_nested`` ensures that message deletions and orphan file cleanup
+        # occur within the same transactional savepoint. If any step raises an
+        # exception the entire block is rolled back, preventing dangling file
+        # records when ``clean_expired_messages`` aborts early.
+        with db.session.begin_nested():
+            # ``strftime`` is SQLite specific while ``extract`` works for
+            # PostgreSQL. Selecting the appropriate function keeps the
+            # comparison portable.
+            if db.session.bind.dialect.name == "sqlite":
+                msg_ts = func.strftime("%s", Message.timestamp)
+            else:  # pragma: no cover - exercised in non-sqlite deployments
+                msg_ts = func.extract("epoch", Message.timestamp)
 
-        # --- Explicit per-message expiration ---------------------------------
-        expired_stmt = db.delete(Message).where(
-            Message.expires_at.is_not(None), Message.expires_at <= now
-        )
-        db.session.execute(expired_stmt.execution_options(synchronize_session=False))
-
-        # --- Direct conversation retention -----------------------------------
-        sender_retention = func.coalesce(
-            # Retention override defined by the sender
-            select(ConversationRetention.retention_days)
-            .where(
-                ConversationRetention.owner_id == Message.sender_id,
-                ConversationRetention.peer_id == Message.recipient_id,
+            # --- Explicit per-message expiration -----------------------------
+            expired_stmt = db.delete(Message).where(
+                Message.expires_at.is_not(None), Message.expires_at <= now
             )
-            .correlate(Message)
-            .scalar_subquery(),
-            # Fallback to the sender's default retention setting
-            select(User.message_retention_days)
-            .where(User.id == Message.sender_id)
-            .correlate(Message)
-            .scalar_subquery(),
-        )
-
-        recipient_retention = func.coalesce(
-            select(ConversationRetention.retention_days)
-            .where(
-                ConversationRetention.owner_id == Message.recipient_id,
-                ConversationRetention.peer_id == Message.sender_id,
+            db.session.execute(
+                expired_stmt.execution_options(synchronize_session=False)
             )
-            .correlate(Message)
-            .scalar_subquery(),
-            select(User.message_retention_days)
-            .where(User.id == Message.recipient_id)
-            .correlate(Message)
-            .scalar_subquery(),
-        )
 
-        sender_seconds = sender_retention * literal(86400)
-        recipient_seconds = recipient_retention * literal(86400)
+            # --- Direct conversation retention ------------------------------
+            sender_retention = func.coalesce(
+                # Retention override defined by the sender
+                select(ConversationRetention.retention_days)
+                .where(
+                    ConversationRetention.owner_id == Message.sender_id,
+                    ConversationRetention.peer_id == Message.recipient_id,
+                )
+                .correlate(Message)
+                .scalar_subquery(),
+                # Fallback to the sender's default retention setting
+                select(User.message_retention_days)
+                .where(User.id == Message.sender_id)
+                .correlate(Message)
+                .scalar_subquery(),
+            )
 
-        direct_condition = and_(
-            Message.group_id.is_(None),
-            Message.read.is_(True),
-            or_(
-                now_seconds - msg_ts >= sender_seconds,
-                now_seconds - msg_ts >= recipient_seconds,
-            ),
-        )
+            recipient_retention = func.coalesce(
+                select(ConversationRetention.retention_days)
+                .where(
+                    ConversationRetention.owner_id == Message.recipient_id,
+                    ConversationRetention.peer_id == Message.sender_id,
+                )
+                .correlate(Message)
+                .scalar_subquery(),
+                select(User.message_retention_days)
+                .where(User.id == Message.recipient_id)
+                .correlate(Message)
+                .scalar_subquery(),
+            )
 
-        # --- Group conversation retention ------------------------------------
-        group_retention = func.coalesce(
-            select(Group.retention_days)
-            .where(Group.id == Message.group_id)
-            .correlate(Message)
-            .scalar_subquery(),
-            select(User.message_retention_days)
-            .where(User.id == Message.sender_id)
-            .correlate(Message)
-            .scalar_subquery(),
-        )
-        group_seconds = group_retention * literal(86400)
+            sender_seconds = sender_retention * literal(86400)
+            recipient_seconds = recipient_retention * literal(86400)
 
-        group_condition = and_(
-            Message.group_id.is_not(None),
-            Message.read.is_(True),
-            now_seconds - msg_ts >= group_seconds,
-        )
+            direct_condition = and_(
+                Message.group_id.is_(None),
+                Message.read.is_(True),
+                or_(
+                    now_seconds - msg_ts >= sender_seconds,
+                    now_seconds - msg_ts >= recipient_seconds,
+                ),
+            )
 
-        retention_stmt = db.delete(Message).where(or_(direct_condition, group_condition))
-        db.session.execute(retention_stmt.execution_options(synchronize_session=False))
+            # --- Group conversation retention -------------------------------
+            group_retention = func.coalesce(
+                select(Group.retention_days)
+                .where(Group.id == Message.group_id)
+                .correlate(Message)
+                .scalar_subquery(),
+                select(User.message_retention_days)
+                .where(User.id == Message.sender_id)
+                .correlate(Message)
+                .scalar_subquery(),
+            )
+            group_seconds = group_retention * literal(86400)
 
-        from .resources import remove_orphan_files
+            group_condition = and_(
+                Message.group_id.is_not(None),
+                Message.read.is_(True),
+                now_seconds - msg_ts >= group_seconds,
+            )
 
-        # Remove any file records left without referencing messages as part of the
-        # same transaction so a single commit finalizes both message and file
-        # cleanup operations.
-        remove_orphan_files(commit=False)
+            retention_stmt = db.delete(Message).where(
+                or_(direct_condition, group_condition)
+            )
+            db.session.execute(
+                retention_stmt.execution_options(synchronize_session=False)
+            )
+
+            # Remove any file records left without referencing messages as part
+            # of the same savepoint so a single outer commit finalizes both
+            # message and file cleanup operations.
+            remove_orphan_files(commit=False)
 
         # Commit once after all deletions to minimize database overhead.
         db.session.commit()

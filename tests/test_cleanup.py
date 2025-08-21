@@ -8,9 +8,12 @@ implementation continues to behave correctly as the code evolves.
 
 from datetime import datetime, timedelta
 import base64
+import io
+import pytest
+from werkzeug.datastructures import FileStorage
 
 from backend.app import app, clean_expired_messages, db
-from backend.models import Message
+from backend.models import File, Message
 from .conftest import register_user, login_user, decrypt_private_key, sign_content
 
 
@@ -223,3 +226,73 @@ def test_cleanup_commits_once(monkeypatch, client):
     with app.app_context():
         assert commits["count"] == 1
         assert Message.query.count() == 0
+
+
+def test_cleanup_rolls_back_on_error(monkeypatch, client):
+    """Message and file deletions should roll back together on exceptions.
+
+    This test simulates an error during ``clean_expired_messages`` by forcing
+    :func:`remove_orphan_files` to raise. The nested transaction introduced in
+    2035 must ensure that both message and file records remain intact and
+    properly linked so no orphaned file rows persist after the failure.
+    """
+
+    reg = register_user(client, "alice")
+    pk = decrypt_private_key(reg)
+    token = login_user(client, "alice").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Upload a small file and send a message referencing it.
+    fs = FileStorage(stream=io.BytesIO(b"data"), filename="tmp.txt")
+    resp = client.post(
+        "/api/files",
+        data={"file": fs},
+        headers=headers,
+        content_type="multipart/form-data",
+    )
+    fid = resp.get_json()["file_id"]
+
+    msg_b64 = base64.b64encode(b"hi").decode()
+    sig = sign_content(pk, msg_b64)
+    resp = client.post(
+        "/api/messages",
+        data={
+            "content": msg_b64,
+            "recipient": "alice",
+            "file_id": fid,
+            "signature": sig,
+        },
+        headers=headers,
+    )
+    mid = resp.get_json()["id"]
+    client.post(f"/api/messages/{mid}/read", headers=headers)
+
+    # Set retention to one day then backdate the message so it qualifies for
+    # cleanup.
+    client.put(
+        "/api/account-settings",
+        json={"messageRetentionDays": 1},
+        headers=headers,
+    )
+    with app.app_context():
+        msg = db.session.get(Message, mid)
+        msg.timestamp = datetime.utcnow() - timedelta(days=2)
+        db.session.commit()
+
+    # Force remove_orphan_files to raise, simulating a failure during cleanup.
+    def boom(*args, **kwargs):  # noqa: D401 - small helper
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("backend.resources.remove_orphan_files", boom)
+
+    with pytest.raises(RuntimeError):
+        clean_expired_messages()
+
+    with app.app_context():
+        # Reset session state after the raised exception before querying.
+        db.session.rollback()
+        # Neither message nor file should have been deleted and the relationship
+        # should be intact, proving that no orphan files remain.
+        assert db.session.get(Message, mid) is not None
+        assert db.session.get(File, fid) is not None
+        assert db.session.get(Message, mid).file_id == fid
