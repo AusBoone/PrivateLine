@@ -12,6 +12,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * Test suite verifying authentication and message sending behaviour.
@@ -35,11 +37,21 @@ class APIServiceTests {
     @Test
     fun loginSuccessStoresTokenAndSendsAuthorizedMessage() {
         // Provide successful login and message responses
-        server.enqueue(MockResponse().setResponseCode(200).setBody("{\"access_token\":\"abc\"}"))
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody("{\"access_token\":\"abc\"}")
+        )
         server.enqueue(MockResponse().setResponseCode(200))
 
-        val loggedIn = service.login("user", "pass")
+        val latch = CountDownLatch(1)
+        var loggedIn = false
+        service.login("user", "pass") { ok ->
+            loggedIn = ok
+            latch.countDown()
+        }
+        // Wait for asynchronous login to finish before sending the message.
+        assertTrue(latch.await(1, TimeUnit.SECONDS))
         assertTrue(loggedIn)
+
         // sendMessage should include Authorization header with token from login
         val result = service.sendMessage("cipher", "bob", "sig", null, null)
         assertTrue(result)
@@ -54,7 +66,13 @@ class APIServiceTests {
     @Test
     fun loginFailureReturnsFalse() {
         server.enqueue(MockResponse().setResponseCode(401))
-        val success = service.login("bad", "creds")
+        val latch = CountDownLatch(1)
+        var success = true
+        service.login("bad", "creds") { ok ->
+            success = ok
+            latch.countDown()
+        }
+        assertTrue(latch.await(1, TimeUnit.SECONDS))
         assertFalse(success)
     }
 
@@ -72,10 +90,18 @@ class APIServiceTests {
      */
     @Test
     fun markReadUsesAuthToken() {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("{\"access_token\":\"abc\"}"))
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody("{\"access_token\":\"abc\"}")
+        )
         server.enqueue(MockResponse().setResponseCode(200))
 
-        val loggedIn = service.login("user", "pass")
+        val latch = CountDownLatch(1)
+        var loggedIn = false
+        service.login("user", "pass") { ok ->
+            loggedIn = ok
+            latch.countDown()
+        }
+        assertTrue(latch.await(1, TimeUnit.SECONDS))
         assertTrue(loggedIn)
         val ok = service.markMessageRead(5)
         assertTrue(ok)
