@@ -1,6 +1,13 @@
 /*
  * ChatViewModel.swift - Observable store backing ChatView.
  * Coordinates message loading, sending and WebSocket updates.
+ *
+ * Modifications:
+ * - Added ``lastError`` published property surfaced when message sending or
+ *   loading fails so views can present actionable alerts.
+ * - Wrapped calls to ``APIService`` with explicit error capture to guide users
+ *   through typical failure scenarios such as connectivity loss or expired
+ *   authentication.
  */
 import Foundation
 import Combine
@@ -25,6 +32,10 @@ final class ChatViewModel: ObservableObject {
     /// Minutes after which newly sent messages should expire. ``0`` means no
     /// expiration and messages persist indefinitely.
     @Published var expiresInMinutes: Double = 0
+    /// Human readable description of the most recent error. ``nil`` when the
+    /// last operation succeeded. Views observe this value to surface alerts and
+    /// suggest retry actions.
+    @Published var lastError: String? = nil
 
     /// Backend API wrapper used for all network operations.
     let api: APIService
@@ -79,7 +90,11 @@ final class ChatViewModel: ObservableObject {
                 MessageStore.save(valid)
             }.store(in: &cancellables)
         } catch {
+            // Typical failures include connectivity loss, server errors or
+            // expired authentication tokens. Reset state and surface the error so
+            // the UI can prompt the user to retry or re-authenticate.
             messages = []
+            lastError = "Load failed: \(error.localizedDescription)"
         }
     }
 
@@ -88,17 +103,29 @@ final class ChatViewModel: ObservableObject {
     /// message body. On success the plaintext is appended locally so the UI
     /// feels responsive while waiting for the server.
     func send() async {
-        do {
-            var fileId: Int? = nil
-            if let data = attachment {
+        // Clear any previous error so the view reflects only the latest attempt.
+        lastError = nil
+
+        var fileId: Int? = nil
+        if let data = attachment {
+            do {
                 // Upload attachment first so the returned id can be included
                 fileId = try await api.uploadFile(data: data, filename: "file")
                 attachment = nil
+            } catch {
+                // Upload can fail due to connectivity loss or server rejection.
+                // Surface the error and stop further processing so the user may retry.
+                lastError = "File upload failed: \(error.localizedDescription)"
+                return
             }
-            var expires: Date? = nil
-            if expiresInMinutes > 0 {
-                expires = Date().addingTimeInterval(expiresInMinutes * 60)
-            }
+        }
+
+        var expires: Date? = nil
+        if expiresInMinutes > 0 {
+            expires = Date().addingTimeInterval(expiresInMinutes * 60)
+        }
+
+        do {
             if let gid = selectedGroup {
                 // Send to the selected group chat
                 try await api.sendGroupMessage(input, groupId: gid, fileId: fileId, expiresAt: expires)
@@ -106,14 +133,18 @@ final class ChatViewModel: ObservableObject {
                 // Send a direct message
                 try await api.sendMessage(input, to: recipient, fileId: fileId, expiresAt: expires)
             }
-            // Optimistically append the sent message locally
-            let msg = Message(id: Int(Date().timeIntervalSince1970), content: input, file_id: fileId, read: true, expires_at: expires)
-            messages.append(msg)
-            MessageStore.save(messages)
-            input = ""
         } catch {
-            // Ignore transmission errors for the demo app
+            // Message transmission may fail if the network is unreachable,
+            // the server returns an error or the auth token expired.
+            lastError = "Message send failed: \(error.localizedDescription)"
+            return
         }
+
+        // Optimistically append the sent message locally so the chat updates immediately.
+        let msg = Message(id: Int(Date().timeIntervalSince1970), content: input, file_id: fileId, read: true, expires_at: expires)
+        messages.append(msg)
+        MessageStore.save(messages)
+        input = ""
     }
 
     /// Persist cached messages and close the WebSocket connection.
