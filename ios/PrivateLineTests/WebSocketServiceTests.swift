@@ -1,26 +1,50 @@
-// Tests for ``WebSocketService`` covering connection and disconnection logic.
+// Tests for ``WebSocketService`` covering connection, reconnection and
+// disconnection logic.  These tests use mock objects to avoid real network
+// calls and to deterministically simulate failures.
 import XCTest
 @testable import PrivateLine
 
-/// Fake ``URLSessionWebSocketTask`` that records whether it was resumed or
-/// cancelled so tests can assert on lifecycle behaviour.
+/// Fake ``URLSessionWebSocketTask`` that allows tests to observe lifecycle
+/// events and manually trigger receive callbacks.
 final class MockWebSocketTask: URLSessionWebSocketTask {
+    /// Whether ``resume`` was invoked.
     var resumed = false
+    /// Whether ``cancel`` was invoked.
     var cancelled = false
+    /// Stored receive handler so tests can simulate inbound messages or errors.
+    var receiveHandler: ((Result<URLSessionWebSocketTask.Message, Error>) -> Void)?
+
     override func resume() { resumed = true }
+
     override func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
         cancelled = true
     }
+
+    override func receive(completionHandler: @escaping (Result<URLSessionWebSocketTask.Message, Error>) -> Void) {
+        receiveHandler = completionHandler
+    }
+
+    /// Convenience helper to trigger a failure on the receive handler.
+    func failOnce() {
+        let err = URLError(.timedOut)
+        receiveHandler?(.failure(err))
+    }
 }
 
-/// ``URLSession`` subclass that provides a pre-created ``MockWebSocketTask``
-/// instead of making real network connections.
+/// ``URLSession`` subclass that hands out a sequence of ``MockWebSocketTask``
+/// instances instead of making real network connections.
 final class MockURLSession: URLSession {
-    let task = MockWebSocketTask()
-    private(set) var lastRequest: URLRequest?
+    private var tasks: [MockWebSocketTask]
+    /// Tracks how many tasks have been created so reconnection attempts can be measured.
+    private(set) var createdTasks = 0
+
+    init(tasks: [MockWebSocketTask]) {
+        self.tasks = tasks
+    }
+
     override func webSocketTask(with request: URLRequest) -> URLSessionWebSocketTask {
-        lastRequest = request
-        return task
+        createdTasks += 1
+        return tasks.removeFirst()
     }
 }
 
@@ -29,18 +53,68 @@ final class MockURLSession: URLSession {
 final class WebSocketServiceTests: XCTestCase {
     func testConnectStartsTask() {
         // Calling connect should resume the underlying WebSocket task
-        let session = MockURLSession()
+        let task = MockWebSocketTask()
+        let session = MockURLSession(tasks: [task])
         let service = WebSocketService(session: session)
         service.connect(token: "abc")
-        XCTAssertTrue(session.task.resumed)
+        XCTAssertEqual(session.createdTasks, 1)
+        XCTAssertTrue(task.resumed)
     }
 
     func testDisconnectCancelsTask() {
-        // Disconnect should cancel the active task
-        let session = MockURLSession()
+        // Disconnect should cancel the active task and prevent reconnects
+        let mockTask = MockWebSocketTask()
+        let session = MockURLSession(tasks: [mockTask])
         let service = WebSocketService(session: session)
         service.connect(token: "abc")
         service.disconnect()
-        XCTAssertTrue(session.task.cancelled)
+        XCTAssertTrue(mockTask.cancelled)
+        XCTAssertEqual(session.createdTasks, 1)
+    }
+
+    func testReconnectionHappensAfterFailure() {
+        // Simulate a failure and verify a second task is created after backoff
+        let first = MockWebSocketTask()
+        let second = MockWebSocketTask()
+        let session = MockURLSession(tasks: [first, second])
+        let service = WebSocketService(session: session,
+                                       baseDelay: 0.1,
+                                       maxDelay: 0.2,
+                                       reconnectionQueue: DispatchQueue.main)
+
+        service.connect(token: "abc")
+        // Trigger failure on the first task
+        first.failOnce()
+
+        let expectation = XCTestExpectation(description: "Reconnected")
+        // Wait a little longer than the 0.1 base delay for reconnect attempt
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            if second.resumed { expectation.fulfill() }
+        }
+
+        wait(for: [expectation], timeout: 1)
+        XCTAssertEqual(session.createdTasks, 2)
+    }
+
+    func testDisconnectPreventsReconnection() {
+        // After a failure, calling disconnect should stop future attempts
+        let first = MockWebSocketTask()
+        let session = MockURLSession(tasks: [first])
+        let service = WebSocketService(session: session,
+                                       baseDelay: 0.1,
+                                       maxDelay: 0.2,
+                                       reconnectionQueue: DispatchQueue.main)
+
+        service.connect(token: "abc")
+        first.failOnce()
+        service.disconnect()
+
+        let expectation = XCTestExpectation(description: "No reconnect")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            XCTAssertEqual(session.createdTasks, 1)
+            expectation.fulfill()
+        }
+
+        wait(for: [expectation], timeout: 1)
     }
 }
