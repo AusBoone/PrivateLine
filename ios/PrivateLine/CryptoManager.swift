@@ -1,7 +1,17 @@
+//
+//  CryptoManager.swift
+//  PrivateLine
+//
+//  Central cryptographic utilities for the iOS client.  The module exposes
+//  helpers for symmetric encryption, group key persistence and RSA operations.
+//  RSA private keys are generated inside the Secure Enclave and only a keychain
+//  reference is kept, ensuring hardware-backed protection.  When the Secure
+//  Enclave is unavailable (e.g. on the simulator) operations will throw
+//  descriptive errors so the caller can gracefully degrade.
+//
 import Foundation
 import CryptoKit
 import Security
-import CommonCrypto
 
 // GroupKeyStore persists AES keys in the keychain so chats remain
 // decryptable after the app restarts.
@@ -21,8 +31,20 @@ enum CryptoManager {
     /// Keychain entry containing the encrypted RSA private key material.
     private static let materialAccount = "PrivateLineKeyMaterial"
 
-    /// Cached RSA private key for decrypting messages.
-    private static var rsaPrivateKey: SecKey?
+    /// Application tag used to locate the Secure Enclave key in the keychain.
+    /// The tag acts as a persistent identifier so the key can be retrieved
+    /// across launches without storing the key material itself.
+    private static let secureKeyTag = "com.privateline.securekey"
+
+    /// Errors surfaced when interacting with the Secure Enclave.  These errors
+    /// allow calling code to distinguish between missing hardware and other
+    /// operational issues.
+    enum SecureEnclaveError: Error {
+        /// Returned when the device lacks Secure Enclave support.
+        case unavailable
+        /// Returned when the private key cannot be located in the keychain.
+        case keyNotFound
+    }
 
     /// Helper struct describing the encrypted key material returned by the backend.
     struct KeyMaterial: Codable {
@@ -189,62 +211,49 @@ enum CryptoManager {
 
     // MARK: - RSA helper functions
 
-    /// Import the encrypted private key using ``password`` and cache it for future use.
-    static func loadPrivateKey(password: String) throws {
-        guard rsaPrivateKey == nil, let material = loadKeyMaterial() else { return }
-
-        guard let salt = Data(base64Encoded: material.salt),
-              let nonce = Data(base64Encoded: material.nonce),
-              let ciphertext = Data(base64Encoded: material.encrypted_private_key) else { return }
-
-        let derived = try deriveKey(password: password, salt: salt)
-        let tag = ciphertext.suffix(16)
-        let ct = ciphertext.prefix(ciphertext.count - 16)
-        let box = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: nonce),
-                                        ciphertext: ct,
-                                        tag: tag)
-        let decrypted = try AES.GCM.open(box, using: derived)
-        let pem = String(decoding: decrypted, as: UTF8.self)
-        rsaPrivateKey = try importPrivateKeyPEM(pem)
+    /// Retrieve the Secure Enclave private key from the keychain.
+    /// - Returns: ``SecKey`` reference if the key exists, otherwise ``nil``.
+    private static func fetchSecureEnclaveKey() -> SecKey? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassKey,
+            kSecAttrApplicationTag as String: secureKeyTag.data(using: .utf8)!,
+            kSecReturnRef as String: true
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess else { return nil }
+        return (item as! SecKey)
     }
 
-    /// Derive a 256-bit key from ``password`` and ``salt`` using PBKDF2.
-    /// This is used to encrypt the user's private RSA key material so that
-    /// it can only be unlocked with the correct password.
-    private static func deriveKey(password: String, salt: Data) throws -> SymmetricKey {
-        var derived = Data(count: 32)
-        let pwdData = password.data(using: .utf8)!
-        let result = derived.withUnsafeMutableBytes { derivedBytes in
-            salt.withUnsafeBytes { saltBytes in
-                CCKeyDerivationPBKDF(CCPBKDFAlgorithm(kCCPBKDF2),
-                                     password, pwdData.count,
-                                     saltBytes.bindMemory(to: UInt8.self).baseAddress!, salt.count,
-                                     CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
-                                     200000,
-                                     derivedBytes.bindMemory(to: UInt8.self).baseAddress!, 32)
-            }
+    /// Ensure a Secure Enclave RSA key pair exists for the application.
+    /// - Parameter password: Unused legacy parameter kept for API stability.
+    /// - Throws: ``SecureEnclaveError.unavailable`` when the hardware cannot
+    ///   generate the key (e.g. running on the simulator).
+    static func loadPrivateKey(password _: String = "") throws {
+        // If the key already exists, no further work is necessary.
+        if fetchSecureEnclaveKey() != nil { return }
+
+        guard let access = SecAccessControlCreateWithFlags(
+            nil,
+            kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            [],
+            nil
+        ) else {
+            throw SecureEnclaveError.unavailable
         }
-        guard result == kCCSuccess else { throw NSError(domain: "PBKDF2", code: Int(result)) }
-        return SymmetricKey(data: derived)
-    }
-
-    /// Convert a PEM encoded RSA private key into ``SecKey`` form.
-    private static func importPrivateKeyPEM(_ pem: String) throws -> SecKey {
-        let b64 = pem
-            .replacingOccurrences(of: "-----BEGIN PRIVATE KEY-----", with: "")
-            .replacingOccurrences(of: "-----END PRIVATE KEY-----", with: "")
-            .replacingOccurrences(of: "\n", with: "")
-        guard let data = Data(base64Encoded: b64) else { throw CocoaError(.coderInvalidValue) }
         let attrs: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
+            kSecAttrKeySizeInBits as String: 4096,
+            kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
             kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
-            kSecAttrKeySizeInBits as String: 4096
+            kSecAttrIsPermanent as String: true,
+            kSecAttrApplicationTag as String: secureKeyTag.data(using: .utf8)!,
+            kSecAttrAccessControl as String: access
         ]
         var error: Unmanaged<CFError>?
-        guard let key = SecKeyCreateWithData(data as CFData, attrs as CFDictionary, &error) else {
-            throw error!.takeRetainedValue() as Error
+        guard SecKeyCreateRandomKey(attrs as CFDictionary, &error) != nil else {
+            throw SecureEnclaveError.unavailable
         }
-        return key
     }
 
     /// Encrypt ``message`` with ``publicKeyPem`` using RSA-OAEP.
@@ -270,10 +279,15 @@ enum CryptoManager {
         return cipher
     }
 
-    /// Decrypt base64-encoded ciphertext using the cached private key.
+    /// Decrypt base64-encoded ciphertext using the Secure Enclave private key.
+    /// - Parameter b64: RSA ciphertext encoded as base64.
+    /// - Returns: The decrypted plaintext string.
     static func decryptRSA(_ b64: String) throws -> String {
-        guard let key = rsaPrivateKey, let data = Data(base64Encoded: b64) else {
-            throw CocoaError(.coderValueNotFound)
+        guard let data = Data(base64Encoded: b64) else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        guard let key = fetchSecureEnclaveKey() else {
+            throw SecureEnclaveError.keyNotFound
         }
         var error: Unmanaged<CFError>?
         guard let decrypted = SecKeyCreateDecryptedData(key, .rsaEncryptionOAEPSHA256, data as CFData, &error) as Data? else {
@@ -282,11 +296,15 @@ enum CryptoManager {
         return String(decoding: decrypted, as: UTF8.self)
     }
 
-    /// Sign ``message`` using the cached private key with RSA-PSS.
-    /// The signature can be verified by the recipient using the sender's
-    /// public key to ensure the message was not tampered with.
+    /// Sign ``message`` using the Secure Enclave private key with RSA-PSS.
+    /// The signature can be verified by recipients using the corresponding
+    /// public key which never leaves the device unencrypted.
+    /// - Parameter message: UTF-8 string to sign.
+    /// - Returns: Raw signature bytes.
     static func signMessage(_ message: String) throws -> Data {
-        guard let key = rsaPrivateKey else { throw CocoaError(.coderValueNotFound) }
+        guard let key = fetchSecureEnclaveKey() else {
+            throw SecureEnclaveError.keyNotFound
+        }
         let data = message.data(using: .utf8)!
         var error: Unmanaged<CFError>?
         // Produce a PSS signature over the UTF-8 bytes
