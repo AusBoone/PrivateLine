@@ -1,3 +1,10 @@
+// Application entry point for the PrivateLine iOS client.
+//
+// Modifications:
+// - Integrated re-authentication flow with ``PrivacyShield`` by presenting
+//   an alert when biometric or passcode verification fails.
+// - Alert allows users to retry authentication, keeping the UI obscured until
+//   credentials are confirmed.
 import SwiftUI
 import UIKit
 
@@ -32,6 +39,23 @@ struct PrivateLineApp: App {
         WindowGroup {
             ContentView()
                 .privacyOverlay(shield: shield)
+                // Present a friendly message when the biometric prompt fails.
+                .alert(
+                    "Authentication Failed",
+                    isPresented: Binding(
+                        get: { shield.authFailed },
+                        set: { shield.authFailed = $0 }
+                    ),
+                    actions: {
+                        Button("Retry") {
+                            // Allow the user to attempt authentication again.
+                            shield.retryAuthentication()
+                        }
+                    },
+                    message: {
+                        Text("Unable to verify your identity. Please try again.")
+                    }
+                )
         }
     }
 }
