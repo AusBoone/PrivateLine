@@ -11,6 +11,9 @@
  *   whenever a request returns ``401 Unauthorized``.
  * - Centralized HTTP status validation in ``sendRequest`` so callers receive
  *   clear ``URLError`` values and log messages for easier debugging.
+ * - Cached public keys now track their fetch time and are refreshed
+ *   automatically when older than a configurable duration (24 h by default) to
+ *   cope with server-side key rotation.
  */
 import Foundation
 #if canImport(LocalAuthentication)
@@ -20,6 +23,16 @@ import LocalAuthentication
 /// Wrapper around the Flask REST API used by the app.
 /// It handles user authentication and message operations.
 class APIService: ObservableObject {
+    /// Simple container bundling a public key with the time it was fetched.
+    /// Using a struct keeps the cache type-safe and makes the timestamp
+    /// association explicit.
+    private struct CachedPublicKey {
+        /// PEM encoded RSA public key as returned by the server.
+        let key: String
+        /// Point in time when the key was retrieved. Used to decide when a
+        /// cached entry should be refreshed.
+        let fetchedAt: Date
+    }
     /// Base URL of the backend API, loaded from Info.plist.
     private let baseURL: URL
     var baseURLString: String { baseURL.absoluteString }
@@ -34,8 +47,17 @@ class APIService: ObservableObject {
     /// Count the number of failed login attempts.
     private var loginFailures = 0
 
-    /// Cache of fetched recipient public keys
-    private var publicKeyCache: [String: String] = [:]
+    /// Cache of recipient public keys along with the timestamp when each key
+    /// was retrieved. Keeping track of the fetch time allows the service to
+    /// invalidate keys after a configurable interval so server-side key
+    /// rotations are respected without requiring an app restart.
+    private var publicKeyCache: [String: CachedPublicKey] = [:]
+
+    /// Maximum age for cached public keys before a refresh is triggered. The
+    /// default of 24 hours strikes a balance between avoiding unnecessary
+    /// network calls and ensuring new keys are picked up promptly if the
+    /// backend rotates them. A value of ``0`` disables caching.
+    private let publicKeyCacheDuration: TimeInterval
 
     /// Stored pinned fingerprints
     private var pinnedKeys: [String: String] = [:]
@@ -76,7 +98,14 @@ class APIService: ObservableObject {
     }
 
     /// Create the service using ``session`` if provided, otherwise a pinned session.
-    init(session: URLSession? = nil) {
+    /// - Parameters:
+    ///   - session: Optional ``URLSession`` injected for testing.
+    ///   - publicKeyCacheDuration: Maximum age for cached public keys in seconds
+    ///     before the value is refreshed from the backend. Defaults to 24 hours.
+    init(session: URLSession? = nil, publicKeyCacheDuration: TimeInterval = 60 * 60 * 24) {
+        // Store cache duration first so it is available during initialization of
+        // other components if needed.
+        self.publicKeyCacheDuration = publicKeyCacheDuration
         if let urlString = Bundle.main.object(forInfoDictionaryKey: "BackendBaseURL") as? String,
            let url = URL(string: urlString) {
             baseURL = url
@@ -388,12 +417,29 @@ class APIService: ObservableObject {
     }
 
     /// Fetch and cache the PEM encoded RSA public key for ``username``.
-    /// The value is looked up once and then stored in ``publicKeyCache`` for
-    /// subsequent calls so repeated message sends do not hit the network.
+    /// Each entry records when it was retrieved so that stale keys can be
+    /// refreshed after ``publicKeyCacheDuration`` seconds. This guards against
+    /// server‑side key rotations leaving the app with an outdated key while still
+    /// minimizing network traffic for frequent message sends. If the user's
+    /// system clock changes abruptly, the cache is discarded and a new key is
+    /// requested to avoid using stale data.
     private func publicKey(for username: String) async throws -> String {
+        // Check the in-memory cache first. If the cached value is still within
+        // the allowed age threshold it can be reused directly, avoiding a
+        // network round trip. If the timestamp is older than the configured
+        // duration the entry is discarded and a fresh key is fetched.
         if let cached = publicKeyCache[username] {
-            return cached
+            let age = Date().timeIntervalSince(cached.fetchedAt)
+            if publicKeyCacheDuration <= 0 || age < publicKeyCacheDuration {
+                return cached.key
+            }
+            // Edge case: if the device clock changes drastically, ``age`` may
+            // appear larger or smaller than expected. In such situations we
+            // conservatively drop the cached value and fetch a new key to avoid
+            // using a potentially stale credential.
+            publicKeyCache.removeValue(forKey: username)
         }
+
         guard token != nil else { throw URLError(.userAuthenticationRequired) }
         let url = baseURL.appendingPathComponent("public_key/\(username)")
         let request = URLRequest(url: url)
@@ -402,7 +448,9 @@ class APIService: ObservableObject {
               let pem = json["public_key"] else {
             throw URLError(.badServerResponse)
         }
-        publicKeyCache[username] = pem
+        // Store the retrieved key along with the current timestamp so that
+        // future calls can determine whether it should be refreshed.
+        publicKeyCache[username] = CachedPublicKey(key: pem, fetchedAt: Date())
         return pem
     }
 

@@ -5,6 +5,8 @@
 // Modifications:
 // - Added coverage for HTTP error propagation, ensuring ``sendRequest`` surfaces
 //   ``URLError`` codes when the backend returns 4xx or 5xx statuses.
+// - Introduced tests validating that cached public keys expire after the
+//   configured time-to-live and are refreshed accordingly.
 
 import XCTest
 import CryptoKit
@@ -115,6 +117,42 @@ final class APIServicesTests: XCTestCase {
         enqueue(json: "{}")
         try await api.sendMessage("hi", to: "bob")
         XCTAssertEqual(session.requests.last?.url?.path, "/messages")
+    }
+
+    /// Cached public keys should be reused within the configured TTL and
+    /// refreshed afterwards. This verifies that ``APIService`` correctly
+    /// discards stale keys to honor server-side rotations while avoiding
+    /// redundant network calls for rapid sends.
+    func testPublicKeyCacheExpiresAfterTTL() async throws {
+        // Recreate the service with a 1-second TTL so the test can exercise
+        // both the cached and refreshed paths quickly.
+        session = MockURLSession()
+        api = APIService(session: session, publicKeyCacheDuration: 1)
+
+        let fp = CryptoManager.fingerprint(of: publicPem)
+        enqueue(json: "{\"access_token\":\"tok\",\"refresh_token\":\"ref\"}")
+        enqueue(json: "{\"pinned_keys\":[{\"username\":\"bob\",\"fingerprint\":\"\(fp)\"}]}")
+        try await api.login(username: "a", password: password)
+
+        // First message fetches Bob's key from the server and stores it with a timestamp.
+        enqueue(json: "{\"public_key\":\"\(publicPem!)\"}")
+        enqueue(json: "{}")
+        try await api.sendMessage("one", to: "bob")
+
+        // Second message sent immediately should reuse the cached key.
+        enqueue(json: "{}")
+        try await api.sendMessage("two", to: "bob")
+        var keyFetches = session.requests.filter { $0.url?.path.contains("public_key") == true }.count
+        XCTAssertEqual(keyFetches, 1)
+
+        // Wait past the TTL and send again; this should trigger a refresh and a
+        // second call to the public_key endpoint.
+        try await Task.sleep(nanoseconds: 1_100_000_000)
+        enqueue(json: "{\"public_key\":\"\(publicPem!)\"}")
+        enqueue(json: "{}")
+        try await api.sendMessage("three", to: "bob")
+        keyFetches = session.requests.filter { $0.url?.path.contains("public_key") == true }.count
+        XCTAssertEqual(keyFetches, 2)
     }
 
     func testAutomaticRefreshOn401() async throws {
