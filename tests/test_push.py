@@ -2,7 +2,10 @@
 
 This suite validates encryption handling for push notification tokens including
 legacy plaintext storage, corrupted ciphertext, and the new random nonce and
-hash-based deduplication scheme.
+hash-based deduplication scheme. Additional tests ensure that when a token is
+re-registered with a different platform the existing database row is updated
+instead of creating a duplicate, proving deduplication relies on the token's
+SHA-256 hash rather than ciphertext.
 """
 
 from base64 import b64decode, b64encode
@@ -109,4 +112,29 @@ def test_push_token_deduplication(client):
 
     with app.app_context():
         assert PushToken.query.count() == 1
+
+
+def test_push_token_platform_update(client):
+    """Changing the platform resubmits the token without duplicating rows."""
+    from .conftest import register_user, login_user
+    from backend.app import app
+
+    register_user(client, "alice")
+    token = login_user(client, "alice").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Register the token as an iOS device and then again as Android. The hash
+    # remains identical, so the second request should update the platform field
+    # on the existing row rather than insert a new record.
+    client.post(
+        "/api/push-token", json={"token": "dup", "platform": "ios"}, headers=headers
+    )
+    client.post(
+        "/api/push-token", json={"token": "dup", "platform": "android"}, headers=headers
+    )
+
+    with app.app_context():
+        pts = PushToken.query.all()
+        assert len(pts) == 1
+        assert pts[0].platform == "android"
 
