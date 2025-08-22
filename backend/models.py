@@ -165,6 +165,11 @@ class File(db.Model):
     # ownership can be enforced before any message references exist. The value
     # is always set by :class:`~backend.resources.FileUpload` during upload.
     uploader_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    # Optional additional authenticated data used during AES-GCM encryption of
+    # the file. The value stores the concatenated message identifier and
+    # recipient information so downloads can verify the metadata has not been
+    # tampered with. ``None`` indicates that no AAD was supplied at upload time.
+    aad = db.Column(db.String(128))
 
 
 class Message(db.Model):

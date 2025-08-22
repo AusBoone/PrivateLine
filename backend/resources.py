@@ -43,6 +43,10 @@ support random nonces during encryption.
 2032 update: File downloads now authorize access via a single SQL join query,
 eliminating per-message iteration when verifying group membership or
 conversation participation.
+2033 update: File uploads may include a message identifier and recipient
+information as additional authenticated data (AAD) for AES-GCM encryption. File
+downloads validate this AAD and reject tampered metadata to ensure attachments
+are bound to their original context.
 """
 
 # 2024 update: Introduced Argon2 password hashing via ``PasswordHasher`` and
@@ -827,9 +831,25 @@ class FileUpload(Resource):
 
         sanitized = secure_filename(f.filename)
         nonce = os.urandom(12)
+
+        # When clients supply a message identifier and recipient reference, use
+        # them as additional authenticated data. This binds the encrypted file
+        # to the specific message and recipient so tampering with either value
+        # causes decryption to fail.
+        msg_id = request.form.get("message_id")
+        recipient = request.form.get("recipient")
+        if (msg_id and not recipient) or (recipient and not msg_id):
+            return {"message": "message_id and recipient required"}, 400
+        aad_bytes = None
+        aad_str = None
+        if msg_id and recipient:
+            aad_str = f"{msg_id}:{recipient}"
+            aad_bytes = aad_str.encode()
+
         # Encrypt the raw bytes using the server's symmetric key before writing
-        # to the database so that file contents remain confidential at rest.
-        ciphertext = aesgcm.encrypt(nonce, data, None)
+        # to the database so that file contents remain confidential at rest. Any
+        # supplied AAD is incorporated into the authentication tag.
+        ciphertext = aesgcm.encrypt(nonce, data, aad_bytes)
         stored = nonce + ciphertext
         file_rec = File(
             filename=sanitized,
@@ -841,6 +861,9 @@ class FileUpload(Resource):
             # Associate the upload with the current user so later requests can
             # verify ownership even before the file is attached to a message.
             uploader_id=uid,
+            # Persist the AAD string if one was provided so downloads can supply
+            # the exact value during decryption.
+            aad=aad_str,
         )
         db.session.add(file_rec)
         db.session.commit()
@@ -903,11 +926,12 @@ class FileDownload(Resource):
             return {"message": "Forbidden"}, 403
         nonce = f.data[:12]
         ciphertext = f.data[12:]
+        aad = f.aad.encode() if f.aad else None
         try:
-            # AES-GCM raises ``InvalidTag`` when the ciphertext or authentication
-            # tag has been tampered with. Returning a 400 helps clients handle
-            # corruption gracefully instead of surfacing a server error.
-            plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+            # AES-GCM raises ``InvalidTag`` when either the ciphertext or the
+            # associated data has been altered. Including the optional AAD binds
+            # the file to the message and recipient recorded at upload time.
+            plaintext = aesgcm.decrypt(nonce, ciphertext, aad)
         except InvalidTag:
             return {"message": "Corrupted file"}, 400
         from flask import make_response
