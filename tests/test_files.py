@@ -214,6 +214,94 @@ def test_corrupted_file_returns_400(client):
     assert resp.get_json() == {"message": "Corrupted file"}
 
 
+def test_tampered_aad_returns_400(client):
+    """Altering stored AAD should make decryption fail with HTTP 400.
+
+    The test uploads a file while supplying a message identifier and recipient
+    so the server incorporates them as additional authenticated data. After the
+    file is attached to a message, the stored AAD is modified directly in the
+    database to simulate tampering. A subsequent download attempt must fail
+    because the AAD no longer matches the authentication tag.
+    """
+
+    reg = register_user(client, "trent")
+    pk = decrypt_private_key(reg)
+    token = login_user(client, "trent").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    fs = FileStorage(stream=io.BytesIO(b"secret"), filename="aad.txt")
+    resp = client.post(
+        "/api/files",
+        data={"file": fs, "message_id": "1", "recipient": "trent"},
+        headers=headers,
+        content_type="multipart/form-data",
+    )
+    fid = resp.get_json()["file_id"]
+
+    b64 = base64.b64encode(b"msg").decode()
+    sig = sign_content(pk, b64)
+    client.post(
+        "/api/messages",
+        data={"content": b64, "recipient": "trent", "file_id": fid, "signature": sig},
+        headers=headers,
+    )
+
+    # Tamper with the stored AAD so the authentication tag no longer matches.
+    with app.app_context():
+        record = db.session.get(File, fid)
+        record.aad = "2:trent"  # Flip the message id portion of the AAD
+        db.session.commit()
+
+    resp = client.get(f"/api/files/{fid}", headers=headers)
+    assert resp.status_code == 400
+    assert resp.get_json() == {"message": "Corrupted file"}
+
+
+def test_tampered_aad_group_returns_400(client):
+    """Group file downloads should also fail when AAD is modified."""
+
+    reg_a = register_user(client, "alice")
+    pk_a = decrypt_private_key(reg_a)
+    token_a = login_user(client, "alice").get_json()["access_token"]
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+
+    reg_b = register_user(client, "bob")
+    token_b = login_user(client, "bob").get_json()["access_token"]
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+
+    # Create group and add Bob as a member.
+    resp = client.post("/api/groups", json={"name": "team"}, headers=headers_a)
+    gid = resp.get_json()["id"]
+    client.post(f"/api/groups/{gid}/members", json={"username": "bob"}, headers=headers_a)
+
+    fs = FileStorage(stream=io.BytesIO(b"data"), filename="g.txt")
+    resp = client.post(
+        "/api/files",
+        data={"file": fs, "message_id": "1", "recipient": f"group:{gid}"},
+        headers=headers_a,
+        content_type="multipart/form-data",
+    )
+    fid = resp.get_json()["file_id"]
+
+    b64 = base64.b64encode(b"hi").decode()
+    sig = sign_content(pk_a, b64)
+    client.post(
+        f"/api/groups/{gid}/messages",
+        data={"content": b64, "signature": sig, "file_id": fid},
+        headers=headers_a,
+    )
+
+    # Corrupt the AAD to simulate tampering.
+    with app.app_context():
+        record = db.session.get(File, fid)
+        record.aad = f"1:group:{gid + 1}"
+        db.session.commit()
+
+    resp = client.get(f"/api/files/{fid}", headers=headers_b)
+    assert resp.status_code == 400
+    assert resp.get_json() == {"message": "Corrupted file"}
+
+
 def test_filename_sanitization(client):
     """Uploaded filenames should be sanitized to avoid directory traversal."""
     reg = register_user(client, "alice")
