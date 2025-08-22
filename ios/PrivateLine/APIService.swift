@@ -7,6 +7,8 @@
  *   expiration so developers can refresh it before failures occur.
  * - Introduced a notification-based callback to surface pinning failures to
  *   the UI, allowing the user to be guided toward updating the app.
+ * - Implemented automatic access-token refreshing using a stored refresh token
+ *   whenever a request returns ``401 Unauthorized``.
  */
 import Foundation
 #if canImport(LocalAuthentication)
@@ -59,6 +61,18 @@ class APIService: ObservableObject {
         }
     }
 
+    /// Refresh token allowing the client to obtain new access tokens when the
+    /// current one expires. Stored securely in the keychain.
+    private var refreshToken: String? {
+        didSet {
+            if let rt = refreshToken {
+                KeychainService.saveRefreshToken(rt)
+            } else {
+                KeychainService.removeRefreshToken()
+            }
+        }
+    }
+
     /// Create the service using ``session`` if provided, otherwise a pinned session.
     init(session: URLSession? = nil) {
         if let urlString = Bundle.main.object(forInfoDictionaryKey: "BackendBaseURL") as? String,
@@ -104,16 +118,19 @@ class APIService: ObservableObject {
             if (try? context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)) == true,
                let stored = KeychainService.loadToken(context: context) {
                 token = stored
+                refreshToken = KeychainService.loadRefreshToken(context: context)
                 isAuthenticated = true
             }
         } else if let stored = KeychainService.loadToken() {
             // Fallback if biometrics unavailable
             token = stored
+            refreshToken = KeychainService.loadRefreshToken()
             isAuthenticated = true
         }
         #else
         if let stored = KeychainService.loadToken() {
             token = stored
+            refreshToken = KeychainService.loadRefreshToken()
             isAuthenticated = true
         }
         #endif
@@ -129,6 +146,38 @@ class APIService: ObservableObject {
         }
     }
 
+    /// Send ``request`` to the backend, attaching the current access token and
+    /// automatically attempting a token refresh if the server responds with
+    /// ``401 Unauthorized``. Requests are retried once after a successful
+    /// refresh.
+    /// - Parameters:
+    ///   - request: The ``URLRequest`` to send.
+    ///   - requiresAuth: Whether to attach the ``Authorization`` header.
+    /// - Returns: Tuple of response data and metadata.
+    private func sendRequest(_ request: URLRequest, requiresAuth: Bool = true) async throws -> (Data, URLResponse) {
+        var req = request
+        if requiresAuth, let token = token {
+            req.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        let (data, response) = try await session.data(for: req)
+        if requiresAuth,
+           let http = response as? HTTPURLResponse,
+           http.statusCode == 401 {
+            // Access token likely expired; attempt to refresh and retry once.
+            if await refreshAccessToken(), let new = token {
+                var retry = request
+                retry.setValue("Bearer \(new)", forHTTPHeaderField: "Authorization")
+                return try await session.data(for: retry)
+            } else {
+                // Refresh failed; mark user as logged out and surface auth error.
+                DispatchQueue.main.async { self.isAuthenticated = false }
+                throw URLError(.userAuthenticationRequired)
+            }
+        }
+        return (data, response)
+    }
+
     /// Attempt to log in with the provided credentials.
     func login(username: String, password: String) async throws {
         let url = baseURL.appendingPathComponent("login")
@@ -140,18 +189,19 @@ class APIService: ObservableObject {
         do {
             let (data, _) = try await session.data(for: request)
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let token = json["access_token"] as? String else {
+                  let token = json["access_token"] as? String,
+                  let refresh = json["refresh_token"] as? String else {
                 throw URLError(.badServerResponse)
             }
-           // Reset failure counter and unlock the private key
-           loginFailures = 0
-           try? CryptoManager.loadPrivateKey(password: password)
+            // Reset failure counter and unlock the private key
+            loginFailures = 0
+            try? CryptoManager.loadPrivateKey(password: password)
             self.token = token
+            self.refreshToken = refresh
             do {
                 // Retrieve pinned key fingerprints for certificate validation
-                var request = URLRequest(url: self.baseURL.appendingPathComponent("pinned_keys"))
-                request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-                let (pkData, _) = try await self.session.data(for: request)
+                let request = URLRequest(url: self.baseURL.appendingPathComponent("pinned_keys"))
+                let (pkData, _) = try await self.sendRequest(request)
                 if let json = try? JSONSerialization.jsonObject(with: pkData) as? [String: [[String: String]]],
                    let arr = json["pinned_keys"] {
                     self.pinnedKeys = Dictionary(uniqueKeysWithValues: arr.map { ($0["username"]!, $0["fingerprint"]!) })
@@ -167,6 +217,7 @@ class APIService: ObservableObject {
             loginFailures += 1
             if loginFailures >= 3 {
                 KeychainService.removeToken()
+                KeychainService.removeRefreshToken()
             }
             throw error
         }
@@ -205,10 +256,9 @@ class APIService: ObservableObject {
 
     /// Fetch all messages for the authenticated user.
     func fetchMessages() async throws -> [Message] {
-        guard let token = token else { return [] }
-        var request = URLRequest(url: baseURL.appendingPathComponent("messages"))
-        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let (data, _) = try await session.data(for: request)
+        guard token != nil else { return [] }
+        let request = URLRequest(url: baseURL.appendingPathComponent("messages"))
+        let (data, _) = try await sendRequest(request)
         let json = try JSONDecoder().decode([String: [Message]].self, from: data)
         let msgs = json["messages"] ?? []
         return msgs.compactMap { msg in
@@ -221,11 +271,10 @@ class APIService: ObservableObject {
 
     /// Retrieve and decrypt all messages for the given group.
     func fetchGroupMessages(_ id: Int) async throws -> [Message] {
-        guard let token = token else { return [] }
+        guard token != nil else { return [] }
         _ = try await groupKey(for: id)
-        var request = URLRequest(url: baseURL.appendingPathComponent("groups/\(id)/messages"))
-        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let (data, _) = try await session.data(for: request)
+        let request = URLRequest(url: baseURL.appendingPathComponent("groups/\(id)/messages"))
+        let (data, _) = try await sendRequest(request)
         let json = try JSONDecoder().decode([String: [Message]].self, from: data)
         let msgs = json["messages"] ?? []
         return msgs.compactMap { msg in
@@ -239,10 +288,9 @@ class APIService: ObservableObject {
 
     /// Fetch the list of available chat groups from the backend.
     func fetchGroups() async throws -> [Group] {
-        guard let token = token else { return [] }
-        var request = URLRequest(url: baseURL.appendingPathComponent("groups"))
-        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let (data, _) = try await session.data(for: request)
+        guard token != nil else { return [] }
+        let request = URLRequest(url: baseURL.appendingPathComponent("groups"))
+        let (data, _) = try await sendRequest(request)
         let json = try JSONDecoder().decode([String: [Group]].self, from: data)
         let gs = json["groups"] ?? []
         DispatchQueue.main.async { self.groups = gs }
@@ -251,11 +299,10 @@ class APIService: ObservableObject {
 
     /// Encrypt ``content`` with the group key and POST it to the server.
     func sendGroupMessage(_ content: String, groupId: Int, fileId: Int? = nil, expiresAt: Date? = nil) async throws {
-        guard let token = token else { throw URLError(.userAuthenticationRequired) }
+        guard token != nil else { throw URLError(.userAuthenticationRequired) }
         _ = try await groupKey(for: groupId)
         var request = URLRequest(url: baseURL.appendingPathComponent("groups/\(groupId)/messages"))
         request.httpMethod = "POST"
-        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let encrypted = try CryptoManager.encryptGroupMessage(content, groupId: groupId)
         let b64 = encrypted.base64EncodedString()
         let sig = try CryptoManager.signMessage(b64).base64EncodedString()
@@ -275,7 +322,7 @@ class APIService: ObservableObject {
         comps.queryItems = items
         request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = comps.query?.data(using: .utf8)
-        _ = try await session.data(for: request)
+        _ = try await sendRequest(request)
     }
 
     /// Encrypt ``data`` and upload it as ``filename``.
@@ -307,10 +354,9 @@ class APIService: ObservableObject {
     /// Files are stored encrypted on the server just like messages so the
     /// client must decrypt them after fetching.
     func downloadFile(id: Int) async throws -> Data {
-        guard let token = token else { throw URLError(.userAuthenticationRequired) }
-        var request = URLRequest(url: baseURL.appendingPathComponent("files/\(id)"))
-        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let (data, _) = try await session.data(for: request)
+        guard token != nil else { throw URLError(.userAuthenticationRequired) }
+        let request = URLRequest(url: baseURL.appendingPathComponent("files/\(id)"))
+        let (data, _) = try await sendRequest(request)
         let decrypted = try CryptoManager.decryptData(data)
         return decrypted
     }
@@ -322,11 +368,10 @@ class APIService: ObservableObject {
         if let cached = publicKeyCache[username] {
             return cached
         }
-        guard let token = token else { throw URLError(.userAuthenticationRequired) }
+        guard token != nil else { throw URLError(.userAuthenticationRequired) }
         let url = baseURL.appendingPathComponent("public_key/\(username)")
-        var request = URLRequest(url: url)
-        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let (data, _) = try await session.data(for: request)
+        let request = URLRequest(url: url)
+        let (data, _) = try await sendRequest(request)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: String],
               let pem = json["public_key"] else {
             throw URLError(.badServerResponse)
@@ -341,10 +386,9 @@ class APIService: ObservableObject {
     /// call.
     private func groupKey(for groupId: Int) async throws -> String {
         if let cached = groupKeys[groupId] { return cached }
-        guard let token = token else { throw URLError(.userAuthenticationRequired) }
-        var request = URLRequest(url: baseURL.appendingPathComponent("groups/\(groupId)/key"))
-        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let (data, _) = try await session.data(for: request)
+        guard token != nil else { throw URLError(.userAuthenticationRequired) }
+        let request = URLRequest(url: baseURL.appendingPathComponent("groups/\(groupId)/key"))
+        let (data, _) = try await sendRequest(request)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: String],
               let key = json["key"] else { throw URLError(.badServerResponse) }
         // Cache the returned AES key for future use
@@ -355,10 +399,9 @@ class APIService: ObservableObject {
 
     /// Send a single message to ``recipient``.
     func sendMessage(_ content: String, to recipient: String, fileId: Int? = nil, expiresAt: Date? = nil) async throws {
-        guard let token = token else { throw URLError(.userAuthenticationRequired) }
+        guard token != nil else { throw URLError(.userAuthenticationRequired) }
         var request = URLRequest(url: baseURL.appendingPathComponent("messages"))
         request.httpMethod = "POST"
-        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let publicKeyPem = try await publicKey(for: recipient)
         if let expected = pinnedKeys[recipient] {
             let fp = CryptoManager.fingerprint(of: publicKeyPem)
@@ -384,41 +427,39 @@ class APIService: ObservableObject {
         comps.queryItems = items
         request.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = comps.query?.data(using: .utf8)
-        _ = try await session.data(for: request)
+        _ = try await sendRequest(request)
     }
 
     /// Remove a message from the server.
     func deleteMessage(id: Int) async throws {
-        guard let token = token else { throw URLError(.userAuthenticationRequired) }
+        guard token != nil else { throw URLError(.userAuthenticationRequired) }
         var request = URLRequest(url: baseURL.appendingPathComponent("messages/\(id)"))
         request.httpMethod = "DELETE"
-        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        _ = try await session.data(for: request)
+        _ = try await sendRequest(request)
     }
 
     /// Notify the backend that a message has been read.
     func markMessageRead(id: Int) async throws {
-        guard let token = token else { throw URLError(.userAuthenticationRequired) }
+        guard token != nil else { throw URLError(.userAuthenticationRequired) }
         var request = URLRequest(url: baseURL.appendingPathComponent("messages/\(id)/read"))
         request.httpMethod = "POST"
-        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        _ = try await session.data(for: request)
+        _ = try await sendRequest(request)
     }
 
     /// Update the user's message retention period in days.
     func updateRetention(days: Int) async throws {
-        guard let token = token else { throw URLError(.userAuthenticationRequired) }
+        guard token != nil else { throw URLError(.userAuthenticationRequired) }
         var request = URLRequest(url: baseURL.appendingPathComponent("account-settings"))
         request.httpMethod = "PUT"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONEncoder().encode(["messageRetentionDays": days])
-        _ = try await session.data(for: request)
+        _ = try await sendRequest(request)
     }
 
     /// Clear the stored token and authentication state.
     func logout() {
         token = nil
+        refreshToken = nil
         isAuthenticated = false
     }
 
@@ -426,23 +467,34 @@ class APIService: ObservableObject {
 
     /// Request the backend to revoke all active sessions for the user.
     func revokeAllSessions() async {
-        guard let token = token else { return }
+        guard token != nil else { return }
         var request = URLRequest(url: baseURL.appendingPathComponent("revoke"))
         request.httpMethod = "POST"
-        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        _ = try? await session.data(for: request)
+        _ = try? await sendRequest(request)
     }
 
     /// Refresh the access token using a backend endpoint.
-    func refreshToken() async {
-        guard let token = token else { return }
+    /// Contact the ``/refresh`` endpoint using the stored refresh token.
+    /// - Returns: ``true`` if a new access token was retrieved and stored.
+    private func refreshAccessToken() async -> Bool {
+        guard let refresh = refreshToken else { return false }
         var request = URLRequest(url: baseURL.appendingPathComponent("refresh"))
         request.httpMethod = "POST"
-        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        if let (data, _) = try? await session.data(for: request),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let new = json["access_token"] as? String {
+        request.addValue("Bearer \(refresh)", forHTTPHeaderField: "Authorization")
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let new = json["access_token"] as? String else {
+                return false
+            }
             self.token = new
+            if let newRefresh = json["refresh_token"] as? String {
+                self.refreshToken = newRefresh
+            }
+            return true
+        } catch {
+            return false
         }
     }
 
