@@ -1,6 +1,10 @@
 // Unit tests for ``APIService`` verifying networking logic such as login,
 // message retrieval and token refresh. ``URLSession`` is mocked so the tests do
 // not require a live backend server.
+//
+// Modifications:
+// - Added coverage for HTTP error propagation, ensuring ``sendRequest`` surfaces
+//   ``URLError`` codes when the backend returns 4xx or 5xx statuses.
 
 import XCTest
 import CryptoKit
@@ -128,6 +132,32 @@ final class APIServicesTests: XCTestCase {
         XCTAssertEqual(api.authToken, "new")
         // 2 login requests + 3 for fetch (401, refresh, retry)
         XCTAssertEqual(session.requests.count, 5)
+    }
+
+    /// ``sendRequest`` should surface ``URLError(.badServerResponse)`` for 4xx responses.
+    func testClientErrorPropagatesURLError() async {
+        enqueue(json: "{}", status: 400)
+        do {
+            try await api.register(username: "u", email: "e", password: "p")
+            XCTFail("Expected error for 400 response")
+        } catch let err as URLError {
+            XCTAssertEqual(err.code, .badServerResponse)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    /// ``sendRequest`` should surface ``URLError(.cannotConnectToHost)`` for 5xx responses.
+    func testServerErrorPropagatesURLError() async {
+        enqueue(json: "{}", status: 500)
+        do {
+            try await api.register(username: "u", email: "e", password: "p")
+            XCTFail("Expected error for 500 response")
+        } catch let err as URLError {
+            XCTAssertEqual(err.code, .cannotConnectToHost)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
     }
 
     func testPinningDelegateAcceptsMatchingCert() throws {

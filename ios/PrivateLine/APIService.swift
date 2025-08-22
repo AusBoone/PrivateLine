@@ -9,6 +9,8 @@
  *   the UI, allowing the user to be guided toward updating the app.
  * - Implemented automatic access-token refreshing using a stored refresh token
  *   whenever a request returns ``401 Unauthorized``.
+ * - Centralized HTTP status validation in ``sendRequest`` so callers receive
+ *   clear ``URLError`` values and log messages for easier debugging.
  */
 import Foundation
 #if canImport(LocalAuthentication)
@@ -160,7 +162,10 @@ class APIService: ObservableObject {
             req.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
-        let (data, response) = try await session.data(for: req)
+        // Perform the request using the session configured with certificate pinning.
+        var (data, response) = try await session.data(for: req)
+
+        // Handle 401 responses by attempting a single token refresh.
         if requiresAuth,
            let http = response as? HTTPURLResponse,
            http.statusCode == 401 {
@@ -168,13 +173,36 @@ class APIService: ObservableObject {
             if await refreshAccessToken(), let new = token {
                 var retry = request
                 retry.setValue("Bearer \(new)", forHTTPHeaderField: "Authorization")
-                return try await session.data(for: retry)
+                (data, response) = try await session.data(for: retry)
             } else {
                 // Refresh failed; mark user as logged out and surface auth error.
                 DispatchQueue.main.async { self.isAuthenticated = false }
                 throw URLError(.userAuthenticationRequired)
             }
         }
+
+        // Validate that we received a proper HTTP response with a successful status code.
+        guard let http = response as? HTTPURLResponse else {
+            // Non-HTTP responses indicate a fundamental networking failure.
+            print("Unexpected response for \(req.url?.absoluteString ?? "<unknown>")")
+            throw URLError(.badServerResponse)
+        }
+        guard (200...299).contains(http.statusCode) else {
+            // Log descriptive error to help developers debug and provide feedback for users.
+            let msg = HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
+            print("Request to \(req.url?.absoluteString ?? "<unknown>") failed with status \(http.statusCode): \(msg)")
+            switch http.statusCode {
+            case 400...499:
+                // Client-side errors indicate the request was invalid or unauthorized.
+                throw URLError(.badServerResponse)
+            case 500...599:
+                // Server-side errors usually mean the host is currently unavailable.
+                throw URLError(.cannotConnectToHost)
+            default:
+                throw URLError(.badServerResponse)
+            }
+        }
+
         return (data, response)
     }
 
@@ -237,10 +265,8 @@ class APIService: ObservableObject {
             URLQueryItem(name: "password", value: password),
         ]
         request.httpBody = comps.query?.data(using: .utf8)
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 201 else {
-            throw URLError(.badServerResponse)
-        }
+        // ``register`` does not require an auth token, so we disable it.
+        let (data, _) = try await sendRequest(request, requiresAuth: false)
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: String],
            let enc = json["encrypted_private_key"],
            let salt = json["salt"],
