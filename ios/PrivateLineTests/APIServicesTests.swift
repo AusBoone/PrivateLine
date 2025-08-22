@@ -38,6 +38,7 @@ final class APIServicesTests: XCTestCase {
         session = MockURLSession()
         api = APIService(session: session)
         KeychainService.removeToken()
+        KeychainService.removeRefreshToken()
 
         // Generate ephemeral RSA key pair and store encrypted private key
         let attrs: [String: Any] = [
@@ -70,17 +71,22 @@ final class APIServicesTests: XCTestCase {
 
     override func tearDownWithError() throws {
         KeychainService.removeToken()
+        KeychainService.removeRefreshToken()
     }
 
-    private func enqueue(json: String) {
+    /// Queue a mocked HTTP response.
+    /// - Parameters:
+    ///   - json: Body returned to the caller.
+    ///   - status: HTTP status code to simulate (defaults to ``200``).
+    private func enqueue(json: String, status: Int = 200) {
         let data = json.data(using: .utf8)!
-        let resp = HTTPURLResponse(url: URL(string: "http://test")!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        let resp = HTTPURLResponse(url: URL(string: "http://test")!, statusCode: status, httpVersion: nil, headerFields: nil)!
         session.responses.append((data, resp))
     }
 
     func testLoginParsesToken() async throws {
         // Successful login should set authToken and isAuthenticated
-        enqueue(json: "{\"access_token\":\"abc\"}")
+        enqueue(json: "{\"access_token\":\"abc\",\"refresh_token\":\"ref\"}")
         enqueue(json: "{\"pinned_keys\":[]}")
         try await api.login(username: "a", password: password)
         await Task.sleep(50_000_000)
@@ -92,7 +98,7 @@ final class APIServicesTests: XCTestCase {
     func testFetchMessagesDecrypts() async throws {
         // Ensure encrypted messages are decrypted correctly
         let fp = CryptoManager.fingerprint(of: publicPem)
-        enqueue(json: "{\"access_token\":\"tok\"}")
+        enqueue(json: "{\"access_token\":\"tok\",\"refresh_token\":\"ref\"}")
         enqueue(json: "{\"pinned_keys\":[{\"username\":\"bob\",\"fingerprint\":\"\(fp)\"}]}")
         try await api.login(username: "a", password: password)
         let ciphertext = try CryptoManager.encryptRSA("hi", publicKeyPem: publicPem).base64EncodedString()
@@ -104,7 +110,7 @@ final class APIServicesTests: XCTestCase {
     func testSendMessageUsesPinnedKey() async throws {
         // Outgoing messages must use the pinned fingerprint
         let fp = CryptoManager.fingerprint(of: publicPem)
-        enqueue(json: "{\"access_token\":\"tok\"}")
+        enqueue(json: "{\"access_token\":\"tok\",\"refresh_token\":\"ref\"}")
         enqueue(json: "{\"pinned_keys\":[{\"username\":\"bob\",\"fingerprint\":\"\(fp)\"}]}")
         try await api.login(username: "a", password: password)
         enqueue(json: "{\"public_key\":\"\(publicPem!)\"}")
@@ -113,14 +119,21 @@ final class APIServicesTests: XCTestCase {
         XCTAssertEqual(session.requests.last?.url?.path, "/messages")
     }
 
-    func testRefreshTokenUpdatesState() async throws {
-        // Refresh endpoint should replace the stored token
-        enqueue(json: "{\"access_token\":\"t\"}")
+    func testAutomaticRefreshOn401() async throws {
+        // When a request returns 401 the service should refresh the token and retry.
+        enqueue(json: "{\"access_token\":\"old\",\"refresh_token\":\"ref\"}")
         enqueue(json: "{\"pinned_keys\":[]}")
         try await api.login(username: "a", password: password)
-        enqueue(json: "{\"access_token\":\"new\"}")
-        await api.refreshToken()
+
+        // First request fails with 401, triggering a refresh which succeeds and retries.
+        enqueue(json: "{}", status: 401)
+        enqueue(json: "{\"access_token\":\"new\",\"refresh_token\":\"ref2\"}")
+        enqueue(json: "{\"messages\":[]}")
+        _ = try await api.fetchMessages()
+
         XCTAssertEqual(api.authToken, "new")
+        // 2 login requests + 3 for fetch (401, refresh, retry)
+        XCTAssertEqual(session.requests.count, 5)
     }
 
     func testPinningDelegateAcceptsMatchingCert() throws {

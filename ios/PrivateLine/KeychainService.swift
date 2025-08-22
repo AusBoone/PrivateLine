@@ -2,11 +2,26 @@ import Foundation
 import Security
 import LocalAuthentication
 
+/*
+ * KeychainService.swift
+ * ---------------------
+ * Utilities for persisting sensitive authentication material in the iOS
+ * keychain. Both access and refresh tokens are stored using distinct keys so
+ * that they remain isolated from other app data and protected by the system.
+ *
+ * Usage examples:
+ * ``KeychainService.saveToken("abc")`` – Persist the short-lived access token.
+ * ``KeychainService.saveRefreshToken("def")`` – Persist the long-lived refresh
+ * token.
+ */
+
 /// Simple helper for storing and retrieving values from the Keychain.
 struct KeychainService {
     // Values stored here are scoped to this app and device only
-    /// Keychain identifier storing the JWT token.
+    /// Keychain identifier storing the JWT access token.
     private static let tokenKey = "PrivateLineToken"
+    /// Keychain identifier storing the refresh token used to obtain new JWTs.
+    private static let refreshTokenKey = "PrivateLineRefreshToken"
 
     /// Generic helper to save arbitrary data in the keychain under ``account``.
     static func save(_ account: String, data: Data) {
@@ -41,11 +56,18 @@ struct KeychainService {
         return data
     }
 
-    /// Persist the JWT token returned by the backend in the keychain.
+    /// Persist the JWT access token returned by the backend in the keychain.
     static func saveToken(_ token: String) {
         if let data = token.data(using: .utf8) {
             // Store the token string as UTF-8 data
             save(tokenKey, data: data)
+        }
+    }
+
+    /// Persist the refresh token which authorizes issuing new access tokens.
+    static func saveRefreshToken(_ token: String) {
+        if let data = token.data(using: .utf8) {
+            save(refreshTokenKey, data: data)
         }
     }
 
@@ -58,13 +80,30 @@ struct KeychainService {
         return String(data: data, encoding: .utf8)
     }
 
-    /// Remove the stored token from the keychain.
+    /// Load the stored refresh token used for automatic token renewal.
+    static func loadRefreshToken(context: LAContext? = nil) -> String? {
+        guard let data = loadData(account: refreshTokenKey, context: context) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Remove the stored access token from the keychain.
     static func removeToken() {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: tokenKey
         ]
         // Delete the keychain entry
+        SecItemDelete(query as CFDictionary)
+    }
+
+    /// Remove the stored refresh token from the keychain.
+    static func removeRefreshToken() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: refreshTokenKey
+        ]
         SecItemDelete(query as CFDictionary)
     }
 }
