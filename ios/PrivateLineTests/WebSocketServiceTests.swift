@@ -1,6 +1,6 @@
-// Tests for ``WebSocketService`` covering connection, reconnection and
-// disconnection logic.  These tests use mock objects to avoid real network
-// calls and to deterministically simulate failures.
+// Tests for ``WebSocketService`` covering connection, reconnection, default
+// session configuration and disconnection logic. These tests use mock objects
+// to avoid real network calls and to deterministically simulate failures.
 import XCTest
 @testable import PrivateLine
 
@@ -51,6 +51,21 @@ final class MockURLSession: URLSession {
 /// Tests basic lifecycle behaviour of ``WebSocketService`` using the mocks
 /// above to avoid network traffic.
 final class WebSocketServiceTests: XCTestCase {
+    func testDefaultInitializerCreatesPinnedSession() {
+        // When no session is injected, the service should configure its own
+        // ``URLSession`` with a delegate that handles certificate pinning.
+        let service = WebSocketService()
+
+        // Use reflection to access the otherwise private session for testing.
+        let mirror = Mirror(reflecting: service)
+        guard let session = mirror.children.first(where: { $0.label == "session" })?.value as? URLSession else {
+            return XCTFail("Unable to retrieve session via reflection")
+        }
+
+        XCTAssertNotNil(session.delegate, "Custom session should provide a delegate for pinning")
+        XCTAssertFalse(session === URLSession.shared, "Service must not use URLSession.shared")
+    }
+
     func testConnectStartsTask() {
         // Calling connect should resume the underlying WebSocket task
         let task = MockWebSocketTask()

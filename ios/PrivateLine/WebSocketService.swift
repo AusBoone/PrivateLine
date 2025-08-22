@@ -12,9 +12,13 @@ import Foundation
  *   - Reconnection attempts are scheduled on a dedicated dispatch queue
  *     allowing tests to inject a controllable queue.
  *   - Exponential backoff starts at ``baseDelay`` and doubles up to
- *     ``maxDelay``.  This avoids hammering the server while still giving the
- *     user a chance to recover from transient failures.
- */
+*     ``maxDelay``.  This avoids hammering the server while still giving the
+*     user a chance to recover from transient failures.
+ *   - Uses a dedicated ``URLSession`` with certificate pinning to mirror the
+ *     security of ``APIService``. This guards WebSocket traffic against
+ *     man-in-the-middle attacks and keeps behaviour consistent across the
+ *     networking stack.
+*/
 class WebSocketService: ObservableObject {
     /// Published state of the socket so the UI can display connection info.
     enum ConnectionStatus {
@@ -49,11 +53,28 @@ class WebSocketService: ObservableObject {
     /// Create the service with an optional custom ``URLSession`` and timing
     /// parameters.  ``baseDelay`` and ``maxDelay`` default to sensible values
     /// but are tunable for tests.
-    init(session: URLSession = .shared,
+    ///
+    /// - Parameters:
+    ///   - session: Optional ``URLSession`` to use. When ``nil`` a new session
+    ///     with certificate pinning is created to guard against MITM attacks.
+    ///   - baseDelay: Starting delay for reconnection backoff.
+    ///   - maxDelay: Maximum delay allowed for reconnection backoff.
+    ///   - reconnectionQueue: Queue on which reconnect attempts are scheduled.
+    init(session: URLSession? = nil,
          baseDelay: TimeInterval = 1,
          maxDelay: TimeInterval = 60,
          reconnectionQueue: DispatchQueue = DispatchQueue.global()) {
-        self.session = session
+        if let provided = session {
+            // Tests may inject a mock session to avoid real network calls.
+            self.session = provided
+        } else {
+            let config = URLSessionConfiguration.default
+            // Use a dedicated session with certificate pinning to mirror
+            // ``APIService.PinningDelegate`` and avoid ``URLSession.shared``.
+            self.session = URLSession(configuration: config,
+                                     delegate: PinningDelegate(),
+                                     delegateQueue: nil)
+        }
         self.baseDelay = baseDelay
         self.maxDelay = maxDelay
         self.reconnectionQueue = reconnectionQueue
@@ -152,5 +173,40 @@ class WebSocketService: ObservableObject {
         pendingReconnect = nil
         task?.cancel(with: .goingAway, reason: nil)
         status = .disconnected
+    }
+
+    /// Delegate enforcing certificate pinning for WebSocket connections.
+    /// Mirrors the logic used by ``APIService.PinningDelegate`` so both HTTP
+    /// and WebSocket traffic are validated against the bundled ``server.cer``
+    /// certificate. Any mismatch cancels the handshake and notifies
+    /// listeners so the UI can surface the problem.
+    private class PinningDelegate: NSObject, URLSessionDelegate {
+        func urlSession(_ session: URLSession,
+                        didReceive challenge: URLAuthenticationChallenge,
+                        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+            // Extract the certificate from the challenge and compare against the
+            // bundled pinned certificate. If anything fails we fall back to the
+            // system's default handling which typically rejects the connection.
+            guard let trust = challenge.protectionSpace.serverTrust,
+                  let serverCert = SecTrustGetCertificateAtIndex(trust, 0),
+                  let pinnedURL = Bundle.main.url(forResource: "server", withExtension: "cer"),
+                  let pinnedData = try? Data(contentsOf: pinnedURL),
+                  let pinnedCert = SecCertificateCreateWithData(nil, pinnedData as CFData) else {
+                completionHandler(.performDefaultHandling, nil)
+                return
+            }
+
+            // Compare DER-encoded certificate data to ensure an exact match.
+            let serverData = SecCertificateCopyData(serverCert) as Data
+            let pinnedCertData = SecCertificateCopyData(pinnedCert) as Data
+            if serverData == pinnedCertData {
+                completionHandler(.useCredential, URLCredential(trust: trust))
+            } else {
+                // Notify the rest of the app just like the API service does so
+                // the UI can prompt the user to update their pinned cert.
+                NotificationCenter.default.post(name: APIService.pinningFailureNotification, object: nil)
+                completionHandler(.cancelAuthenticationChallenge, nil)
+            }
+        }
     }
 }
