@@ -1,3 +1,9 @@
+/*
+ * ContentView.swift - SwiftUI entry point for the iOS client.
+ * Displays login or chat screens and now surfaces certificate pinning warnings
+ * if the bundled ``server.cer`` does not match the server. This guides users to
+ * refresh their app when the backend certificate changes.
+ */
 import SwiftUI
 
 /// Root view that displays either the login screen or chat depending on auth state.
@@ -35,6 +41,15 @@ struct ContentView: View {
         }
         // Respect the user's dark mode preference
         .preferredColorScheme(isDarkMode ? .dark : .light)
+        // Warn the user when certificate pinning fails so they know to update.
+        .alert(
+            "Connection Untrusted",
+            isPresented: $api.showCertificateWarning
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("The server's certificate doesn't match the one bundled with the app. Please update the app or contact support to refresh the pinned certificate.")
+        }
     }
 }
 

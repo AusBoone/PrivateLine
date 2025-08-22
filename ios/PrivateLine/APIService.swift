@@ -1,9 +1,17 @@
 /*
  * APIService.swift - Networking layer for the iOS client.
  * Manages authentication, message transfer and certificate pinning.
+ *
+ * Modifications:
+ * - Added runtime check that logs when the bundled ``server.cer`` is close to
+ *   expiration so developers can refresh it before failures occur.
+ * - Introduced a notification-based callback to surface pinning failures to
+ *   the UI, allowing the user to be guided toward updating the app.
  */
 import Foundation
+#if canImport(LocalAuthentication)
 import LocalAuthentication
+#endif
 
 /// Wrapper around the Flask REST API used by the app.
 /// It handles user authentication and message operations.
@@ -14,6 +22,10 @@ class APIService: ObservableObject {
 
     /// Indicates whether the user is currently authenticated.
     @Published var isAuthenticated = false
+
+    /// Flag toggled when certificate pinning fails so the UI can present a
+    /// guidance alert instructing users to update the app or contact support.
+    @Published var showCertificateWarning = false
 
     /// Count the number of failed login attempts.
     private var loginFailures = 0
@@ -26,8 +38,14 @@ class APIService: ObservableObject {
     @Published var groups: [Group] = []
     private var groupKeys: [Int: String] = [:]
 
+    /// Notification name emitted when certificate pinning fails.
+    static let pinningFailureNotification = Notification.Name("APIPinningFailure")
+
     /// URLSession used for API calls with certificate pinning.
     private let session: URLSession
+
+    /// Observer token for certificate pinning failure notifications.
+    private var pinningObserver: NSObjectProtocol?
 
     /// JWT token returned after a successful login.
     // JWT used for authorizing API requests
@@ -57,9 +75,29 @@ class APIService: ObservableObject {
             let config = URLSessionConfiguration.default
             // PinningDelegate performs certificate pinning for all requests
             self.session = URLSession(configuration: config, delegate: PinningDelegate(), delegateQueue: nil)
+
+            // Observe pinning failures so the UI can surface a helpful message.
+            pinningObserver = NotificationCenter.default.addObserver(
+                forName: APIService.pinningFailureNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.showCertificateWarning = true
+            }
+
+            // Evaluate expiration of the bundled certificate and log if it is
+            // nearing its validity end. This helps developers refresh
+            // ``server.cer`` before it actually expires.
+            if let pinnedURL = Bundle.main.url(forResource: "server", withExtension: "cer"),
+               let pinnedData = try? Data(contentsOf: pinnedURL),
+               let pinnedCert = SecCertificateCreateWithData(nil, pinnedData as CFData),
+               isCertificateExpiringSoon(pinnedCert) {
+                print("Warning: pinned certificate expires soon; run scripts/update_server_cert.sh to refresh it")
+            }
         }
 
-        // Attempt to load the stored token, prompting for Face ID/Touch ID.
+        // Attempt to load the stored token, prompting for biometrics when available.
+        #if canImport(LocalAuthentication)
         let context = LAContext()
         if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) {
             let reason = "Authenticate to unlock PrivateLine"
@@ -73,9 +111,22 @@ class APIService: ObservableObject {
             token = stored
             isAuthenticated = true
         }
+        #else
+        if let stored = KeychainService.loadToken() {
+            token = stored
+            isAuthenticated = true
+        }
+        #endif
 
         // Preload any persisted group keys for offline message access
         CryptoManager.preloadPersistedGroupKeys()
+    }
+
+    deinit {
+        // Clean up observer when the service is deallocated.
+        if let obs = pinningObserver {
+            NotificationCenter.default.removeObserver(obs)
+        }
     }
 
     /// Attempt to log in with the provided credentials.
@@ -413,8 +464,27 @@ class APIService: ObservableObject {
             if serverData == pinnedCertData {
                 completionHandler(.useCredential, URLCredential(trust: trust))
             } else {
+                // Notify listeners that pinning failed so they can alert the user
+                // to update ``server.cer``.
+                NotificationCenter.default.post(name: APIService.pinningFailureNotification, object: nil)
                 completionHandler(.cancelAuthenticationChallenge, nil)
             }
         }
+    }
+
+    /// Determine whether ``cert`` expires within ``threshold`` seconds.
+    ///
+    /// - Parameters:
+    ///   - cert: Certificate to evaluate.
+    ///   - threshold: Seconds before expiry considered "soon" (default 30 days).
+    /// - Returns: ``true`` if ``cert`` expires within ``threshold``.
+    private func isCertificateExpiringSoon(_ cert: SecCertificate, threshold: TimeInterval = 60 * 60 * 24 * 30) -> Bool {
+        let oid = kSecOIDX509V1ValidityNotAfter
+        if let values = SecCertificateCopyValues(cert, [oid] as CFArray, nil) as? [CFString: Any],
+           let exp = values[oid] as? [CFString: Any],
+           let date = exp[kSecPropertyKeyValue] as? Date {
+            return date.timeIntervalSinceNow < threshold
+        }
+        return false
     }
 }

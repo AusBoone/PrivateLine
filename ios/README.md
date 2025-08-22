@@ -79,3 +79,26 @@ focuses on a different component:
 Running these tests regularly helps ensure the iOS client continues to work
 correctly as new features are added.
 
+## Refreshing the Pinned TLS Certificate
+
+The app pins the backend's TLS certificate via `server.cer` located under
+`Resources/`. Because the file contains environment-specific material it is
+*not* tracked by Git. Builds will fail to connect if the bundled certificate is
+missing or outdated, so run the helper script whenever the backend rotates its
+certificate.
+
+```bash
+./scripts/update_server_cert.sh api.example.com
+```
+
+The script downloads the leaf certificate from the given host, writes it to
+`ios/PrivateLine/Resources/server.cer`, and prints the SHA-256 public-key
+fingerprint. Replace Android's `CERTIFICATE_SHA256` value with the printed
+fingerprint to keep both platforms aligned.
+
+Integrate this script into CI so new certificates are fetched automatically
+before building the mobile apps. At runtime `APIService` logs a warning when the
+embedded certificate is within 30 days of expiring, and `ContentView` surfaces a
+user-facing alert if pinning validation fails. In both cases rerun the script to
+refresh the certificate bundle.
+
