@@ -1,13 +1,14 @@
 // Unit tests for ``CryptoManager`` verifying symmetric and group encryption
-// helpers including RSA round trips and signing.
+// helpers along with Secure Enclave backed RSA signing and decryption. The
+// tests exercise both successful hardware-backed flows and graceful failure
+// when Secure Enclave support is missing.
 import XCTest
 import CryptoKit
 import Security
-import CommonCrypto
 @testable import PrivateLine
 
-/// Exercises the symmetric, group and RSA helper functions provided by
-/// ``CryptoManager``.
+/// Exercises the symmetric, group and Secure Enclave backed RSA helper
+/// functions provided by ``CryptoManager``.
 final class CryptoManagerTests: XCTestCase {
     func testEncryptDecryptMessage() throws {
         // Symmetric encryption roundtrip should restore the original string
@@ -52,81 +53,66 @@ final class CryptoManagerTests: XCTestCase {
         XCTAssertTrue(CryptoManager.listGroupIds().isEmpty)
     }
 
-    /// Generate a temporary RSA key pair and verify CryptoManager helpers
-    func testRSAEncryptDecryptAndSign() throws {
-        // Generate ephemeral RSA key pair
-        let attrs: [String: Any] = [
-            kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
-            kSecAttrKeySizeInBits as String: 2048
+    /// Verify Secure Enclave key generation, signing and decryption.
+    /// If the Secure Enclave is unavailable the test is skipped.
+    func testSecureEnclaveRoundTrip() throws {
+        do {
+            try CryptoManager.loadPrivateKey(password: "")
+        } catch {
+            throw XCTSkip("Secure Enclave unavailable: \(error)")
+        }
+
+        // Fetch the generated key so we can access its public component for
+        // encrypting a test message. The tag mirrors CryptoManager.secureKeyTag.
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassKey,
+            kSecAttrApplicationTag as String: "com.privateline.securekey".data(using: .utf8)!,
+            kSecReturnRef as String: true
         ]
-        var error: Unmanaged<CFError>?
-        guard let privateKey = SecKeyCreateRandomKey(attrs as CFDictionary, &error) else {
-            throw error!.takeRetainedValue() as Error
+        var item: CFTypeRef?
+        SecItemCopyMatching(query as CFDictionary, &item)
+        guard let privateKey = item as? SecKey,
+              let publicKey = SecKeyCopyPublicKey(privateKey) else {
+            XCTFail("Secure Enclave key not found")
+            return
         }
-        let publicKey = SecKeyCopyPublicKey(privateKey)!
 
-        // Convert keys to PEM strings
-        let pubData = SecKeyCopyExternalRepresentation(publicKey, &error)! as Data
-        let publicPem = pemString(for: pubData, header: "-----BEGIN PUBLIC KEY-----", footer: "-----END PUBLIC KEY-----")
-        let privData = SecKeyCopyExternalRepresentation(privateKey, &error)! as Data
-        let privatePem = pemString(for: privData, header: "-----BEGIN PRIVATE KEY-----", footer: "-----END PRIVATE KEY-----")
-
-        // Encrypt and store key material, then load the private key
-        let password = "testing"
-        let salt = Data((0..<16).map { _ in UInt8.random(in: 0...255) })
-        let derived = try deriveKey(password: password, salt: salt)
-        let nonce = AES.GCM.Nonce()
-        let sealed = try AES.GCM.seal(Data(privatePem.utf8), using: derived, nonce: nonce)
-        let ciphertext = sealed.ciphertext + sealed.tag
-        let material = CryptoManager.KeyMaterial(
-            encrypted_private_key: ciphertext.base64EncodedString(),
-            salt: salt.base64EncodedString(),
-            nonce: Data(sealed.nonce).base64EncodedString(),
-            fingerprint: nil)
-        CryptoManager.storeKeyMaterial(material)
-        try CryptoManager.loadPrivateKey(password: password)
-
-        // Test RSA encryption/decryption helpers
         let message = "hello"
-        let encrypted = try CryptoManager.encryptRSA(message, publicKeyPem: publicPem)
-        let decrypted = try CryptoManager.decryptRSA(encrypted.base64EncodedString())
-        XCTAssertEqual(decrypted, message)
 
-        // Test signing and verification helpers
-        let sig = try CryptoManager.signMessage(message)
-        let verified = SecKeyVerifySignature(
-            publicKey,
-            .rsaSignatureMessagePSSSHA256,
-            message.data(using: .utf8)! as CFData,
-            sig as CFData,
-            &error
+        // Signing should succeed with the hardware-backed key.
+        let signature = try CryptoManager.signMessage(message)
+        var error: Unmanaged<CFError>?
+        XCTAssertTrue(
+            SecKeyVerifySignature(
+                publicKey,
+                .rsaSignatureMessagePSSSHA256,
+                message.data(using: .utf8)! as CFData,
+                signature as CFData,
+                &error
+            )
         )
-        XCTAssertTrue(verified)
+
+        // Encrypt using the public key and ensure decryption with CryptoManager.
+        let cipher = SecKeyCreateEncryptedData(
+            publicKey,
+            .rsaEncryptionOAEPSHA256,
+            message.data(using: .utf8)! as CFData,
+            &error
+        )! as Data
+        let decrypted = try CryptoManager.decryptRSA(cipher.base64EncodedString())
+        XCTAssertEqual(decrypted, message)
     }
 
-    private func pemString(for data: Data, header: String, footer: String) -> String {
-        let b64 = data.base64EncodedString(options: [.lineLength64Characters])
-        return header + "\n" + b64 + "\n" + footer
-    }
-
-    private func deriveKey(password: String, salt: Data) throws -> SymmetricKey {
-        var derived = Data(count: 32)
-        let status = derived.withUnsafeMutableBytes { derivedBytes in
-            salt.withUnsafeBytes { saltBytes in
-                CCKeyDerivationPBKDF(
-                    CCPBKDFAlgorithm(kCCPBKDF2),
-                    password,
-                    password.utf8.count,
-                    saltBytes.bindMemory(to: UInt8.self).baseAddress!,
-                    salt.count,
-                    CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
-                    200000,
-                    derivedBytes.bindMemory(to: UInt8.self).baseAddress!,
-                    32
-                )
-            }
+    /// Ensure operations fail cleanly when Secure Enclave support is absent.
+    func testSecureEnclaveUnavailable() throws {
+        do {
+            try CryptoManager.loadPrivateKey(password: "")
+            throw XCTSkip("Secure Enclave present; skipping negative test")
+        } catch {
+            XCTAssertThrowsError(try CryptoManager.signMessage("hi"))
+            XCTAssertThrowsError(
+                try CryptoManager.decryptRSA(Data([1]).base64EncodedString())
+            )
         }
-        guard status == kCCSuccess else { throw NSError(domain: "PBKDF2", code: Int(status)) }
-        return SymmetricKey(data: derived)
     }
 }

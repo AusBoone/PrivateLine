@@ -40,33 +40,27 @@ final class APIServicesTests: XCTestCase {
         KeychainService.removeToken()
         KeychainService.removeRefreshToken()
 
-        // Generate ephemeral RSA key pair and store encrypted private key
-        let attrs: [String: Any] = [
-            kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
-            kSecAttrKeySizeInBits as String: 2048
-        ]
-        var error: Unmanaged<CFError>?
-        guard let priv = SecKeyCreateRandomKey(attrs as CFDictionary, &error) else {
-            throw error!.takeRetainedValue() as Error
+        // Generate or load the Secure Enclave key and export its public key.
+        do {
+            try CryptoManager.loadPrivateKey(password: "")
+        } catch {
+            throw XCTSkip("Secure Enclave unavailable: \(error)")
         }
-        let pub = SecKeyCopyPublicKey(priv)!
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassKey,
+            kSecAttrApplicationTag as String: "com.privateline.securekey".data(using: .utf8)!,
+            kSecReturnRef as String: true
+        ]
+        var item: CFTypeRef?
+        SecItemCopyMatching(query as CFDictionary, &item)
+        guard let priv = item as? SecKey,
+              let pub = SecKeyCopyPublicKey(priv) else {
+            throw XCTSkip("Secure Enclave key not found")
+        }
+        var error: Unmanaged<CFError>?
         let pubData = SecKeyCopyExternalRepresentation(pub, &error)! as Data
         publicPem = pemString(for: pubData, header: "-----BEGIN PUBLIC KEY-----", footer: "-----END PUBLIC KEY-----")
-        let privData = SecKeyCopyExternalRepresentation(priv, &error)! as Data
-        let privPem = pemString(for: privData, header: "-----BEGIN PRIVATE KEY-----", footer: "-----END PRIVATE KEY-----")
-
-        let salt = Data((0..<16).map { _ in UInt8.random(in: 0...255) })
-        let derived = try deriveKey(password: password, salt: salt)
-        let nonce = AES.GCM.Nonce()
-        let sealed = try AES.GCM.seal(Data(privPem.utf8), using: derived, nonce: nonce)
-        let ciphertext = sealed.ciphertext + sealed.tag
-        let material = CryptoManager.KeyMaterial(
-            encrypted_private_key: ciphertext.base64EncodedString(),
-            salt: salt.base64EncodedString(),
-            nonce: Data(sealed.nonce).base64EncodedString(),
-            fingerprint: nil)
-        CryptoManager.storeKeyMaterial(material)
-        try CryptoManager.loadPrivateKey(password: password)
     }
 
     override func tearDownWithError() throws {
@@ -203,25 +197,5 @@ final class APIServicesTests: XCTestCase {
         return header + "\n" + b64 + "\n" + footer
     }
 
-    private func deriveKey(password: String, salt: Data) throws -> SymmetricKey {
-        var derived = Data(count: 32)
-        let status = derived.withUnsafeMutableBytes { derivedBytes in
-            salt.withUnsafeBytes { saltBytes in
-                CCKeyDerivationPBKDF(
-                    CCPBKDFAlgorithm(kCCPBKDF2),
-                    password,
-                    password.utf8.count,
-                    saltBytes.bindMemory(to: UInt8.self).baseAddress!,
-                    salt.count,
-                    CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
-                    200000,
-                    derivedBytes.bindMemory(to: UInt8.self).baseAddress!,
-                    32
-                )
-            }
-        }
-        guard status == kCCSuccess else { throw NSError(domain: "PBKDF2", code: Int(status)) }
-        return SymmetricKey(data: derived)
-    }
 }
 
