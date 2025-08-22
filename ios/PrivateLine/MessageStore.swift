@@ -1,9 +1,26 @@
 import Foundation
 
-/// Simple persistence layer for caching messages locally on disk.
-/// This is not a full database but provides minimal offline support.
-/// Messages are stored in plain JSON because they are already encrypted by
-/// ``CryptoManager`` before being sent to the server.
+/*
+ * MessageStore.swift
+ * -------------------
+ * Lightweight persistence layer responsible for caching messages on disk.
+ *
+ * ### Overview
+ * Messages are encoded as JSON then encrypted with ``CryptoManager`` before
+ * being written to disk using complete file protection. This ensures
+ * serialized data remains unreadable without the AES key and that the system
+ * does not expose the file while the device is locked.
+ *
+ * ### Usage
+ * ``MessageStore.save([Message])`` – Persist messages asynchronously.
+ * ``MessageStore.load()`` – Decrypt and deserialize messages back into
+ * application structures.
+ *
+ * ### Design Notes
+ * A simple file-based cache is used instead of a database because messages
+ * are already individually encrypted when exchanged with the server. The
+ * store adds an extra encryption layer to protect the aggregate cache.
+ */
 enum MessageStore {
     /// Location of the JSON file used for caching messages.
     private static var fileURL: URL {
@@ -11,33 +28,58 @@ enum MessageStore {
             .appendingPathComponent("messages.json")
     }
 
-    /// Default number of days messages remain in the cache.
+    /// Default number of days messages remain in the cache before expiring.
     private static let defaultTtlDays = 30
 
     /// Load cached messages from disk.
+    ///
+    /// - Returns: Array of decrypted ``Message`` objects. Returns an empty
+    ///   array when the file is missing, expired, or decryption fails.
     static func load() -> [Message] {
+        // Determine the retention window either from user defaults or the
+        // default value. Convert days to seconds for comparison.
         let days = UserDefaults.standard.integer(forKey: "retention_days")
-        let ttl = Double(days > 0 ? days : defaultTtlDays) * 86400
+        let ttl = Double(days > 0 ? days : defaultTtlDays) * 86_400
+
+        // Remove the cache if it has exceeded the retention period to avoid
+        // serving stale content.
         if let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
            let modified = attrs[.modificationDate] as? Date,
            Date().timeIntervalSince(modified) > ttl {
             try? FileManager.default.removeItem(at: fileURL)
             return []
         }
+
+        // Read the raw encrypted blob, decrypt it, and decode JSON. Any
+        // failure during these steps results in an empty cache to keep the
+        // call site simple and safe.
         guard let data = try? Data(contentsOf: fileURL),
-              let msgs = try? JSONDecoder().decode([Message].self, from: data) else {
+              let decrypted = try? CryptoManager.decryptData(data),
+              let messages = try? JSONDecoder().decode([Message].self, from: decrypted) else {
             return []
         }
-        return msgs
+        return messages
     }
 
     /// Persist messages to disk asynchronously.
+    ///
+    /// - Parameter messages: Collection of ``Message`` objects to serialize.
+    ///
+    /// Errors encountered during encoding, encryption, or writing are ignored
+    /// since caching is best-effort and should not block the UI. Failures are
+    /// simply dropped, resulting in the cache not being updated.
     static func save(_ messages: [Message]) {
         DispatchQueue.global(qos: .background).async {
-            if let data = try? JSONEncoder().encode(messages) {
-                // Write JSON to disk in the background
-                try? data.write(to: fileURL)
+            // Encode the messages to JSON then encrypt the payload. If either
+            // step fails, there is nothing to persist and we exit early.
+            guard let json = try? JSONEncoder().encode(messages),
+                  let encrypted = try? CryptoManager.encryptData(json) else {
+                return
             }
+
+            // Persist the encrypted blob using complete file protection so the
+            // system keeps the file inaccessible while the device is locked.
+            try? encrypted.write(to: fileURL, options: .completeFileProtection)
         }
     }
 }
