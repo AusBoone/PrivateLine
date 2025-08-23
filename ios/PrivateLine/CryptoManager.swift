@@ -107,19 +107,42 @@ enum CryptoManager {
         return String(decoding: decrypted, as: UTF8.self)
     }
 
-    /// Encrypt arbitrary binary data with the stored key.
-    static func encryptData(_ data: Data) throws -> Data {
+    /// Encrypt arbitrary binary ``data`` using AES-GCM.
+    ///
+    /// - Parameters:
+    ///   - data: Plaintext bytes to protect.
+    ///   - aad: Optional additional authenticated data (AAD) that will be bound
+    ///     to the ciphertext. Supplying AAD allows callers to associate
+    ///     contextual metadata – such as a message identifier and recipient –
+    ///     with the encrypted payload. Any mismatch during decryption will cause
+    ///     authentication to fail, helping detect tampering.
+    /// - Returns: Combined nonce + ciphertext as produced by ``AES.GCM.seal``.
+    static func encryptData(_ data: Data, aad: Data? = nil) throws -> Data {
         let key = try key()
-        let sealed = try AES.GCM.seal(data, using: key)
+        // Perform authenticated encryption. When ``aad`` is provided it is
+        // incorporated into the authentication tag so that later decryption can
+        // verify the associated metadata has not been altered.
+        let sealed = try AES.GCM.seal(data, using: key, authenticating: aad ?? Data())
         guard let combined = sealed.combined else { throw CocoaError(.coderValueNotFound) }
         return combined
     }
 
     /// Decrypt data previously encrypted with ``encryptData``.
-    static func decryptData(_ data: Data) throws -> Data {
+    ///
+    /// - Parameters:
+    ///   - data: Bytes produced by ``encryptData``.
+    ///   - aad: The same additional authenticated data supplied during
+    ///     encryption. Providing a different value will cause ``AES.GCM`` to
+    ///     throw, signalling possible tampering or context mismatch.
+    /// - Returns: The original plaintext bytes when authentication succeeds.
+    static func decryptData(_ data: Data, aad: Data? = nil) throws -> Data {
         let key = try key()
         let sealed = try AES.GCM.SealedBox(combined: data)
-        let decrypted = try AES.GCM.open(sealed, using: key)
+        // ``AES.GCM.open`` validates both the ciphertext and any supplied AAD
+        // using the authentication tag embedded in ``data``. A mismatch results
+        // in an ``CryptoKitError.authenticationFailure`` error, allowing callers
+        // to treat the data as untrusted.
+        let decrypted = try AES.GCM.open(sealed, using: key, authenticating: aad ?? Data())
         return decrypted
     }
 

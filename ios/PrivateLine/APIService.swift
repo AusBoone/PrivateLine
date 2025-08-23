@@ -14,6 +14,9 @@
  * - Cached public keys now track their fetch time and are refreshed
  *   automatically when older than a configurable duration (24 h by default) to
  *   cope with server-side key rotation.
+ * - File uploads may now bind the target message and recipient to the
+ *   ciphertext via AES-GCM additional authenticated data (AAD) so tampering with
+ *   metadata is detected when downloads are decrypted.
  */
 import Foundation
 #if canImport(LocalAuthentication)
@@ -381,22 +384,72 @@ class APIService: ObservableObject {
     }
 
     /// Encrypt ``data`` and upload it as ``filename``.
-    /// The server returns an identifier which can later be attached to a
-    /// ``Message`` so recipients may download the same file.
-    func uploadFile(data: Data, filename: String) async throws -> Int? {
+    ///
+    /// - Parameters:
+    ///   - data: Raw bytes to transmit.
+    ///   - filename: Original filename supplied by the user interface.
+    ///   - messageId: Optional identifier of the message that will reference the
+    ///     file. When provided alongside ``recipient`` or ``groupId`` the value
+    ///     is combined into a string "``messageId``:``recipient``" and used as
+    ///     additional authenticated data during AES-GCM encryption. This mirrors
+    ///     backend expectations so downloads can verify the attachment belongs to
+    ///     the intended message and recipient.
+    ///   - recipient: Username for direct messages. Provide either ``recipient``
+    ///     or ``groupId`` when supplying ``messageId``.
+    ///   - groupId: Group identifier for group chats.
+    /// - Returns: The file id assigned by the server, or ``nil`` if the upload
+    ///   failed before receiving a response.
+    func uploadFile(
+        data: Data,
+        filename: String,
+        messageId: Int? = nil,
+        recipient: String? = nil,
+        groupId: Int? = nil
+    ) async throws -> Int? {
         guard let token = token else { return nil }
         var request = URLRequest(url: baseURL.appendingPathComponent("files"))
         request.httpMethod = "POST"
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let boundary = UUID().uuidString
         request.addValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
         var body = Data()
+
+        // Helper to append a simple form field to the multipart body.
+        func appendField(name: String, value: String) {
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
+            body.append("\(value)\r\n".data(using: .utf8)!)
+        }
+
+        var aadString: String?
+        if let mid = messageId {
+            // Determine the recipient string to use in AAD and for the form field.
+            if let rec = recipient {
+                appendField(name: "message_id", value: String(mid))
+                appendField(name: "recipient", value: rec)
+                aadString = "\(mid):\(rec)"
+            } else if let gid = groupId {
+                let rec = "g\(gid)"
+                appendField(name: "message_id", value: String(mid))
+                appendField(name: "recipient", value: rec)
+                aadString = "\(mid):\(rec)"
+            }
+        }
+
+        // Append the binary file contents as the final multipart part.
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
+        body.append(
+            "Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!
+        )
         body.append("Content-Type: application/octet-stream\r\n\r\n".data(using: .utf8)!)
-        let encrypted = try CryptoManager.encryptData(data)
+        // Encrypt the bytes, binding any optional AAD so tampering with the
+        // message id or recipient will be detected during decryption.
+        let aad = aadString?.data(using: .utf8)
+        let encrypted = try CryptoManager.encryptData(data, aad: aad)
         body.append(encrypted)
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+
         request.httpBody = body
         let (respData, _) = try await session.upload(for: request, from: body)
         if let json = try? JSONSerialization.jsonObject(with: respData) as? [String: Int] {
@@ -408,11 +461,31 @@ class APIService: ObservableObject {
     /// Download and decrypt a previously uploaded file.
     /// Files are stored encrypted on the server just like messages so the
     /// client must decrypt them after fetching.
-    func downloadFile(id: Int) async throws -> Data {
+    ///
+    /// - Parameters:
+    ///   - id: Identifier returned by ``uploadFile``.
+    ///   - messageId: Identifier used during upload for AAD, if any.
+    ///   - recipient: Username for direct messages or ``nil`` when ``groupId``
+    ///     is provided.
+    ///   - groupId: Group identifier matching the value used during upload.
+    func downloadFile(
+        id: Int,
+        messageId: Int? = nil,
+        recipient: String? = nil,
+        groupId: Int? = nil
+    ) async throws -> Data {
         guard token != nil else { throw URLError(.userAuthenticationRequired) }
         let request = URLRequest(url: baseURL.appendingPathComponent("files/\(id)"))
         let (data, _) = try await sendRequest(request)
-        let decrypted = try CryptoManager.decryptData(data)
+        var aadData: Data? = nil
+        if let mid = messageId {
+            if let rec = recipient {
+                aadData = "\(mid):\(rec)".data(using: .utf8)
+            } else if let gid = groupId {
+                aadData = "\(mid):g\(gid)".data(using: .utf8)
+            }
+        }
+        let decrypted = try CryptoManager.decryptData(data, aad: aadData)
         return decrypted
     }
 
