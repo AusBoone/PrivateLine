@@ -9,6 +9,11 @@
 //  Enclave is unavailable (e.g. on the simulator) operations will throw
 //  descriptive errors so the caller can gracefully degrade.
 //
+//  2025 security update: introduces a lightweight double ratchet for
+//  per-conversation forward secrecy. Ratchet roots are persisted in the
+//  keychain and every decrypt advances the chain so past keys cannot unlock
+//  future messages.
+//
 import Foundation
 import CryptoKit
 import Security
@@ -230,6 +235,68 @@ enum CryptoManager {
         let sealed = try AES.GCM.SealedBox(combined: data)
         let decrypted = try AES.GCM.open(sealed, using: useKey)
         return String(decoding: decrypted, as: UTF8.self)
+    }
+
+    // MARK: - Ratchet helpers
+
+    /// In-memory cache of per-conversation ratchets.
+    private static var ratchets: [String: DoubleRatchet] = [:]
+
+    /// Prefix used for keychain accounts storing ratchet root keys.
+    private static let ratchetPrefix = "RatchetRoot:"
+
+    /// Persist ``b64`` as the ratchet root for ``conversationId`` and cache it.
+    /// The root must be 32 bytes when decoded.
+    static func storeRatchetRoot(_ b64: String, conversationId: String) {
+        guard let data = Data(base64Encoded: b64), data.count == 32 else { return }
+        KeychainService.save(ratchetPrefix + conversationId, data: data)
+        ratchets[conversationId] = DoubleRatchet(rootKey: data)
+    }
+
+    /// Retrieve the ratchet for ``conversationId`` from memory or the keychain.
+    private static func ratchet(for conversationId: String) throws -> DoubleRatchet {
+        if let r = ratchets[conversationId] { return r }
+        guard let data = KeychainService.loadData(account: ratchetPrefix + conversationId) else {
+            throw CocoaError(.coderValueNotFound)
+        }
+        let r = DoubleRatchet(rootKey: data)
+        ratchets[conversationId] = r
+        return r
+    }
+
+    /// Encrypt ``data`` using the ratchet for ``conversationId``.
+    /// - Returns: Tuple of header+ciphertext and nonce. The root key remains
+    ///   unchanged because only the recipient advances the chain on decrypt.
+    static func ratchetEncrypt(_ data: Data, conversationId: String) throws -> (Data, Data) {
+        let ratchet = try ratchet(for: conversationId)
+        let result = try ratchet.encrypt(data)
+        KeychainService.save(ratchetPrefix + conversationId, data: ratchet.rootKey)
+        return result
+    }
+
+    /// Decrypt ``data`` using the ratchet for ``conversationId`` and advance
+    /// the chain. The updated root is persisted to the keychain.
+    static func ratchetDecrypt(_ data: Data, nonce: Data, conversationId: String) throws -> Data {
+        let ratchet = try ratchet(for: conversationId)
+        let plain = try ratchet.decrypt(data, nonce: nonce)
+        KeychainService.save(ratchetPrefix + conversationId, data: ratchet.rootKey)
+        return plain
+    }
+
+    /// Remove cached ratchet for ``conversationId`` and delete its keychain
+    /// entry. Used by tests to ensure clean state.
+    static func removeRatchetState(_ conversationId: String) {
+        ratchets.removeValue(forKey: conversationId)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: ratchetPrefix + conversationId
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    /// Clear the in-memory ratchet cache without touching persisted roots.
+    static func clearRatchetCache() {
+        ratchets.removeAll()
     }
 
     // MARK: - RSA helper functions
