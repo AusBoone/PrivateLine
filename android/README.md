@@ -47,18 +47,18 @@ The app verifies the server's identity using [certificate pinning]. Whenever the
 backend TLS certificate changes you **must** update the pinned fingerprint or
 connections will fail.
 
-1. Obtain the new certificate file (`cert.pem`) from the production server.
-2. Generate the SHA-256 fingerprint:
+1. Run the shared helper script to fetch the new certificate and derive pins for
+   both platforms:
 
    ```bash
-   openssl x509 -in cert.pem -noout -pubkey \
-     | openssl pkey -pubin -outform der \
-     | openssl dgst -sha256 -binary \
-     | base64
+   ./scripts/update_tls_fingerprints.sh api.example.com
    ```
-3. Replace the value of `CERTIFICATE_SHA256` in `app/build.gradle` with the
-   output from step 2.
-4. Rebuild the project so the new pin is embedded in `BuildConfig`.
+2. Replace the value of `CERTIFICATE_SHA256` in `app/build.gradle` with the
+   printed `ANDROID_FINGERPRINT`.
+3. Insert the `IOS_FINGERPRINT` line into
+   `ios/PrivateLine/Resources/server_fingerprints.txt`.
+4. Commit the changes so CI can verify the pins. Rebuild the project so the new
+   pin is embedded in `BuildConfig`.
 
 [certificate pinning]: https://square.github.io/okhttp/features/certificate_pinner/
 

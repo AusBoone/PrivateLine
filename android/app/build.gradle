@@ -23,7 +23,10 @@ android {
         // value whenever the backend certificate changes. It is exposed to
         // Kotlin via ``BuildConfig.CERTIFICATE_SHA256`` so different build
         // variants may supply their own pin if desired.
-        buildConfigField 'String', 'CERTIFICATE_SHA256', '"sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="'
+        // Fingerprint derived from scripts/dev_cert.pem; update via
+        // ``scripts/update_tls_fingerprints.sh`` when the backend certificate
+        // rotates.
+        buildConfigField 'String', 'CERTIFICATE_SHA256', '"sha256/RM57PGMLd846bJxBOW0DyA3abqB0ERUuvop8iKDrQTM="'
     }
     // Enable generation of BuildConfig so custom fields like
     // CERTIFICATE_SHA256 are available to the codebase.

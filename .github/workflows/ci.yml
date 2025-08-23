@@ -6,6 +6,25 @@ on:
   pull_request:
 
 jobs:
+  tls:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Verify TLS fingerprints
+        shell: bash
+        run: |
+          set -e
+          out=$(scripts/update_tls_fingerprints.sh --cert scripts/dev_cert.pem)
+          fp_android=$(echo "$out" | grep ANDROID_FINGERPRINT | cut -d= -f2)
+          fp_ios=$(echo "$out" | grep IOS_FINGERPRINT | cut -d= -f2)
+          if ! grep -q "$fp_android" android/app/build.gradle; then
+            echo 'Android fingerprint out of date' >&2
+            exit 1
+          fi
+          if ! grep -q "$fp_ios" ios/PrivateLine/Resources/server_fingerprints.txt; then
+            echo 'iOS fingerprints missing' >&2
+            exit 1
+          fi
   backend:
     runs-on: ubuntu-latest
     steps:

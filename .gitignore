@@ -8,6 +8,5 @@ instance/
 # Android Gradle wrapper
 android/gradle/wrapper/gradle-wrapper.jar
 
-# iOS TLS fingerprints are generated at build time
-ios/PrivateLine/Resources/server_fingerprints.txt
+# iOS TLS fingerprints are tracked to ensure CI validates pin freshness
 
