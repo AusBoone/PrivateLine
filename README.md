@@ -160,7 +160,7 @@ A minimal SwiftUI client is located in the `ios/` directory. See
 
 - Update `ios/PrivateLine/Resources/Config/Info.plist` so the `BackendBaseURL` and `WebSocketURL` keys point at
   your server if it does not run on `localhost`.
-- Refresh pinned TLS fingerprints with `scripts/update_server_cert.sh <host>` so
+- Refresh pinned TLS fingerprints with `scripts/update_tls_fingerprints.sh <host>` so
   `ios/PrivateLine/Resources/server_fingerprints.txt` contains the backend's
   public-key hashes. Multiple lines may be present to allow certificate
   rotation.

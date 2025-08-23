@@ -83,22 +83,22 @@ correctly as new features are added.
 
 The app pins the backend's TLS public key via fingerprints stored in
 `server_fingerprints.txt` under `Resources/`. Each line contains a base64
-SHA-256 hash of a certificate's SubjectPublicKeyInfo. Because these values are
-environment-specific the file is *not* tracked by Git. Builds will fail to
-connect if the expected fingerprint is missing, so run the helper script
-whenever the backend rotates its certificate.
+SHA-256 hash of a certificate's SubjectPublicKeyInfo. The file is tracked in
+Git so CI can ensure pins remain current. Run the helper script whenever the
+backend rotates its certificate and commit the new value.
 
 ```bash
-./scripts/update_server_cert.sh api.example.com
+./scripts/update_tls_fingerprints.sh api.example.com
 ```
 
-The script downloads the leaf certificate from the given host, derives its
-fingerprint and appends it to
-`ios/PrivateLine/Resources/server_fingerprints.txt`. The same fingerprint is
-printed so Android's `CERTIFICATE_SHA256` can be updated to match. Multiple
-lines may be present in the file to allow overlapping pins during rotations.
+The script retrieves the leaf certificate from the given host and prints its
+fingerprint in two formats. Copy the `IOS_FINGERPRINT` line into
+`ios/PrivateLine/Resources/server_fingerprints.txt` and replace the
+`CERTIFICATE_SHA256` value in `android/app/build.gradle` with the
+`ANDROID_FINGERPRINT`. Multiple lines may be present in the iOS file to allow
+overlapping pins during rotations.
 
-Integrate this script into CI so new fingerprints are fetched automatically
-before building the mobile apps. At runtime `ContentView` surfaces a user-facing
-alert if pinning validation fails, indicating the fingerprints need refreshing.
+Integrate this script into CI so pinned values are checked automatically before
+building the mobile apps. At runtime `ContentView` surfaces a user-facing alert
+if pinning validation fails, indicating the fingerprints need refreshing.
 
