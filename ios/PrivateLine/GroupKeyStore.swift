@@ -23,13 +23,16 @@ enum GroupKeyStore {
     /// Persist ``b64`` as the AES key for ``groupId``.
     static func store(_ b64: String, groupId: Int) {
         guard let data = Data(base64Encoded: b64) else { return }
+        // Keys are persisted with standard device-only protection. They are not
+        // bound to biometrics because group messages are not as sensitive as the
+        // login token and need to be accessible for background refreshes.
         KeychainService.save(prefix + String(groupId), data: data)
         if !ids.contains(groupId) { ids.append(groupId) }
     }
 
     /// Load the raw AES key for ``groupId`` if it exists.
     static func load(_ groupId: Int) -> Data? {
-        KeychainService.loadData(account: prefix + String(groupId))
+        try? KeychainService.loadData(account: prefix + String(groupId))
     }
 
     /// Load all persisted keys as ``SymmetricKey`` instances.

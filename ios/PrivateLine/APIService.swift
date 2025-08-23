@@ -18,6 +18,9 @@
  * - File uploads may now bind the target message and recipient to the
  *   ciphertext via AES-GCM additional authenticated data (AAD) so tampering with
  *   metadata is detected when downloads are decrypted.
+ * - Startup token loading now uses ``LAContext`` and surfaces ``LAError``
+ *   values so authentication failures (e.g. cancelled Face ID) are handled
+ *   gracefully.
  */
 import Foundation
 import Crypto
@@ -143,21 +146,21 @@ class APIService: ObservableObject {
         if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) {
             let reason = "Authenticate to unlock PrivateLine"
             if (try? context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)) == true,
-               let stored = KeychainService.loadToken(context: context) {
+               let stored = try? KeychainService.loadToken(context: context) {
                 token = stored
-                refreshToken = KeychainService.loadRefreshToken(context: context)
+                refreshToken = try? KeychainService.loadRefreshToken(context: context)
                 isAuthenticated = true
             }
-        } else if let stored = KeychainService.loadToken() {
+        } else if let stored = try? KeychainService.loadToken() {
             // Fallback if biometrics unavailable
             token = stored
-            refreshToken = KeychainService.loadRefreshToken()
+            refreshToken = try? KeychainService.loadRefreshToken()
             isAuthenticated = true
         }
         #else
-        if let stored = KeychainService.loadToken() {
+        if let stored = try? KeychainService.loadToken() {
             token = stored
-            refreshToken = KeychainService.loadRefreshToken()
+            refreshToken = try? KeychainService.loadRefreshToken()
             isAuthenticated = true
         }
         #endif
