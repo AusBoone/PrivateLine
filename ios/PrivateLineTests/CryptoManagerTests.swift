@@ -119,6 +119,39 @@ final class CryptoManagerTests: XCTestCase {
         XCTAssertEqual(decrypted, message)
     }
 
+    /// Sign and verify a message ensuring tampered signatures are rejected.
+    func testVerifySignature() throws {
+        do {
+            try CryptoManager.loadPrivateKey(password: "")
+        } catch {
+            throw XCTSkip("Secure Enclave unavailable: \(error)")
+        }
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassKey,
+            kSecAttrApplicationTag as String: "com.privateline.securekey".data(using: .utf8)!,
+            kSecReturnRef as String: true
+        ]
+        var item: CFTypeRef?
+        SecItemCopyMatching(query as CFDictionary, &item)
+        guard let privateKey = item as? SecKey,
+              let publicKey = SecKeyCopyPublicKey(privateKey) else {
+            return XCTFail("Secure Enclave key not found")
+        }
+        var error: Unmanaged<CFError>?
+        let pubData = SecKeyCopyExternalRepresentation(publicKey, &error)! as Data
+        let pem = pemString(for: pubData,
+                            header: "-----BEGIN PUBLIC KEY-----",
+                            footer: "-----END PUBLIC KEY-----")
+
+        let msg = "hello"
+        let sig = try CryptoManager.signMessage(msg)
+        XCTAssertTrue(CryptoManager.verifySignature(msg, signature: sig, publicKeyPem: pem))
+        var bad = sig
+        bad[0] ^= 0xFF
+        XCTAssertFalse(CryptoManager.verifySignature(msg, signature: bad, publicKeyPem: pem))
+    }
+
     /// Ensure operations fail cleanly when Secure Enclave support is absent.
     func testSecureEnclaveUnavailable() throws {
         do {
@@ -158,4 +191,11 @@ final class CryptoManagerTests: XCTestCase {
         let (cipher, nonce) = try CryptoManager.ratchetEncrypt(Data([4, 5]), conversationId: "persist")
         _ = try CryptoManager.ratchetDecrypt(cipher, nonce: nonce, conversationId: "persist")
     }
+}
+
+/// Helper to convert raw key data into a PEM formatted string so the tests can
+/// feed ``CryptoManager.verifySignature`` with a realistic key representation.
+private func pemString(for data: Data, header: String, footer: String) -> String {
+    let base64 = data.base64EncodedString(options: [.lineLength64Characters])
+    return "\(header)\n\(base64)\n\(footer)\n"
 }

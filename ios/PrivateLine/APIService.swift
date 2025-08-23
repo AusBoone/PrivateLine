@@ -321,7 +321,15 @@ class APIService: ObservableObject {
         let msgs = json["messages"] ?? []
         return msgs.compactMap { msg in
             if let text = try? CryptoManager.decryptRSA(msg.content) {
-                return Message(id: msg.id, content: text, file_id: msg.file_id, read: msg.read, expires_at: msg.expires_at)
+                return Message(
+                    id: msg.id,
+                    content: text,
+                    file_id: msg.file_id,
+                    read: msg.read,
+                    expires_at: msg.expires_at,
+                    sender: msg.sender,
+                    signature: msg.signature
+                )
             }
             return nil
         }
@@ -338,7 +346,15 @@ class APIService: ObservableObject {
         return msgs.compactMap { msg in
             guard let data = Data(base64Encoded: msg.content) else { return nil }
             if let text = try? CryptoManager.decryptGroupMessage(data, groupId: id) {
-                return Message(id: msg.id, content: text, file_id: msg.file_id, read: msg.read, expires_at: msg.expires_at)
+                return Message(
+                    id: msg.id,
+                    content: text,
+                    file_id: msg.file_id,
+                    read: msg.read,
+                    expires_at: msg.expires_at,
+                    sender: msg.sender,
+                    signature: msg.signature
+                )
             }
             return nil
         }
@@ -492,11 +508,11 @@ class APIService: ObservableObject {
     /// Fetch and cache the PEM encoded RSA public key for ``username``.
     /// Each entry records when it was retrieved so that stale keys can be
     /// refreshed after ``publicKeyCacheDuration`` seconds. This guards against
-    /// server‑side key rotations leaving the app with an outdated key while still
-    /// minimizing network traffic for frequent message sends. If the user's
-    /// system clock changes abruptly, the cache is discarded and a new key is
-    /// requested to avoid using stale data.
-    private func publicKey(for username: String) async throws -> String {
+    /// server‑side key rotations leaving the app with an outdated key while
+    /// still minimizing network traffic for frequent message sends. If the
+    /// user's system clock changes abruptly, the cache is discarded and a new
+    /// key is requested to avoid using stale data.
+    func publicKey(for username: String) async throws -> String {
         // Check the in-memory cache first. If the cached value is still within
         // the allowed age threshold it can be reused directly, avoiding a
         // network round trip. If the timestamp is older than the configured

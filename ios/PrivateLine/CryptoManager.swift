@@ -404,6 +404,33 @@ enum CryptoManager {
         return sig
     }
 
+    /// Verify an RSA-PSS signature against ``message`` using ``publicKeyPem``.
+    ///
+    /// - Parameters:
+    ///   - message: The original UTF-8 string that was signed.
+    ///   - signature: Raw signature bytes to verify.
+    ///   - publicKeyPem: PEM encoded RSA public key belonging to the signer.
+    /// - Returns: ``true`` when the signature is valid for ``message``.
+    static func verifySignature(_ message: String, signature: Data, publicKeyPem: String) -> Bool {
+        let b64 = publicKeyPem
+            .replacingOccurrences(of: "-----BEGIN PUBLIC KEY-----", with: "")
+            .replacingOccurrences(of: "-----END PUBLIC KEY-----", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+        guard let data = Data(base64Encoded: b64) else { return false }
+        let attrs: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
+            kSecAttrKeyClass as String: kSecAttrKeyClassPublic,
+            kSecAttrKeySizeInBits as String: 4096,
+            kSecAttrKeyUse as String: kSecAttrKeyUseVerify
+        ]
+        var error: Unmanaged<CFError>?
+        guard let key = SecKeyCreateWithData(data as CFData, attrs as CFDictionary, &error) else {
+            return false
+        }
+        let msgData = message.data(using: .utf8)!
+        return SecKeyVerifySignature(key, .rsaSignatureMessagePSSSHA256, msgData as CFData, signature as CFData, &error)
+    }
+
     /// Compute SHA256 fingerprint of a PEM-encoded public key
     static func fingerprint(of pem: String) -> String {
         let b64 = pem

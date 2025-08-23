@@ -36,8 +36,8 @@ final class MessageStoreTests: XCTestCase {
     /// encryption and decoding pipeline.
     func testSaveLoadRoundTrip() throws {
         let messages = [
-            Message(id: 1, content: "Hi", file_id: nil, read: true),
-            Message(id: 2, content: "Bye", file_id: nil, read: false)
+            Message(id: 1, content: "Hi", file_id: nil, read: true, expires_at: nil, sender: nil, signature: nil),
+            Message(id: 2, content: "Bye", file_id: nil, read: false, expires_at: nil, sender: nil, signature: nil)
         ]
 
         MessageStore.save(messages)
@@ -50,7 +50,7 @@ final class MessageStoreTests: XCTestCase {
     /// decrypting using ``CryptoManager``.
     func testDataUnreadableWithoutDecryption() throws {
         let messages = [
-            Message(id: 1, content: "Secret", file_id: nil, read: true)
+            Message(id: 1, content: "Secret", file_id: nil, read: true, expires_at: nil, sender: nil, signature: nil)
         ]
 
         // Save the message and wait for the asynchronous write to finish.
