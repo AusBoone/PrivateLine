@@ -25,6 +25,8 @@ conversation pair obtains exactly one :class:`DoubleRatchet` instance.
 # 2025 update 2: Added configurable in-memory cache with LRU/TTL eviction to
 # bound memory usage of per-conversation ratchets.  Entries are evicted when
 # exceeding ``RATCHET_MAX_CACHE`` or after ``RATCHET_CACHE_TTL`` seconds.
+# 2026 update: Added deterministic test vector generator to aid cross-client
+#              compatibility testing.
 """
 
 from __future__ import annotations
@@ -263,3 +265,61 @@ def get_ratchet(sender: str, receiver: str) -> DoubleRatchet:
 
                 _store = RatchetStore(AES_KEY)
     return _store.get(sender, receiver)
+
+
+def generate_test_vector() -> dict:
+    """Return a deterministic double ratchet test vector.
+
+    The vector is used by the mobile clients to verify their implementations
+    match the server.  Fixed inputs are chosen so the output is stable:
+
+    * ``root_key`` – SHA-256 digest of ``b"deterministic root"``
+    * ``header`` – bytes ``0x00`` through ``0x1f``
+    * ``nonce`` – bytes ``0x00`` through ``0x0b``
+    * ``plaintext`` – ASCII string ``"double ratchet test message"``
+
+    The returned mapping encodes all binary values as hexadecimal strings.
+    """
+
+    plaintext = b"double ratchet test message"
+
+    # Root key derived from a constant string for reproducibility.
+    root_key = sha256(b"deterministic root").digest()
+
+    # Deterministic header and nonce so the ciphertext remains stable.
+    header = bytes(range(32))
+    nonce = bytes(range(12))
+
+    # Derive the AES key and encrypt the plaintext using AES-GCM.
+    ratchet = DoubleRatchet(root_key)
+    key = ratchet._derive_key(header)
+    aes = AESGCM(key)
+    ciphertext = aes.encrypt(nonce, plaintext, None)
+
+    # Compute the updated root key as performed during decryption.
+    updated_root = sha256(root_key + header).digest()
+
+    return {
+        "root_key": root_key.hex(),
+        "ciphertext": (header + ciphertext).hex(),
+        "nonce": nonce.hex(),
+        "updated_root": updated_root.hex(),
+    }
+
+
+if __name__ == "__main__":
+    # When executed directly this module writes the test vector to the
+    # repository's ``tests/data`` directory. The file can then be consumed by
+    # client implementations to verify cross-language compatibility.
+    import json
+    from pathlib import Path
+
+    vector = generate_test_vector()
+
+    # Locate the repository root relative to this file.
+    root = Path(__file__).resolve().parents[1]
+    out_path = root / "tests" / "data" / "ratchet_vectors.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8") as fh:
+        json.dump(vector, fh, indent=2)
+    print(f"wrote test vector to {out_path}")

@@ -191,6 +191,40 @@ final class CryptoManagerTests: XCTestCase {
         let (cipher, nonce) = try CryptoManager.ratchetEncrypt(Data([4, 5]), conversationId: "persist")
         _ = try CryptoManager.ratchetDecrypt(cipher, nonce: nonce, conversationId: "persist")
     }
+
+    /// Ensure the Swift ratchet implementation produces the same output as the
+    /// Python backend's deterministic test vector. This guards against
+    /// accidental divergences in the HKDF or AES-GCM logic across languages.
+    func testRatchetDeterministicVector() throws {
+        // Locate ``tests/data/ratchet_vectors.json`` relative to this file.
+        let url = URL(fileURLWithPath: #file)
+            .deletingLastPathComponent()   // CryptoManagerTests.swift
+            .deletingLastPathComponent()   // PrivateLineTests
+            .deletingLastPathComponent()   // ios
+            .appendingPathComponent("tests/data/ratchet_vectors.json")
+
+        let data = try Data(contentsOf: url)
+        let raw = try JSONSerialization.jsonObject(with: data) as? [String: String]
+        guard let vec = raw,
+              let rootHex = vec["root_key"],
+              let cipherHex = vec["ciphertext"],
+              let nonceHex = vec["nonce"],
+              let updatedHex = vec["updated_root"],
+              let root = Data(hex: rootHex),
+              let cipher = Data(hex: cipherHex),
+              let nonce = Data(hex: nonceHex),
+              let updated = Data(hex: updatedHex) else {
+            return XCTFail("Malformed test vector")
+        }
+
+        // Decrypt the ciphertext and ensure both the plaintext and advanced
+        // root key match expectations.
+        let ratchet = DoubleRatchet(rootKey: root)
+        let plaintext = try ratchet.decrypt(cipher, nonce: nonce)
+        XCTAssertEqual(String(data: plaintext, encoding: .utf8),
+                       "double ratchet test message")
+        XCTAssertEqual(ratchet.rootKey, updated)
+    }
 }
 
 /// Helper to convert raw key data into a PEM formatted string so the tests can
@@ -198,4 +232,20 @@ final class CryptoManagerTests: XCTestCase {
 private func pemString(for data: Data, header: String, footer: String) -> String {
     let base64 = data.base64EncodedString(options: [.lineLength64Characters])
     return "\(header)\n\(base64)\n\(footer)\n"
+}
+
+/// Convenience initialiser to decode hexadecimal strings within tests.
+private extension Data {
+    init?(hex: String) {
+        let chars = Array(hex)
+        guard chars.count % 2 == 0 else { return nil }
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(chars.count / 2)
+        for i in stride(from: 0, to: chars.count, by: 2) {
+            let byte = String(chars[i]) + String(chars[i + 1])
+            guard let val = UInt8(byte, radix: 16) else { return nil }
+            bytes.append(val)
+        }
+        self.init(bytes)
+    }
 }
