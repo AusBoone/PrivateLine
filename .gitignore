@@ -8,6 +8,6 @@ instance/
 # Android Gradle wrapper
 android/gradle/wrapper/gradle-wrapper.jar
 
-# iOS TLS certificate is generated at build time
-ios/PrivateLine/Resources/server.cer
+# iOS TLS fingerprints are generated at build time
+ios/PrivateLine/Resources/server_fingerprints.txt
 

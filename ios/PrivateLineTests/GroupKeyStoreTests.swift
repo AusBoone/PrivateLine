@@ -1,5 +1,5 @@
 import XCTest
-import CryptoKit
+import Crypto
 @testable import PrivateLine
 
 /// Tests for ``GroupKeyStore`` verifying key persistence and enumeration.

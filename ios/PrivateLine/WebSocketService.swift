@@ -1,4 +1,5 @@
 import Foundation
+import Crypto
 
 /*
  * WebSocketService.swift
@@ -17,7 +18,9 @@ import Foundation
  *   - Uses a dedicated ``URLSession`` with certificate pinning to mirror the
  *     security of ``APIService``. This guards WebSocket traffic against
  *     man-in-the-middle attacks and keeps behaviour consistent across the
- *     networking stack.
+ *     networking stack. Pinning now compares the SHA-256 fingerprint of the
+ *     certificate's SubjectPublicKeyInfo allowing multiple pins for smoother
+ *     rotations.
 */
 class WebSocketService: ObservableObject {
     /// Published state of the socket so the UI can display connection info.
@@ -200,36 +203,66 @@ class WebSocketService: ObservableObject {
 
     /// Delegate enforcing certificate pinning for WebSocket connections.
     /// Mirrors the logic used by ``APIService.PinningDelegate`` so both HTTP
-    /// and WebSocket traffic are validated against the bundled ``server.cer``
-    /// certificate. Any mismatch cancels the handshake and notifies
-    /// listeners so the UI can surface the problem.
+    /// and WebSocket traffic are validated against the bundled SPKI fingerprints
+    /// stored in ``server_fingerprints.txt``. Any mismatch cancels the handshake
+    /// and notifies listeners so the UI can surface the problem.
     private class PinningDelegate: NSObject, URLSessionDelegate {
+        /// SPKI fingerprints considered valid for the connection.
+        private let validFingerprints: Set<String>
+
+        override init() {
+            if let url = Bundle.main.url(forResource: "server_fingerprints", withExtension: "txt"),
+               let contents = try? String(contentsOf: url) {
+                let lines = contents.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+                validFingerprints = Set(lines.filter { !$0.isEmpty })
+            } else {
+                validFingerprints = []
+            }
+        }
+
+        /// Compare the server certificate's SPKI fingerprint against the pinned
+        /// set and accept or reject the connection accordingly.
         func urlSession(_ session: URLSession,
                         didReceive challenge: URLAuthenticationChallenge,
                         completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-            // Extract the certificate from the challenge and compare against the
-            // bundled pinned certificate. If anything fails we fall back to the
-            // system's default handling which typically rejects the connection.
             guard let trust = challenge.protectionSpace.serverTrust,
                   let serverCert = SecTrustGetCertificateAtIndex(trust, 0),
-                  let pinnedURL = Bundle.main.url(forResource: "server", withExtension: "cer"),
-                  let pinnedData = try? Data(contentsOf: pinnedURL),
-                  let pinnedCert = SecCertificateCreateWithData(nil, pinnedData as CFData) else {
+                  let fingerprint = PinningDelegate.fingerprint(for: serverCert) else {
                 completionHandler(.performDefaultHandling, nil)
                 return
             }
 
-            // Compare DER-encoded certificate data to ensure an exact match.
-            let serverData = SecCertificateCopyData(serverCert) as Data
-            let pinnedCertData = SecCertificateCopyData(pinnedCert) as Data
-            if serverData == pinnedCertData {
+            if validFingerprints.contains(fingerprint) {
                 completionHandler(.useCredential, URLCredential(trust: trust))
             } else {
-                // Notify the rest of the app just like the API service does so
-                // the UI can prompt the user to update their pinned cert.
                 NotificationCenter.default.post(name: APIService.pinningFailureNotification, object: nil)
                 completionHandler(.cancelAuthenticationChallenge, nil)
             }
+        }
+
+        /// Compute the SPKI SHA-256 fingerprint for ``cert``.
+        private static func fingerprint(for cert: SecCertificate) -> String? {
+            guard let key = SecCertificateCopyKey(cert),
+                  let keyData = SecKeyCopyExternalRepresentation(key, nil) as Data? else {
+                return nil
+            }
+            let algId: [UInt8] = [0x30,0x0d,0x06,0x09,0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x01,0x01,0x05,0x00]
+            let bitString: [UInt8] = [0x03] + derLength(of: keyData.count + 1) + [0x00] + [UInt8](keyData)
+            let spki = Data([0x30] + derLength(of: algId.count + bitString.count) + algId + bitString)
+            let digest = SHA256.hash(data: spki)
+            return Data(digest).base64EncodedString()
+        }
+
+        /// Encode ``length`` using DER rules.
+        private static func derLength(of length: Int) -> [UInt8] {
+            if length < 128 { return [UInt8(length)] }
+            var len = length
+            var bytes: [UInt8] = []
+            while len > 0 {
+                bytes.insert(UInt8(len & 0xff), at: 0)
+                len >>= 8
+            }
+            return [0x80 | UInt8(bytes.count)] + bytes
         }
     }
 }

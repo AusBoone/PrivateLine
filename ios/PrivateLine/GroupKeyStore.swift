@@ -1,6 +1,6 @@
 import Foundation
 import Security
-import CryptoKit
+import Crypto
 
 /// Lightweight persistence layer for group chat AES keys.
 ///

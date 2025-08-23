@@ -3,8 +3,9 @@
  * Manages authentication, message transfer and certificate pinning.
  *
  * Modifications:
- * - Added runtime check that logs when the bundled ``server.cer`` is close to
- *   expiration so developers can refresh it before failures occur.
+ * - Migrated certificate pinning from direct DER comparison to SPKI SHA-256
+ *   fingerprints which allows multiple valid pins for seamless certificate
+ *   rotations.
  * - Introduced a notification-based callback to surface pinning failures to
  *   the UI, allowing the user to be guided toward updating the app.
  * - Implemented automatic access-token refreshing using a stored refresh token
@@ -19,6 +20,7 @@
  *   metadata is detected when downloads are decrypted.
  */
 import Foundation
+import Crypto
 #if canImport(LocalAuthentication)
 import LocalAuthentication
 #endif
@@ -133,15 +135,6 @@ class APIService: ObservableObject {
                 self?.showCertificateWarning = true
             }
 
-            // Evaluate expiration of the bundled certificate and log if it is
-            // nearing its validity end. This helps developers refresh
-            // ``server.cer`` before it actually expires.
-            if let pinnedURL = Bundle.main.url(forResource: "server", withExtension: "cer"),
-               let pinnedData = try? Data(contentsOf: pinnedURL),
-               let pinnedCert = SecCertificateCreateWithData(nil, pinnedData as CFData),
-               isCertificateExpiringSoon(pinnedCert) {
-                print("Warning: pinned certificate expires soon; run scripts/update_server_cert.sh to refresh it")
-            }
         }
 
         // Attempt to load the stored token, prompting for biometrics when available.
@@ -661,45 +654,74 @@ class APIService: ObservableObject {
         }
     }
 
-    /// URLSessionDelegate providing basic certificate pinning.
+    /// ``URLSessionDelegate`` that validates server certificates by comparing the
+    /// SHA-256 hash of each certificate's SubjectPublicKeyInfo against a set of
+    /// precomputed fingerprints. Storing multiple fingerprints allows the app to
+    /// accept both the current and the next certificate during rotations.
     private class PinningDelegate: NSObject, URLSessionDelegate {
-        func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+        /// Pinned SPKI fingerprints loaded from ``server_fingerprints.txt``.
+        private let validFingerprints: Set<String>
+
+        override init() {
+            if let url = Bundle.main.url(forResource: "server_fingerprints", withExtension: "txt"),
+               let contents = try? String(contentsOf: url) {
+                let lines = contents.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+                validFingerprints = Set(lines.filter { !$0.isEmpty })
+            } else {
+                validFingerprints = []
+            }
+        }
+
+        /// Evaluate the server trust and compare the certificate's fingerprint
+        /// to the known-good list. On mismatch a notification is posted so the UI
+        /// can guide the user toward updating their pins.
+        func urlSession(_ session: URLSession,
+                        didReceive challenge: URLAuthenticationChallenge,
                         completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
             guard let trust = challenge.protectionSpace.serverTrust,
                   let serverCert = SecTrustGetCertificateAtIndex(trust, 0),
-                  let pinnedURL = Bundle.main.url(forResource: "server", withExtension: "cer"),
-                  let pinnedData = try? Data(contentsOf: pinnedURL),
-                  let pinnedCert = SecCertificateCreateWithData(nil, pinnedData as CFData) else {
+                  let fingerprint = PinningDelegate.fingerprint(for: serverCert) else {
                 completionHandler(.performDefaultHandling, nil)
                 return
             }
 
-            let serverData = SecCertificateCopyData(serverCert) as Data
-            let pinnedCertData = SecCertificateCopyData(pinnedCert) as Data
-            if serverData == pinnedCertData {
+            if validFingerprints.contains(fingerprint) {
                 completionHandler(.useCredential, URLCredential(trust: trust))
             } else {
-                // Notify listeners that pinning failed so they can alert the user
-                // to update ``server.cer``.
                 NotificationCenter.default.post(name: APIService.pinningFailureNotification, object: nil)
                 completionHandler(.cancelAuthenticationChallenge, nil)
             }
         }
+
+        /// Compute the base64-encoded SHA-256 hash of ``cert``'s
+        /// ``SubjectPublicKeyInfo`` structure. The implementation currently
+        /// supports RSA keys which are sufficient for the project's TLS setup.
+        private static func fingerprint(for cert: SecCertificate) -> String? {
+            guard let key = SecCertificateCopyKey(cert),
+                  let keyData = SecKeyCopyExternalRepresentation(key, nil) as Data? else {
+                return nil
+            }
+
+            // ASN.1 algorithm identifier for rsaEncryption {1.2.840.113549.1.1.1}
+            let algId: [UInt8] = [0x30,0x0d,0x06,0x09,0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x01,0x01,0x05,0x00]
+            let bitString: [UInt8] = [0x03] + derLength(of: keyData.count + 1) + [0x00] + [UInt8](keyData)
+            let spki = Data([0x30] + derLength(of: algId.count + bitString.count) + algId + bitString)
+
+            let digest = SHA256.hash(data: spki)
+            return Data(digest).base64EncodedString()
+        }
+
+        /// Encode ``length`` using the DER length encoding rules from X.690.
+        private static func derLength(of length: Int) -> [UInt8] {
+            if length < 128 { return [UInt8(length)] }
+            var len = length
+            var bytes: [UInt8] = []
+            while len > 0 {
+                bytes.insert(UInt8(len & 0xff), at: 0)
+                len >>= 8
+            }
+            return [0x80 | UInt8(bytes.count)] + bytes
+        }
     }
 
-    /// Determine whether ``cert`` expires within ``threshold`` seconds.
-    ///
-    /// - Parameters:
-    ///   - cert: Certificate to evaluate.
-    ///   - threshold: Seconds before expiry considered "soon" (default 30 days).
-    /// - Returns: ``true`` if ``cert`` expires within ``threshold``.
-    private func isCertificateExpiringSoon(_ cert: SecCertificate, threshold: TimeInterval = 60 * 60 * 24 * 30) -> Bool {
-        let oid = kSecOIDX509V1ValidityNotAfter
-        if let values = SecCertificateCopyValues(cert, [oid] as CFArray, nil) as? [CFString: Any],
-           let exp = values[oid] as? [CFString: Any],
-           let date = exp[kSecPropertyKeyValue] as? Date {
-            return date.timeIntervalSinceNow < threshold
-        }
-        return false
-    }
 }

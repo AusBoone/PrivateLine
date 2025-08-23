@@ -3,7 +3,7 @@
 // tests exercise both successful hardware-backed flows and graceful failure
 // when Secure Enclave support is missing.
 import XCTest
-import CryptoKit
+import Crypto
 import Security
 @testable import PrivateLine
 

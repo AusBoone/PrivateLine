@@ -19,7 +19,7 @@
 //  - ``ciphertext`` is ``header`` (32b) + encrypted bytes + 16b tag
 //
 import Foundation
-import CryptoKit
+import Crypto
 
 /// Stateful symmetric double ratchet used to derive a fresh AES key per message.
 /// Mirrors the Python implementation so iOS, Android and the server all derive
