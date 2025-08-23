@@ -53,6 +53,22 @@ final class CryptoManagerTests: XCTestCase {
         XCTAssertTrue(CryptoManager.listGroupIds().isEmpty)
     }
 
+    /// Verify that supplying mismatched AAD during decryption triggers an error.
+    /// This guards against tampering with associated metadata such as message
+    /// identifiers or recipients.
+    func testDecryptDataFailsWithWrongAAD() throws {
+        let payload = "secret".data(using: .utf8)!
+        let goodAAD = "1:bob".data(using: .utf8)!
+        // Encrypt the payload with contextual AAD.
+        let encrypted = try CryptoManager.encryptData(payload, aad: goodAAD)
+        // Decryption with the correct AAD should restore the plaintext.
+        let roundTrip = try CryptoManager.decryptData(encrypted, aad: goodAAD)
+        XCTAssertEqual(roundTrip, payload)
+        // Using a different AAD simulates tampering and must throw.
+        let badAAD = "2:bob".data(using: .utf8)!
+        XCTAssertThrowsError(try CryptoManager.decryptData(encrypted, aad: badAAD))
+    }
+
     /// Verify Secure Enclave key generation, signing and decryption.
     /// If the Secure Enclave is unavailable the test is skipped.
     func testSecureEnclaveRoundTrip() throws {

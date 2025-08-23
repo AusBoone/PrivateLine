@@ -27,7 +27,13 @@ final class MockAPIService: APIService {
         super.init(session: session)
     }
 
-    override func uploadFile(data: Data, filename: String) async throws -> Int? {
+    override func uploadFile(
+        data: Data,
+        filename: String,
+        messageId: Int? = nil,
+        recipient: String? = nil,
+        groupId: Int? = nil
+    ) async throws -> Int? {
         if uploadShouldFail { throw Failure.upload }
         return 1
     }

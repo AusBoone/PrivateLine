@@ -21,9 +21,20 @@ import Security
 final class MockURLSession: URLSession {
     var responses: [(Data, URLResponse)] = []
     private(set) var requests: [URLRequest] = []
+    private(set) var uploadBodies: [Data] = []
 
     override func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         requests.append(request)
+        guard !responses.isEmpty else {
+            throw URLError(.badServerResponse)
+        }
+        return responses.removeFirst()
+    }
+
+    override func upload(for request: URLRequest, from bodyData: Data) async throws -> (Data, URLResponse) {
+        // Capture the request and body so tests can inspect multipart form fields.
+        requests.append(request)
+        uploadBodies.append(bodyData)
         guard !responses.isEmpty else {
             throw URLError(.badServerResponse)
         }
@@ -153,6 +164,30 @@ final class APIServicesTests: XCTestCase {
         try await api.sendMessage("three", to: "bob")
         keyFetches = session.requests.filter { $0.url?.path.contains("public_key") == true }.count
         XCTAssertEqual(keyFetches, 2)
+    }
+
+    /// File uploads should include AAD fields when provided so the backend can
+    /// bind the ciphertext to a specific message and recipient.
+    func testUploadFileIncludesAADFields() async throws {
+        // Authenticate first so the upload is authorized.
+        enqueue(json: "{\"access_token\":\"tok\",\"refresh_token\":\"ref\"}")
+        enqueue(json: "{\"pinned_keys\":[]}")
+        try await api.login(username: "a", password: password)
+
+        // Upload an attachment providing a message id and recipient metadata.
+        enqueue(json: "{\"file_id\":1}")
+        let fileData = "hi".data(using: .utf8)!
+        let id = try await api.uploadFile(data: fileData, filename: "f.txt", messageId: 7, recipient: "bob")
+        XCTAssertEqual(id, 1)
+
+        // Inspect the multipart body to confirm both fields were transmitted.
+        guard let body = session.uploadBodies.last, let bodyStr = String(data: body, encoding: .utf8) else {
+            return XCTFail("Missing captured upload body")
+        }
+        XCTAssertTrue(bodyStr.contains("name=\"message_id\""))
+        XCTAssertTrue(bodyStr.contains("7"))
+        XCTAssertTrue(bodyStr.contains("name=\"recipient\""))
+        XCTAssertTrue(bodyStr.contains("bob"))
     }
 
     func testAutomaticRefreshOn401() async throws {
