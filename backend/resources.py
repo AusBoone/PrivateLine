@@ -49,6 +49,9 @@ conversation participation.
 information as additional authenticated data (AAD) for AES-GCM encryption. File
 downloads validate this AAD and reject tampered metadata to ensure attachments
 are bound to their original context.
+2034 update: Message retrieval and real-time events now include the sender's
+public-key fingerprint and signature so clients can verify authenticity and
+detect key mismatches.
 """
 
 # 2024 update: Introduced Argon2 password hashing via ``PasswordHasher`` and
@@ -70,6 +73,7 @@ from cryptography.hazmat.primitives.serialization import (
     Encoding,
     PrivateFormat,
     NoEncryption,
+    PublicFormat,
 )
 from cryptography.hazmat.backends import default_backend
 from cryptography.exceptions import InvalidSignature, InvalidTag
@@ -695,6 +699,12 @@ class GroupMessages(Resource):
                 )
             except InvalidSignature:
                 continue
+            fp = sha256(
+                user.public_key.public_bytes(
+                    encoding=Encoding.DER,
+                    format=PublicFormat.SubjectPublicKeyInfo,
+                )
+            ).hexdigest()
             days = conversation_retention_days(uid, msg)
             if msg.read and msg.timestamp <= datetime.utcnow() - timedelta(days=days):
                 continue
@@ -704,6 +714,9 @@ class GroupMessages(Resource):
                     "content": plaintext_b64,
                     "timestamp": msg.timestamp.isoformat(),
                     "sender_id": msg.sender_id,
+                    "sender": user.username,
+                    "fingerprint": fp,
+                    "signature": msg.signature,
                     "file_id": msg.file_id,
                     "read": msg.read,
                     "expires_at": (
@@ -782,6 +795,12 @@ class GroupMessages(Resource):
         )
         db.session.add(m)
         db.session.commit()
+        fp = sha256(
+            user.public_key.public_bytes(
+                encoding=Encoding.DER,
+                format=PublicFormat.SubjectPublicKeyInfo,
+            )
+        ).hexdigest()
         socketio.emit(
             "new_message",
             {
@@ -789,6 +808,9 @@ class GroupMessages(Resource):
                 "content": data["content"],
                 "group_id": group_id,
                 "file_id": file_id,
+                "sender": user.username,
+                "fingerprint": fp,
+                "signature": data["signature"],
             },
             to=str(group_id),
         )
@@ -1056,6 +1078,12 @@ class Messages(Resource):
                 )
             except InvalidSignature:
                 continue
+            fp = sha256(
+                user.public_key.public_bytes(
+                    encoding=Encoding.DER,
+                    format=PublicFormat.SubjectPublicKeyInfo,
+                )
+            ).hexdigest()
             days = conversation_retention_days(current_user_id, msg)
             if msg.read and msg.timestamp <= datetime.utcnow() - timedelta(days=days):
                 continue
@@ -1066,6 +1094,9 @@ class Messages(Resource):
                     "timestamp": msg.timestamp.isoformat(),
                     "sender_id": msg.sender_id,
                     "recipient_id": msg.recipient_id,
+                    "sender": user.username,
+                    "fingerprint": fp,
+                    "signature": msg.signature,
                     "file_id": msg.file_id,
                     "read": msg.read,
                     "expires_at": (
@@ -1174,6 +1205,12 @@ class Messages(Resource):
             return {"message": "Failed to store message."}, 500
 
         # Broadcast the encrypted message to connected clients via WebSockets
+        fp = sha256(
+            sender.public_key.public_bytes(
+                encoding=Encoding.DER,
+                format=PublicFormat.SubjectPublicKeyInfo,
+            )
+        ).hexdigest()
         if recipient:
             socketio.emit(
                 "new_message",
@@ -1183,6 +1220,9 @@ class Messages(Resource):
                     "sender_id": current_user_id,
                     "recipient_id": recipient.id,
                     "file_id": file_id,
+                    "sender": sender.username,
+                    "fingerprint": fp,
+                    "signature": data["signature"],
                 },
                 to=str(recipient.id),
             )
@@ -1196,6 +1236,9 @@ class Messages(Resource):
                     "sender_id": current_user_id,
                     "group_id": gid,
                     "file_id": file_id,
+                    "sender": sender.username,
+                    "fingerprint": fp,
+                    "signature": data["signature"],
                 },
                 to=str(gid),
             )

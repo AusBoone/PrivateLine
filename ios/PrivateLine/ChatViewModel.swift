@@ -40,13 +40,16 @@ final class ChatViewModel: ObservableObject {
     /// Backend API wrapper used for all network operations.
     let api: APIService
     /// WebSocket service providing real-time updates.
-    private let socket = WebSocketService()
+    private let socket: WebSocketService
     /// Subscriptions to updates from ``socket``.
     private var cancellables = Set<AnyCancellable>()
 
     /// Create a new view model using an ``APIService`` instance.
     init(api: APIService) {
         self.api = api
+        // WebSocket service depends on ``APIService`` for key fetching and
+        // signature verification of inbound messages.
+        self.socket = WebSocketService(api: api)
     }
 
     /// Fetch messages from the server and establish the WebSocket connection.
@@ -141,7 +144,15 @@ final class ChatViewModel: ObservableObject {
         }
 
         // Optimistically append the sent message locally so the chat updates immediately.
-        let msg = Message(id: Int(Date().timeIntervalSince1970), content: input, file_id: fileId, read: true, expires_at: expires)
+        let msg = Message(
+            id: Int(Date().timeIntervalSince1970),
+            content: input,
+            file_id: fileId,
+            read: true,
+            expires_at: expires,
+            sender: nil,
+            signature: nil
+        )
         messages.append(msg)
         MessageStore.save(messages)
         input = ""

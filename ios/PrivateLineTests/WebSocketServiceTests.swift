@@ -54,7 +54,8 @@ final class WebSocketServiceTests: XCTestCase {
     func testDefaultInitializerCreatesPinnedSession() {
         // When no session is injected, the service should configure its own
         // ``URLSession`` with a delegate that handles certificate pinning.
-        let service = WebSocketService()
+        let api = APIService(session: URLSession.shared)
+        let service = WebSocketService(api: api)
 
         // Use reflection to access the otherwise private session for testing.
         let mirror = Mirror(reflecting: service)
@@ -70,7 +71,8 @@ final class WebSocketServiceTests: XCTestCase {
         // Calling connect should resume the underlying WebSocket task
         let task = MockWebSocketTask()
         let session = MockURLSession(tasks: [task])
-        let service = WebSocketService(session: session)
+        let api = APIService(session: URLSession.shared)
+        let service = WebSocketService(api: api, session: session)
         service.connect(token: "abc")
         XCTAssertEqual(session.createdTasks, 1)
         XCTAssertTrue(task.resumed)
@@ -80,7 +82,8 @@ final class WebSocketServiceTests: XCTestCase {
         // Disconnect should cancel the active task and prevent reconnects
         let mockTask = MockWebSocketTask()
         let session = MockURLSession(tasks: [mockTask])
-        let service = WebSocketService(session: session)
+        let api = APIService(session: URLSession.shared)
+        let service = WebSocketService(api: api, session: session)
         service.connect(token: "abc")
         service.disconnect()
         XCTAssertTrue(mockTask.cancelled)
@@ -92,7 +95,9 @@ final class WebSocketServiceTests: XCTestCase {
         let first = MockWebSocketTask()
         let second = MockWebSocketTask()
         let session = MockURLSession(tasks: [first, second])
-        let service = WebSocketService(session: session,
+        let api = APIService(session: URLSession.shared)
+        let service = WebSocketService(api: api,
+                                       session: session,
                                        baseDelay: 0.1,
                                        maxDelay: 0.2,
                                        reconnectionQueue: DispatchQueue.main)
@@ -115,7 +120,9 @@ final class WebSocketServiceTests: XCTestCase {
         // After a failure, calling disconnect should stop future attempts
         let first = MockWebSocketTask()
         let session = MockURLSession(tasks: [first])
-        let service = WebSocketService(session: session,
+        let api = APIService(session: URLSession.shared)
+        let service = WebSocketService(api: api,
+                                       session: session,
                                        baseDelay: 0.1,
                                        maxDelay: 0.2,
                                        reconnectionQueue: DispatchQueue.main)

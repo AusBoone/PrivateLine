@@ -16,6 +16,12 @@ struct Message: Identifiable, Decodable {
     let read: Bool?
     /// ISO8601 timestamp when the message expires, nil means it is permanent
     let expires_at: Date?
+    /// Username of the author so the client can fetch public keys.
+    let sender: String?
+    /// Base64 encoded signature of the encrypted payload returned by the server.
+    /// This value is verified before the message is accepted to guard against
+    /// tampering in transit.
+    let signature: String?
 }
 
 struct Group: Identifiable, Decodable {

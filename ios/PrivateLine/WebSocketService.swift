@@ -29,6 +29,8 @@ class WebSocketService: ObservableObject {
     private var task: URLSessionWebSocketTask?
     /// URLSession used for creating tasks.  Dependency injected for testing.
     private let session: URLSession
+    /// API client used to fetch public keys for signature verification.
+    private let api: APIService
     /// Queue used for scheduling reconnection attempts.
     private let reconnectionQueue: DispatchQueue
 
@@ -60,10 +62,12 @@ class WebSocketService: ObservableObject {
     ///   - baseDelay: Starting delay for reconnection backoff.
     ///   - maxDelay: Maximum delay allowed for reconnection backoff.
     ///   - reconnectionQueue: Queue on which reconnect attempts are scheduled.
-    init(session: URLSession? = nil,
+    init(api: APIService,
+         session: URLSession? = nil,
          baseDelay: TimeInterval = 1,
          maxDelay: TimeInterval = 60,
          reconnectionQueue: DispatchQueue = DispatchQueue.global()) {
+        self.api = api
         if let provided = session {
             // Tests may inject a mock session to avoid real network calls.
             self.session = provided
@@ -126,22 +130,41 @@ class WebSocketService: ObservableObject {
             case .success(let message):
                 if case .string(let text) = message,
                    let data = text.data(using: .utf8),
-                   // Payload is a JSON object with ciphertext and optional group id.
                    let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let b64 = payload["content"] as? String {
-                    var plaintext: String?
-                    // Decrypt depending on whether this is a group message.
-                    if let gid = payload["group_id"] as? Int, let ct = Data(base64Encoded: b64) {
-                        plaintext = try? CryptoManager.decryptGroupMessage(ct, groupId: gid)
-                    } else {
-                        plaintext = try? CryptoManager.decryptRSA(b64)
-                    }
-                    if let plaintext = plaintext {
-                        let fid = payload["file_id"] as? Int
-                        let msgId = payload["id"] as? Int ?? Int(Date().timeIntervalSince1970)
-                        let msg = Message(id: msgId, content: plaintext, file_id: fid, read: true)
-                        DispatchQueue.main.async {
-                            self.messages.append(msg)
+                   let b64 = payload["content"] as? String,
+                   let sender = payload["sender"] as? String,
+                   let sigB64 = payload["signature"] as? String,
+                   let sig = Data(base64Encoded: sigB64),
+                   let fingerprint = payload["fingerprint"] as? String {
+                    Task {
+                        do {
+                            let keyPem = try await self.api.publicKey(for: sender)
+                            guard CryptoManager.fingerprint(of: keyPem) == fingerprint else { return }
+                            guard CryptoManager.verifySignature(b64, signature: sig, publicKeyPem: keyPem) else { return }
+                            var plaintext: String?
+                            if let gid = payload["group_id"] as? Int, let ct = Data(base64Encoded: b64) {
+                                plaintext = try? CryptoManager.decryptGroupMessage(ct, groupId: gid)
+                            } else {
+                                plaintext = try? CryptoManager.decryptRSA(b64)
+                            }
+                            if let plaintext = plaintext {
+                                let fid = payload["file_id"] as? Int
+                                let msgId = payload["id"] as? Int ?? Int(Date().timeIntervalSince1970)
+                                let msg = Message(
+                                    id: msgId,
+                                    content: plaintext,
+                                    file_id: fid,
+                                    read: true,
+                                    expires_at: nil,
+                                    sender: sender,
+                                    signature: sigB64
+                                )
+                                DispatchQueue.main.async {
+                                    self.messages.append(msg)
+                                }
+                            }
+                        } catch {
+                            // Ignore malformed messages; listen continues below.
                         }
                     }
                 }
