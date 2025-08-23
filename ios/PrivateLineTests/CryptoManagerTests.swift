@@ -131,4 +131,31 @@ final class CryptoManagerTests: XCTestCase {
             )
         }
     }
+
+    /// Verify double ratchet roundtrip and forward secrecy.
+    func testRatchetRoundTripAndAdvance() throws {
+        let root = Data(repeating: 9, count: 32).base64EncodedString()
+        CryptoManager.storeRatchetRoot(root, conversationId: "test1")
+        defer { CryptoManager.removeRatchetState("test1") }
+        let payload = "secret".data(using: .utf8)!
+        let (cipher, nonce) = try CryptoManager.ratchetEncrypt(payload, conversationId: "test1")
+        let plain = try CryptoManager.ratchetDecrypt(cipher, nonce: nonce, conversationId: "test1")
+        XCTAssertEqual(plain, payload)
+        // Decrypting again with the rotated key should fail.
+        XCTAssertThrowsError(
+            try CryptoManager.ratchetDecrypt(cipher, nonce: nonce, conversationId: "test1")
+        )
+    }
+
+    /// Ensure ratchet state persists in the keychain and survives cache clears.
+    func testRatchetPersistence() throws {
+        let root = Data(repeating: 10, count: 32).base64EncodedString()
+        CryptoManager.storeRatchetRoot(root, conversationId: "persist")
+        defer { CryptoManager.removeRatchetState("persist") }
+        // Encrypt once to populate cache then drop it.
+        _ = try CryptoManager.ratchetEncrypt(Data([1, 2, 3]), conversationId: "persist")
+        CryptoManager.clearRatchetCache()
+        let (cipher, nonce) = try CryptoManager.ratchetEncrypt(Data([4, 5]), conversationId: "persist")
+        _ = try CryptoManager.ratchetDecrypt(cipher, nonce: nonce, conversationId: "persist")
+    }
 }

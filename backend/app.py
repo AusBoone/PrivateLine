@@ -516,6 +516,7 @@ from .resources import (
     FileUpload,
     FileDownload,
     PinnedKeys,
+    RatchetBootstrap,
     AccountSettings,
     DeleteAccount,
     RefreshToken,
@@ -572,6 +573,7 @@ api.add_resource(GroupMessages, "/api/groups/<int:group_id>/messages")
 api.add_resource(FileUpload, "/api/files")
 api.add_resource(FileDownload, "/api/files/<int:file_id>")
 api.add_resource(PinnedKeys, "/api/pinned_keys")
+api.add_resource(RatchetBootstrap, "/api/ratchet/<string:recipient>")
 api.add_resource(DeleteAccount, "/api/account")
 
 

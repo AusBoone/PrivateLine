@@ -119,6 +119,26 @@ def test_rsa_message_roundtrip(client):
     assert data2["messages"][0]["content"] == b64
 
 
+def test_ratchet_bootstrap_api(client):
+    """Clients can fetch initial ratchet root keys."""
+    register_user(client, "alice")
+    register_user(client, "bob")
+
+    token = login_user(client, "alice").get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = client.get("/api/ratchet/bob", headers=headers)
+    assert resp.status_code == 200
+    root_b64 = resp.get_json()["root"]
+    root = base64.b64decode(root_b64)
+    assert len(root) == 32
+
+    with app.app_context():
+        alice = User.query.filter_by(username="alice").first()
+        bob = User.query.filter_by(username="bob").first()
+        store_root = get_ratchet(str(alice.id), str(bob.id)).root_key
+    assert base64.b64encode(store_root).decode() == root_b64
+
+
 def test_send_unknown_recipient(client):
     """Posting to a nonexistent recipient should return 404."""
     reg = register_user(client, "alice")

@@ -38,6 +38,8 @@ uses this information to block unauthorized reuse of attachments.
 loading entire histories, improving performance for large conversations.
 2030 update: ``remove_orphan_files`` now performs a bulk SQL deletion to purge
 unreferenced uploads in a single transaction, reducing session overhead.
+2037 update: Added ``RatchetBootstrap`` resource returning per-conversation
+root keys so mobile clients can initialise the new double ratchet.
 2031 update: Push token endpoints deduplicate tokens via SHA-256 hashes to
 support random nonces during encryption.
 2032 update: File downloads now authorize access via a single SQL join query,
@@ -1329,6 +1331,35 @@ class PinnedKeys(Resource):
             db.session.rollback()
             return {"message": "Failed to store pinned key."}, 500
         return {"message": "Pinned key stored."}, 200
+
+
+class RatchetBootstrap(Resource):
+    """Expose the current ratchet root key for a conversation.
+
+    Mobile clients use this endpoint to bootstrap their local copy of the
+    server-side double ratchet. The returned key is base64 encoded and
+    corresponds to the pair ``(authenticated user, recipient)``. ``recipient``
+    may be another username or ``"group:<id>"`` for group chats.
+    """
+
+    @jwt_required()
+    def get(self, recipient: str):
+        """Return the base64-encoded root key for the conversation."""
+        sender = int(get_jwt_identity())
+        if recipient.startswith("group:"):
+            try:
+                group_id = int(recipient.split(":", 1)[1])
+            except (IndexError, ValueError):
+                return {"message": "Invalid recipient"}, 400
+            ref = f"group:{group_id}"
+        else:
+            user = User.query.filter_by(username=recipient).first()
+            if not user:
+                return {"message": "User not found"}, 404
+            ref = str(user.id)
+        ratchet = get_ratchet(str(sender), ref)
+        root = b64encode(ratchet.root_key).decode()
+        return {"root": root}, 200
 
 
 class ConversationRetentionResource(Resource):
