@@ -15,7 +15,7 @@
 //  future messages.
 //
 import Foundation
-import CryptoKit
+import Crypto
 import Security
 
 // GroupKeyStore persists AES keys in the keychain so chats remain

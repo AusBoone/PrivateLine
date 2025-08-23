@@ -17,11 +17,22 @@ let package = Package(
     products: [
         .library(name: "PrivateLine", targets: ["PrivateLine"]),
     ],
+    dependencies: [
+        // ``swift-crypto`` provides a cross-platform implementation of CryptoKit
+        // so hashing utilities work during Linux-based CI tests.
+        .package(url: "https://github.com/apple/swift-crypto.git", from: "2.0.0")
+    ],
     targets: [
         // The main app target reads configuration directly from its bundle's
         // Info.plist. The file now lives under Resources/Config/ for Xcode but
         // should not be treated as a SwiftPM resource to avoid build errors.
-        .target(name: "PrivateLine", path: "PrivateLine"),
+        .target(
+            name: "PrivateLine",
+            dependencies: [
+                .product(name: "Crypto", package: "swift-crypto")
+            ],
+            path: "PrivateLine"
+        ),
         .testTarget(name: "PrivateLineTests", dependencies: ["PrivateLine"], path: "PrivateLineTests"),
     ]
 )
