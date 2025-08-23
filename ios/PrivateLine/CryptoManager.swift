@@ -68,7 +68,9 @@ enum CryptoManager {
 
     /// Load previously stored key material from the keychain.
     private static func loadKeyMaterial() -> KeyMaterial? {
-        guard let data = KeychainService.loadData(account: materialAccount) else {
+        // Access the encrypted key material from the keychain. It is not bound
+        // to biometrics, so a missing value or error simply yields ``nil``.
+        guard let data = try? KeychainService.loadData(account: materialAccount) else {
             return nil
         }
         return try? JSONDecoder().decode(KeyMaterial.self, from: data)
@@ -81,7 +83,7 @@ enum CryptoManager {
 
     /// Fetch the AES key from the keychain or generate one if needed.
     private static func key() throws -> SymmetricKey {
-        if let data = KeychainService.loadData(account: keyAccount),
+        if let data = try? KeychainService.loadData(account: keyAccount),
            !data.isEmpty {
             return SymmetricKey(data: data)
         }
@@ -256,7 +258,10 @@ enum CryptoManager {
     /// Retrieve the ratchet for ``conversationId`` from memory or the keychain.
     private static func ratchet(for conversationId: String) throws -> DoubleRatchet {
         if let r = ratchets[conversationId] { return r }
-        guard let data = KeychainService.loadData(account: ratchetPrefix + conversationId) else {
+        // Ratchet roots are stored without biometric requirements. If loading
+        // fails the conversation cannot be decrypted so a descriptive error is
+        // thrown.
+        guard let data = try? KeychainService.loadData(account: ratchetPrefix + conversationId) else {
             throw CocoaError(.coderValueNotFound)
         }
         let r = DoubleRatchet(rootKey: data)

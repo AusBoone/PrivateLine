@@ -1,6 +1,7 @@
 import Foundation
 import UserNotifications
 import UIKit
+import LocalAuthentication
 
 /*
  * Modification summary:
@@ -8,7 +9,10 @@ import UIKit
  * re-registers with the backend only when Apple's token changes. This avoids
  * unnecessary network calls yet guarantees the server always holds the most
  * recent identifier for delivering push notifications.
- */
+ *
+ * 2025 update: retrieving the authorization token now requires a biometric
+ * scan, ensuring push registration only occurs after the user authenticates.
+*/
 
 /// Helper used for configuring push notification permissions and
 /// registering the device token with the backend. The token is cached in
@@ -50,7 +54,11 @@ enum NotificationManager {
         }
         defaults.set(tokenString, forKey: tokenKey)
 
-        guard let auth = KeychainService.loadToken() else { return }
+        // Retrieve the auth token, requiring biometric authentication. If the
+        // user cancels or authentication fails the registration attempt is
+        // skipped and will be retried on the next token refresh.
+        let context = LAContext()
+        guard let auth = try? KeychainService.loadToken(context: context) else { return }
         guard let urlString = Bundle.main.object(forInfoDictionaryKey: "BackendBaseURL") as? String,
               let url = URL(string: urlString)?.appendingPathComponent("push-token") else { return }
         var request = URLRequest(url: url)
