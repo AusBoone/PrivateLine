@@ -1,10 +1,42 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    Configuration file for the PrivateLine iOS client.
+    Defines backend network endpoints and transport security policies.
+    Developers may adjust these values for different environments.
+-->
 <plist version="1.0">
 <dict>
+    <!-- Base URL for API requests issued by the SwiftUI client. -->
     <key>BackendBaseURL</key>
     <string>http://localhost:5000/api</string>
+
+    <!-- WebSocket endpoint used for real-time messaging. -->
     <key>WebSocketURL</key>
     <string>ws://localhost:5000/socket.io/?transport=websocket</string>
+
+    <!--
+        App Transport Security (ATS) enforces secure network connections.
+        We prohibit arbitrary insecure HTTP loads while allowing a
+        localhost exception to facilitate development against a local
+        backend server.
+    -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <!-- Explicitly disallow insecure requests to arbitrary domains. -->
+        <key>NSAllowsArbitraryLoads</key>
+        <false/>
+
+        <!-- Domain-specific overrides for development convenience. -->
+        <key>NSExceptionDomains</key>
+        <dict>
+            <!-- Permit HTTP traffic to a locally running backend server. -->
+            <key>localhost</key>
+            <dict>
+                <key>NSExceptionAllowsInsecureHTTPLoads</key>
+                <true/>
+            </dict>
+        </dict>
+    </dict>
 </dict>
 </plist>
