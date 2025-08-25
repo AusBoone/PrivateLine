@@ -21,6 +21,9 @@
  * - Startup token loading now uses ``LAContext`` and surfaces ``LAError``
  *   values so authentication failures (e.g. cancelled Face ID) are handled
  *   gracefully.
+ * - Added strict URL scheme validation so ``BackendBaseURL`` must use
+ *   ``https``. The initializer throws when an insecure or missing URL is
+ *   supplied to prevent accidental communication over plain text.
  */
 import Foundation
 import Crypto
@@ -31,6 +34,22 @@ import LocalAuthentication
 /// Wrapper around the Flask REST API used by the app.
 /// It handles user authentication and message operations.
 class APIService: ObservableObject {
+    /// Errors thrown when configuration values are missing or insecure.
+    enum ConfigurationError: LocalizedError {
+        /// Returned when a URL does not use ``https``.
+        case insecureScheme(String)
+        /// Returned when required keys are absent from ``Info.plist``.
+        case missingURL(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .insecureScheme(let url):
+                return "Insecure URL scheme detected: \(url). Use https."
+            case .missingURL(let key):
+                return "Missing configuration value for \(key)."
+            }
+        }
+    }
     /// Simple container bundling a public key with the time it was fetched.
     /// Using a struct keeps the cache type-safe and makes the timestamp
     /// association explicit.
@@ -110,15 +129,29 @@ class APIService: ObservableObject {
     ///   - session: Optional ``URLSession`` injected for testing.
     ///   - publicKeyCacheDuration: Maximum age for cached public keys in seconds
     ///     before the value is refreshed from the backend. Defaults to 24 hours.
-    init(session: URLSession? = nil, publicKeyCacheDuration: TimeInterval = 60 * 60 * 24) {
+    init(session: URLSession? = nil,
+         publicKeyCacheDuration: TimeInterval = 60 * 60 * 24,
+         baseURL: URL? = nil) throws {
         // Store cache duration first so it is available during initialization of
         // other components if needed.
         self.publicKeyCacheDuration = publicKeyCacheDuration
-        if let urlString = Bundle.main.object(forInfoDictionaryKey: "BackendBaseURL") as? String,
-           let url = URL(string: urlString) {
-            baseURL = url
+
+        // Determine the backend URL either from the provided parameter or
+        // from the app's Info.plist. Reject any non-HTTPS scheme to prevent
+        // accidental plaintext communication.
+        if let supplied = baseURL {
+            guard supplied.scheme == "https" else {
+                throw ConfigurationError.insecureScheme(supplied.absoluteString)
+            }
+            self.baseURL = supplied
+        } else if let urlString = Bundle.main.object(forInfoDictionaryKey: "BackendBaseURL") as? String,
+                  let url = URL(string: urlString) {
+            guard url.scheme == "https" else {
+                throw ConfigurationError.insecureScheme(url.absoluteString)
+            }
+            self.baseURL = url
         } else {
-            baseURL = URL(string: "http://localhost:5000/api")!
+            throw ConfigurationError.missingURL("BackendBaseURL")
         }
 
         // Configure pinned session unless one is injected for testing

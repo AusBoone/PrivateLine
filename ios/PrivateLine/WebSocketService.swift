@@ -21,8 +21,27 @@ import Crypto
  *     networking stack. Pinning now compares the SHA-256 fingerprint of the
  *     certificate's SubjectPublicKeyInfo allowing multiple pins for smoother
  *     rotations.
+ * - Enforces that the WebSocket endpoint uses ``wss``. The initializer throws
+ *   when an insecure ``ws`` URL is supplied or missing, preventing the service
+ *   from establishing plaintext connections.
 */
 class WebSocketService: ObservableObject {
+    /// Errors describing configuration issues like missing or insecure URLs.
+    enum ConfigurationError: LocalizedError {
+        /// Triggered when the URL uses ``ws`` instead of ``wss``.
+        case insecureScheme(String)
+        /// Triggered when the Info.plist lacks ``WebSocketURL``.
+        case missingURL(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .insecureScheme(let url):
+                return "Insecure URL scheme detected: \(url). Use wss."
+            case .missingURL(let key):
+                return "Missing configuration value for \(key)."
+            }
+        }
+    }
     /// Published state of the socket so the UI can display connection info.
     enum ConnectionStatus {
         case disconnected, connecting, connected
@@ -36,6 +55,8 @@ class WebSocketService: ObservableObject {
     private let api: APIService
     /// Queue used for scheduling reconnection attempts.
     private let reconnectionQueue: DispatchQueue
+    /// Endpoint for the WebSocket connection. Validated to use ``wss``.
+    private let socketURL: URL
 
     /// Messages received from the server are appended here for observers.
     @Published var messages: [Message] = []
@@ -66,11 +87,31 @@ class WebSocketService: ObservableObject {
     ///   - maxDelay: Maximum delay allowed for reconnection backoff.
     ///   - reconnectionQueue: Queue on which reconnect attempts are scheduled.
     init(api: APIService,
+         url: URL? = nil,
          session: URLSession? = nil,
          baseDelay: TimeInterval = 1,
          maxDelay: TimeInterval = 60,
-         reconnectionQueue: DispatchQueue = DispatchQueue.global()) {
+         reconnectionQueue: DispatchQueue = DispatchQueue.global()) throws {
         self.api = api
+
+        // Resolve the WebSocket endpoint from either the provided parameter or
+        // the app's Info.plist. Reject non-``wss`` schemes to avoid insecure
+        // connections.
+        if let supplied = url {
+            guard supplied.scheme == "wss" else {
+                throw ConfigurationError.insecureScheme(supplied.absoluteString)
+            }
+            self.socketURL = supplied
+        } else if let urlString = Bundle.main.object(forInfoDictionaryKey: "WebSocketURL") as? String,
+                  let wsURL = URL(string: urlString) {
+            guard wsURL.scheme == "wss" else {
+                throw ConfigurationError.insecureScheme(wsURL.absoluteString)
+            }
+            self.socketURL = wsURL
+        } else {
+            throw ConfigurationError.missingURL("WebSocketURL")
+        }
+
         if let provided = session {
             // Tests may inject a mock session to avoid real network calls.
             self.session = provided
@@ -101,13 +142,8 @@ class WebSocketService: ObservableObject {
     private func createAndStartTask() {
         guard shouldReconnect, let token = authToken else { return }
         status = .connecting
-        // WebSocketURL is defined in Info.plist and points to the backend.
-        guard let urlString = Bundle.main.object(forInfoDictionaryKey: "WebSocketURL") as? String,
-              let url = URL(string: urlString) else {
-            status = .disconnected
-            return
-        }
-        var request = URLRequest(url: url)
+        // Use the previously validated secure endpoint.
+        var request = URLRequest(url: socketURL)
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         // Create and start the WebSocket task
         task = session.webSocketTask(with: request)
