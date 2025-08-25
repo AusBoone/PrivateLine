@@ -7,8 +7,11 @@
 //   ``URLError`` codes when the backend returns 4xx or 5xx statuses.
 // - Introduced tests validating that cached public keys expire after the
 //   configured time-to-live and are refreshed accordingly.
+// - Added tests confirming that login backoff delays escalate with repeated
+//   failures and reset after a successful authentication.
 
 import XCTest
+import Foundation
 import Crypto
 import Security
 @testable import PrivateLine
@@ -111,6 +114,50 @@ final class APIServicesTests: XCTestCase {
         XCTAssertEqual(api.authToken, "abc")
         XCTAssertTrue(api.isAuthenticated)
         XCTAssertEqual(session.requests.count, 2)
+    }
+
+    /// Consecutive login failures should wait progressively longer to slow
+    /// brute-force attempts. Measure two failures and confirm the second takes
+    /// substantially longer than the first.
+    func testLoginBackoffEscalates() async {
+        let start1 = Date()
+        do {
+            try await api.login(username: "a", password: password)
+            XCTFail("Expected login failure")
+        } catch {}
+        let elapsed1 = Date().timeIntervalSince(start1)
+
+        let start2 = Date()
+        do {
+            try await api.login(username: "a", password: password)
+            XCTFail("Expected login failure")
+        } catch {}
+        let elapsed2 = Date().timeIntervalSince(start2)
+
+        // Second failure should be at least ~1.5x slower (0.4s vs 0.2s baseline).
+        XCTAssertGreaterThan(elapsed2, elapsed1 * 1.5)
+    }
+
+    /// After a successful login the failure counter resets so the next failed
+    /// attempt incurs only the base delay again.
+    func testLoginBackoffResetsAfterSuccess() async throws {
+        // Trigger an initial failure to start the counter.
+        _ = try? await api.login(username: "a", password: password)
+
+        // Provide responses for a successful login to clear the counter.
+        enqueue(json: "{\"access_token\":\"tok\",\"refresh_token\":\"ref\"}")
+        enqueue(json: "{\"pinned_keys\":[]}")
+        try await api.login(username: "a", password: password)
+
+        // The next failure should only wait the baseline ~0.2s.
+        let start = Date()
+        do {
+            try await api.login(username: "a", password: password)
+            XCTFail("Expected login failure")
+        } catch {}
+        let elapsed = Date().timeIntervalSince(start)
+
+        XCTAssertLessThan(elapsed, 0.3)
     }
 
     func testFetchMessagesDecrypts() async throws {

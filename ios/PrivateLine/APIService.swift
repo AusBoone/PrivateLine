@@ -24,6 +24,9 @@
  * - Added strict URL scheme validation so ``BackendBaseURL`` must use
  *   ``https``. The initializer throws when an insecure or missing URL is
  *   supplied to prevent accidental communication over plain text.
+ * - Introduced exponential backoff for failed login attempts, delaying each
+ *   subsequent attempt to slow brute-force guessing. The delay resets upon
+ *   successful authentication.
  */
 import Foundation
 import Crypto
@@ -71,8 +74,13 @@ class APIService: ObservableObject {
     /// guidance alert instructing users to update the app or contact support.
     @Published var showCertificateWarning = false
 
-    /// Count the number of failed login attempts.
+    /// Count the number of failed login attempts. This drives the exponential
+    /// backoff used by ``login`` to mitigate brute-force attempts.
     private var loginFailures = 0
+
+    /// Base delay in seconds applied after the first failed login. Each
+    /// subsequent failure doubles this delay until it reaches a cap.
+    private let loginBackoffBase: TimeInterval = 0.2
 
     /// Cache of recipient public keys along with the timestamp when each key
     /// was retrieved. Keeping track of the fetch time allows the service to
@@ -268,6 +276,11 @@ class APIService: ObservableObject {
     }
 
     /// Attempt to log in with the provided credentials.
+    /// Implements exponential backoff after consecutive failures to slow down
+    /// repeated guessing attempts. The delay resets upon a successful login.
+    /// - Parameters:
+    ///   - username: Account identifier supplied by the user.
+    ///   - password: Plaintext password used for authentication.
     func login(username: String, password: String) async throws {
         let url = baseURL.appendingPathComponent("login")
         var request = URLRequest(url: url)
@@ -303,8 +316,19 @@ class APIService: ObservableObject {
                 self.isAuthenticated = true
             }
         } catch {
+            // Increment failure count before calculating delay so the first
+            // failure uses the base value. Use ``min`` to cap the exponent and
+            // avoid excessively long sleeps (max ~6.4s with current settings).
             loginFailures += 1
+            let exponent = min(loginFailures - 1, 5)
+            let delaySeconds = loginBackoffBase * pow(2.0, Double(exponent))
+            // ``Task.sleep`` can throw if the task is cancelled; we ignore such
+            // errors because cancellation should propagate the original login
+            // error. The delay is expressed in nanoseconds.
+            try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
             if loginFailures >= 3 {
+                // After several failures clear stored tokens so any cached
+                // credentials cannot be used without successful re-authentication.
                 KeychainService.removeToken()
                 KeychainService.removeRefreshToken()
             }
