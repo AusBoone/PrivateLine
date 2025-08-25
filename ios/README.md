@@ -11,6 +11,18 @@ variables.
    `WebSocketURL` if your backend does not run on `localhost`.
 3. Build and run the app in the iOS simulator.
 
+## App Transport Security
+
+The client follows Apple's [App Transport Security](https://developer.apple.com/documentation/bundleresources/information_property_list/nsapptransportsecurity) (ATS) policy to ensure all network requests use TLS.
+A default exception for `localhost` is provided so the simulator can communicate with a local development backend.
+
+To add a temporary exception for another host:
+
+1. Edit `Resources/Config/Info.plist`.
+2. Under `NSAppTransportSecurity -> NSExceptionDomains`, add the host's `<key>`.
+3. Inside that dictionary set `<key>NSExceptionAllowsInsecureHTTPLoads</key>` to `<true/>`.
+4. Remove the override before committing production code to maintain transport security.
+
 After launching the app you will be greeted with a short onboarding flow describing encryption and privacy. You can then create an account or log in. Messages are loaded from local storage first and updated in real time via WebSockets.
 
 The main interface uses a tab bar with sections for Chats and Settings. Credentials are protected with biometrics and you may revoke all server sessions from the Settings tab.
