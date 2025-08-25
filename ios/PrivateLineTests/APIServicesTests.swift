@@ -53,7 +53,7 @@ final class APIServicesTests: XCTestCase {
 
     override func setUpWithError() throws {
         session = MockURLSession()
-        api = APIService(session: session)
+        api = try APIService(session: session, baseURL: URL(string: "https://example.com/api")!)
         KeychainService.removeToken()
         KeychainService.removeRefreshToken()
 
@@ -93,6 +93,13 @@ final class APIServicesTests: XCTestCase {
         let data = json.data(using: .utf8)!
         let resp = HTTPURLResponse(url: URL(string: "http://test")!, statusCode: status, httpVersion: nil, headerFields: nil)!
         session.responses.append((data, resp))
+    }
+
+    /// The initializer must reject insecure ``http`` URLs and accept secure
+    /// ``https`` URLs so network traffic is always encrypted.
+    func testInitializerValidatesURLScheme() {
+        XCTAssertThrowsError(try APIService(baseURL: URL(string: "http://insecure")!))
+        XCTAssertNoThrow(try APIService(baseURL: URL(string: "https://secure")!))
     }
 
     func testLoginParsesToken() async throws {
@@ -138,7 +145,9 @@ final class APIServicesTests: XCTestCase {
         // Recreate the service with a 1-second TTL so the test can exercise
         // both the cached and refreshed paths quickly.
         session = MockURLSession()
-        api = APIService(session: session, publicKeyCacheDuration: 1)
+        api = try APIService(session: session,
+                              publicKeyCacheDuration: 1,
+                              baseURL: URL(string: "https://example.com/api")!)
 
         let fp = CryptoManager.fingerprint(of: publicPem)
         enqueue(json: "{\"access_token\":\"tok\",\"refresh_token\":\"ref\"}")
@@ -247,7 +256,7 @@ final class APIServicesTests: XCTestCase {
         let pins = [fpA, fpB].joined(separator: "\n") + "\n"
         try pins.write(to: pinURL, atomically: true, encoding: .utf8)
 
-        let service = APIService()
+        let service = try! APIService(baseURL: URL(string: "https://example.com/api")!)
         let mirror = Mirror(reflecting: service)
         guard let session = mirror.descendant("session") as? URLSession,
               let delegate = session.delegate else {
@@ -297,7 +306,7 @@ final class APIServicesTests: XCTestCase {
         // surface a user-facing warning in this case.
         let mismatchedBase64 = "MIIDCTCCAfGgAwIBAgIUHqcBPn3vYFGWf1NIaEd7xDJ50CcwDQYJKoZIhvcNAQELBQAwFDESMBAGA1UEAwwJVGhpcmRDZXJ0MB4XDTI1MDgyMzAwNTkyMloXDTI1MDgyNDAwNTkyMlowFDESMBAGA1UEAwwJVGhpcmRDZXJ0MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAn3SooldjTF4QTCzWFa03rqG02lR4fgtahNpq8t0yLBqJXSkp0zaheJy6P768ZtXUVwk0y/NAsUpkFCqufBL9V7H1/uo9ib8LlX30edz51Ux+hma0FsFyAjjNIQZHVfSXTpEfwF/4tGg1z6mqfGJhDcWTCSz1QYTOOqE0XnKxowxiJPkit8YuPuC1UKJqVyVIEAx+eE8izsM8UL8s4faKHj7iRRcnAJKhyII8CMXuul+8NWf9ezd3rPMtcsgn4Kj7uMHJTdIYZlRNv1+qPIQj2M2oF1Kqr4rbm6Jrs77i0ESrkLgxJrM29gCjdP9a2HtlqhrE6X/zANFfmoiiRrTKOQIDAQABo1MwUTAdBgNVHQ4EFgQUaBqZ0vCQ8DZhCydlLH2uZlhbCqowHwYDVR0jBBgwFoAUaBqZ0vCQ8DZhCydlLH2uZlhbCqowDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEADOtHeqC627X7En9EmgXfGodYF3AldBVWv5wbpa7YFFZDRLAbNv62iSBCBYP0CZanxF55mPXEsez/kJJldjIGGCz3bs0I+cf2sdxY+5ECeztyWrTk9k+3u/HknsPR0tFVLGQvVEw8tPrH3ZjiPMe1hArK0sfwrS97gv0WsbreagoVmzJuThFsmIP7miBIwu/3T7/D9pPXnxFBagg8LBMgRutkEnoD46h3kGqVOUHt6zIIEJnIlMn0alSAVp4EP4KQjjxcZ49rqCsBVEf4LLb2taNxgCPckgrdK6LVh6Y12u1sSe+ESUdqmdkmmn49kKyzO9Jvd6JjX2oIboEoL2Ljqw=="
 
-        let service = APIService()
+        let service = try! APIService(baseURL: URL(string: "https://example.com/api")!)
         let mirror = Mirror(reflecting: service)
         guard let session = mirror.descendant("session") as? URLSession,
               let delegate = session.delegate else {

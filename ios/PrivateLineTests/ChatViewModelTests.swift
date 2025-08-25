@@ -22,9 +22,10 @@ final class MockAPIService: APIService {
     var groupSendShouldFail = false
 
     override init(session: URLSession? = nil) {
-        // The base initializer performs keychain lookups but does not hit the
-        // network when ``session`` is nil, making it safe for unit tests.
-        super.init(session: session)
+        // Provide a secure base URL so the superclass initializer succeeds
+        // without relying on Info.plist values.
+        try! super.init(session: session,
+                        baseURL: URL(string: "https://example.com/api")!)
     }
 
     override func uploadFile(
@@ -56,7 +57,10 @@ final class ChatViewModelTests: XCTestCase {
     func testUploadFailureSetsError() async {
         let api = MockAPIService()
         api.uploadShouldFail = true
-        let vm = ChatViewModel(api: api)
+        let socket = try! WebSocketService(api: api,
+                                           url: URL(string: "wss://example.com")!,
+                                           session: URLSession(configuration: .ephemeral))
+        let vm = ChatViewModel(api: api, socket: socket)
         vm.input = "hi"
         vm.attachment = Data([0x0])
         await vm.send()
@@ -71,7 +75,10 @@ final class ChatViewModelTests: XCTestCase {
     func testDirectSendFailureSetsError() async {
         let api = MockAPIService()
         api.directSendShouldFail = true
-        let vm = ChatViewModel(api: api)
+        let socket = try! WebSocketService(api: api,
+                                           url: URL(string: "wss://example.com")!,
+                                           session: URLSession(configuration: .ephemeral))
+        let vm = ChatViewModel(api: api, socket: socket)
         vm.input = "hello"
         await vm.send()
 
@@ -84,7 +91,10 @@ final class ChatViewModelTests: XCTestCase {
     func testGroupSendFailureSetsError() async {
         let api = MockAPIService()
         api.groupSendShouldFail = true
-        let vm = ChatViewModel(api: api)
+        let socket = try! WebSocketService(api: api,
+                                           url: URL(string: "wss://example.com")!,
+                                           session: URLSession(configuration: .ephemeral))
+        let vm = ChatViewModel(api: api, socket: socket)
         vm.input = "hey"
         vm.selectedGroup = 1
         await vm.send()

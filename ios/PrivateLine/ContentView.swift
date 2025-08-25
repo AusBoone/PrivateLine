@@ -9,8 +9,10 @@ import SwiftUI
 
 /// Root view that displays either the login screen or chat depending on auth state.
 struct ContentView: View {
-    /// Shared API service used across the app.
-    @StateObject private var api = APIService()
+    /// Shared API service used across the app. ``try!`` is safe because a
+    /// missing or insecure URL indicates a developer configuration error and
+    /// should abort early during development.
+    @StateObject private var api = try! APIService()
     /// Remembers whether the onboarding screen has been displayed.
     @AppStorage("hasSeenOnboarding") private var hasSeenOnboarding = false
     /// Persisted color scheme preference.

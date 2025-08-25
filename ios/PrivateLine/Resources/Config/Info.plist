@@ -9,11 +9,11 @@
 <dict>
     <!-- Base URL for API requests issued by the SwiftUI client. -->
     <key>BackendBaseURL</key>
-    <string>http://localhost:5000/api</string>
+    <string>https://localhost:5000/api</string>
 
     <!-- WebSocket endpoint used for real-time messaging. -->
     <key>WebSocketURL</key>
-    <string>ws://localhost:5000/socket.io/?transport=websocket</string>
+    <string>wss://localhost:5000/socket.io/?transport=websocket</string>
 
     <!--
         App Transport Security (ATS) enforces secure network connections.

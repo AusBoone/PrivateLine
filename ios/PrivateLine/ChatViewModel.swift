@@ -8,6 +8,9 @@
  * - Wrapped calls to ``APIService`` with explicit error capture to guide users
  *   through typical failure scenarios such as connectivity loss or expired
  *   authentication.
+ * - Initializer now accepts an optional ``WebSocketService`` so tests can
+ *   inject a mock instance. The default path enforces secure WebSocket URLs
+ *   via ``WebSocketService``'s throwing initializer.
  */
 import Foundation
 import Combine
@@ -45,11 +48,20 @@ final class ChatViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     /// Create a new view model using an ``APIService`` instance.
-    init(api: APIService) {
+    /// - Parameter socket: Optional preconfigured ``WebSocketService``. Tests
+    ///   inject a mock to avoid real network work. Production code defaults to
+    ///   instantiating ``WebSocketService`` which enforces a secure ``wss``
+    ///   endpoint and will crash early if misconfigured.
+    init(api: APIService, socket: WebSocketService? = nil) {
         self.api = api
-        // WebSocket service depends on ``APIService`` for key fetching and
-        // signature verification of inbound messages.
-        self.socket = WebSocketService(api: api)
+        if let provided = socket {
+            // Allow tests to supply a stub without touching the network.
+            self.socket = provided
+        } else {
+            // ``try!`` is acceptable here because configuration errors indicate
+            // a developer mistake that should be fixed before shipping.
+            self.socket = try! WebSocketService(api: api)
+        }
     }
 
     /// Fetch messages from the server and establish the WebSocket connection.
