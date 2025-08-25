@@ -1,6 +1,29 @@
 import Foundation
 import Crypto
 
+/// Codable representation of a message received over the WebSocket.
+///
+/// The server delivers messages as JSON objects containing a number of
+/// fields.  Using a strongly typed structure instead of ad‑hoc dictionary
+/// parsing allows the decoder to enforce the presence of required properties
+/// and provides compile‑time documentation for the expected schema.
+struct SocketMessage: Codable {
+    /// Base64 encoded ciphertext of the message body.
+    let content: String
+    /// Username of the sender.
+    let sender: String
+    /// Base64 encoded signature verifying ``content``.
+    let signature: String
+    /// SHA256 fingerprint of the sender's public key.
+    let fingerprint: String
+    /// Identifier of the group the message belongs to, ``nil`` for direct chats.
+    let group_id: Int?
+    /// Optional server generated identifier for the message.
+    let id: Int?
+    /// Optional identifier referencing an attached file.
+    let file_id: Int?
+}
+
 /*
  * WebSocketService.swift
  * ----------------------
@@ -24,8 +47,14 @@ import Crypto
  * - Enforces that the WebSocket endpoint uses ``wss``. The initializer throws
  *   when an insecure ``ws`` URL is supplied or missing, preventing the service
  *   from establishing plaintext connections.
+ * - 2025 update: replaces dictionary-based parsing with ``SocketMessage`` and
+ *   ``JSONDecoder`` while enforcing a maximum payload size to drop malformed or
+ *   overly large frames early.
 */
 class WebSocketService: ObservableObject {
+    /// Maximum size for a single text frame in bytes. Messages larger than this
+    /// are discarded to protect the client from memory exhaustion attacks.
+    static let maxPayloadBytes = 64 * 1024
     /// Errors describing configuration issues like missing or insecure URLs.
     enum ConfigurationError: LocalizedError {
         /// Triggered when the URL uses ``ws`` instead of ``wss``.
@@ -168,42 +197,54 @@ class WebSocketService: ObservableObject {
                 self.scheduleReconnect()
             case .success(let message):
                 if case .string(let text) = message,
-                   let data = text.data(using: .utf8),
-                   let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let b64 = payload["content"] as? String,
-                   let sender = payload["sender"] as? String,
-                   let sigB64 = payload["signature"] as? String,
-                   let sig = Data(base64Encoded: sigB64),
-                   let fingerprint = payload["fingerprint"] as? String {
-                    Task {
-                        do {
-                            let keyPem = try await self.api.publicKey(for: sender)
-                            guard CryptoManager.fingerprint(of: keyPem) == fingerprint else { return }
-                            guard CryptoManager.verifySignature(b64, signature: sig, publicKeyPem: keyPem) else { return }
-                            var plaintext: String?
-                            if let gid = payload["group_id"] as? Int, let ct = Data(base64Encoded: b64) {
-                                plaintext = try? CryptoManager.decryptGroupMessage(ct, groupId: gid)
-                            } else {
-                                plaintext = try? CryptoManager.decryptRSA(b64)
-                            }
-                            if let plaintext = plaintext {
-                                let fid = payload["file_id"] as? Int
-                                let msgId = payload["id"] as? Int ?? Int(Date().timeIntervalSince1970)
-                                let msg = Message(
-                                    id: msgId,
-                                    content: plaintext,
-                                    file_id: fid,
-                                    read: true,
-                                    expires_at: nil,
-                                    sender: sender,
-                                    signature: sigB64
-                                )
-                                DispatchQueue.main.async {
-                                    self.messages.append(msg)
+                   let data = text.data(using: .utf8) {
+                    // Reject messages that exceed the configured size limit to
+                    // guard against memory exhaustion.
+                    guard data.count <= WebSocketService.maxPayloadBytes else {
+                        self.listen()
+                        return
+                    }
+
+                    // Decode the JSON payload into ``SocketMessage``. Missing
+                    // or malformed fields cause the message to be ignored.
+                    let decoder = JSONDecoder()
+                    if let socketMessage = try? decoder.decode(SocketMessage.self, from: data),
+                       !socketMessage.content.isEmpty,
+                       !socketMessage.sender.isEmpty,
+                       !socketMessage.signature.isEmpty,
+                       !socketMessage.fingerprint.isEmpty,
+                       let sig = Data(base64Encoded: socketMessage.signature) {
+                        Task {
+                            do {
+                                let keyPem = try await self.api.publicKey(for: socketMessage.sender)
+                                guard CryptoManager.fingerprint(of: keyPem) == socketMessage.fingerprint else { return }
+                                guard CryptoManager.verifySignature(socketMessage.content, signature: sig, publicKeyPem: keyPem) else { return }
+
+                                var plaintext: String?
+                                if let gid = socketMessage.group_id,
+                                   let ct = Data(base64Encoded: socketMessage.content) {
+                                    plaintext = try? CryptoManager.decryptGroupMessage(ct, groupId: gid)
+                                } else {
+                                    plaintext = try? CryptoManager.decryptRSA(socketMessage.content)
                                 }
+
+                                if let plaintext = plaintext {
+                                    let msg = Message(
+                                        id: socketMessage.id ?? Int(Date().timeIntervalSince1970),
+                                        content: plaintext,
+                                        file_id: socketMessage.file_id,
+                                        read: true,
+                                        expires_at: nil,
+                                        sender: socketMessage.sender,
+                                        signature: socketMessage.signature
+                                    )
+                                    DispatchQueue.main.async {
+                                        self.messages.append(msg)
+                                    }
+                                }
+                            } catch {
+                                // Ignore malformed messages; listen continues below.
                             }
-                        } catch {
-                            // Ignore malformed messages; listen continues below.
                         }
                     }
                 }

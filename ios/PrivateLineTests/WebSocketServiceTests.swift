@@ -1,7 +1,9 @@
-// Tests for ``WebSocketService`` covering connection, reconnection, default
-// session configuration and disconnection logic. These tests use mock objects
-// to avoid real network calls and to deterministically simulate failures.
+// Tests for ``WebSocketService`` covering connection management, message
+// decoding safety and reconnection logic. These tests rely on mock objects to
+// avoid network calls and deterministically simulate failures or inbound
+// payloads.
 import XCTest
+import Security
 @testable import PrivateLine
 
 /// Fake ``URLSessionWebSocketTask`` that allows tests to observe lifecycle
@@ -45,6 +47,25 @@ final class MockURLSession: URLSession {
     override func webSocketTask(with request: URLRequest) -> URLSessionWebSocketTask {
         createdTasks += 1
         return tasks.removeFirst()
+    }
+}
+
+/// APIService stub that always returns a predefined public key.
+///
+/// ``WebSocketService`` queries ``publicKey(for:)`` to verify message
+/// signatures.  Tests supply a deterministic key so signatures can be checked
+/// without network access.
+final class StubAPIService: APIService {
+    private let key: String
+
+    init(publicKey: String) {
+        self.key = publicKey
+        try! super.init(session: URLSession.shared,
+                         baseURL: URL(string: "https://example.com/api")!)
+    }
+
+    override func publicKey(for username: String) async throws -> String {
+        key
     }
 }
 
@@ -161,5 +182,100 @@ final class WebSocketServiceTests: XCTestCase {
         }
 
         wait(for: [expectation], timeout: 1)
+    }
+
+    /// Valid JSON payload should be decoded, verified and appended to messages.
+    func testValidPayloadAppended() async throws {
+        // Generate an ephemeral RSA key pair for signing.
+        let attrs: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
+            kSecAttrKeySizeInBits as String: 4096
+        ]
+        var error: Unmanaged<CFError>?
+        let privateKey = SecKeyCreateRandomKey(attrs as CFDictionary, &error)!
+        let publicKey = SecKeyCopyPublicKey(privateKey)!
+        let publicData = SecKeyCopyExternalRepresentation(publicKey, &error)! as Data
+        let publicB64 = publicData.base64EncodedString(options: [.lineLength64Characters])
+        let publicPem = "-----BEGIN PUBLIC KEY-----\n\(publicB64)\n-----END PUBLIC KEY-----"
+        let fingerprint = CryptoManager.fingerprint(of: publicPem)
+
+        // Prepare group encryption key and ciphertext.
+        let groupKey = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
+        CryptoManager.storeGroupKey(groupKey.base64EncodedString(), groupId: 1)
+        let plaintext = "hello"
+        let cipherData = try CryptoManager.encryptGroupMessage(plaintext, groupId: 1)
+        let b64 = cipherData.base64EncodedString()
+
+        // Sign the base64 ciphertext using RSA-PSS.
+        let sigData = SecKeyCreateSignature(privateKey, .rsaSignatureMessagePSSSHA256, b64.data(using: .utf8)! as CFData, &error)! as Data
+        let sigB64 = sigData.base64EncodedString()
+
+        // Configure service with stubs and inject the crafted payload.
+        let task = MockWebSocketTask()
+        let session = MockURLSession(tasks: [task])
+        let api = StubAPIService(publicKey: publicPem)
+        let service = try WebSocketService(api: api,
+                                           url: URL(string: "wss://example.com")!,
+                                           session: session)
+        service.connect(token: "abc")
+
+        let socket = SocketMessage(content: b64,
+                                   sender: "alice",
+                                   signature: sigB64,
+                                   fingerprint: fingerprint,
+                                   group_id: 1,
+                                   id: 42,
+                                   file_id: nil)
+        let json = try JSONEncoder().encode(socket)
+        task.receiveHandler?(.success(.string(String(data: json, encoding: .utf8)!)))
+
+        // Wait for async processing in ``listen`` to complete.
+        let exp = expectation(description: "message processed")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { exp.fulfill() }
+        await fulfillment(of: [exp], timeout: 1)
+
+        XCTAssertEqual(service.messages.count, 1)
+        XCTAssertEqual(service.messages.first?.content, plaintext)
+    }
+
+    /// Malformed JSON should be ignored and not append any message.
+    func testMalformedPayloadIgnored() {
+        let task = MockWebSocketTask()
+        let session = MockURLSession(tasks: [task])
+        let api = StubAPIService(publicKey: "dummy")
+        let service = try! WebSocketService(api: api,
+                                            url: URL(string: "wss://example.com")!,
+                                            session: session)
+        service.connect(token: "abc")
+
+        task.receiveHandler?(.success(.string("{\"sender\":\"bob\"}")))
+
+        // Allow async code to run.
+        let exp = expectation(description: "processed")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { exp.fulfill() }
+        wait(for: [exp], timeout: 1)
+
+        XCTAssertTrue(service.messages.isEmpty)
+    }
+
+    /// Payloads exceeding ``maxPayloadBytes`` are dropped before decoding.
+    func testOversizedPayloadDropped() {
+        let task = MockWebSocketTask()
+        let session = MockURLSession(tasks: [task])
+        let api = StubAPIService(publicKey: "dummy")
+        let service = try! WebSocketService(api: api,
+                                            url: URL(string: "wss://example.com")!,
+                                            session: session)
+        service.connect(token: "abc")
+
+        // Create a string larger than ``maxPayloadBytes``.
+        let huge = String(repeating: "a", count: WebSocketService.maxPayloadBytes + 1)
+        task.receiveHandler?(.success(.string(huge)))
+
+        let exp = expectation(description: "processed")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { exp.fulfill() }
+        wait(for: [exp], timeout: 1)
+
+        XCTAssertTrue(service.messages.isEmpty)
     }
 }
