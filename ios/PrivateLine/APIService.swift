@@ -29,6 +29,8 @@
  *   successful authentication.
  * - Exposed the certificate pinning delegate for reuse by components such as
  *   ``NotificationManager`` to ensure consistent TLS validation.
+ * - Added ``fetchContacts()`` for retrieving the list of available direct
+ *   message partners used by ``ChatView``'s picker.
  */
 import Foundation
 import Crypto
@@ -365,6 +367,16 @@ class APIService: ObservableObject {
                 print("Fingerprint: \(fp)")
             }
         }
+    }
+
+    /// Fetch the list of usernames the authenticated user can message.
+    /// Returns an empty array when unauthenticated.
+    func fetchContacts() async throws -> [String] {
+        guard token != nil else { return [] }
+        let request = URLRequest(url: baseURL.appendingPathComponent("contacts"))
+        let (data, _) = try await sendRequest(request)
+        let json = try JSONDecoder().decode([String: [String]].self, from: data)
+        return json["contacts"] ?? []
     }
 
     /// Fetch all messages for the authenticated user.

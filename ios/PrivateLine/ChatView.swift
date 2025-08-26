@@ -8,6 +8,9 @@
  *   providing user feedback. The alert automatically clears the error so
  *   subsequent failures produce additional notifications instead of being
  *   suppressed by stale state.
+ * - The contact picker now sources usernames from ``ChatViewModel.contacts``
+ *   which are retrieved from the backend on view load, replacing the
+ *   previously hard-coded list.
  */
 import SwiftUI
 
@@ -34,11 +37,14 @@ struct ChatView: View {
                         viewModel.selectedGroup = nil
                         viewModel.recipient = val
                     }
-                    // Reload messages for the newly selected conversation
-                    Task { await viewModel.load() }
+                    // Reload messages for the newly selected conversation.
+                    // ``load()`` first refreshes contacts then fetches the
+                    // message history so the picker always reflects current
+                    // server state.
+                    Task { await load() }
                 })) {
-                // Hardcoded demo users for direct chats
-                ForEach(["alice","bob","carol"], id: \ .self) { u in
+                // Dynamically retrieved direct message contacts
+                ForEach(viewModel.contacts, id: \.self) { u in
                     Text(u).tag(u)
                 }
                 // Dynamically loaded group conversations
@@ -89,8 +95,8 @@ struct ChatView: View {
                 .accessibilityLabel("Send message")
             }
         }
-        // Load initial messages and connect the WebSocket when shown
-        .onAppear { Task { await viewModel.load() } }
+        // Load contacts and initial messages, then connect the WebSocket.
+        .onAppear { Task { await load() } }
         // Persist state and close the socket when the view disappears
         .onDisappear { viewModel.disconnect() }
         .padding()
@@ -107,5 +113,19 @@ struct ChatView: View {
         .onChange(of: viewModel.lastError) { newValue in
             showError = newValue != nil
         }
+    }
+
+    /// Orchestrates initial data loading for the view.
+    /// Fetches contacts before requesting message history so that the picker
+    /// presents up-to-date usernames even if message loading fails.
+    /// Errors from either step are captured within ``ChatViewModel`` via
+    /// ``lastError`` and surfaced through the bound alert.
+    private func load() async {
+        // Retrieve available contacts first; this may fail independently of
+        // message retrieval (e.g. network hiccup) but we still attempt to load
+        // messages so previously cached conversations appear.
+        await viewModel.fetchContacts()
+        // Load conversation history and establish the WebSocket connection.
+        await viewModel.load()
     }
 }

@@ -11,6 +11,9 @@
  * - Initializer now accepts an optional ``WebSocketService`` so tests can
  *   inject a mock instance. The default path enforces secure WebSocket URLs
  *   via ``WebSocketService``'s throwing initializer.
+ * - Introduced ``contacts`` list and ``fetchContacts()`` helper so the user
+ *   picker reflects live data from the backend instead of hard-coded
+ *   placeholders.
  */
 import Foundation
 import Combine
@@ -25,6 +28,10 @@ final class ChatViewModel: ObservableObject {
     @Published var input = ""
     /// Username of the current direct message recipient.
     @Published var recipient = "bob"
+    /// Available direct message contacts retrieved from the backend.
+    /// Keeping this list up to date lets the picker in ``ChatView`` show
+    /// only valid usernames.
+    @Published var contacts: [String] = []
     /// Available chat groups pulled from the backend.
     @Published var groups: [Group] = []
     /// Identifier of the selected group chat if the user is chatting in a group.
@@ -61,6 +68,25 @@ final class ChatViewModel: ObservableObject {
             // ``try!`` is acceptable here because configuration errors indicate
             // a developer mistake that should be fixed before shipping.
             self.socket = try! WebSocketService(api: api)
+        }
+    }
+
+    /// Retrieve the list of contacts from the backend service.
+    /// Errors are surfaced via ``lastError`` so the UI can display a
+    /// user-friendly message while still attempting to load messages.
+    /// - Note: The backend returns an array of usernames. ``contacts`` is
+    ///   cleared on failure to avoid presenting stale results.
+    func fetchContacts() async {
+        do {
+            // Ask the API for currently available direct message contacts.
+            // ``APIService`` throws when the network request fails or the user
+            // is unauthenticated.
+            contacts = try await api.fetchContacts()
+        } catch {
+            // Propagate the error to observers and reset contacts to reflect
+            // the absence of valid data.
+            contacts = []
+            lastError = "Contact fetch failed: \(error.localizedDescription)"
         }
     }
 
