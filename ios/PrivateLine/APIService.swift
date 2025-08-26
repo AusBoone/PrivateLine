@@ -27,6 +27,8 @@
  * - Introduced exponential backoff for failed login attempts, delaying each
  *   subsequent attempt to slow brute-force guessing. The delay resets upon
  *   successful authentication.
+ * - Exposed the certificate pinning delegate for reuse by components such as
+ *   ``NotificationManager`` to ensure consistent TLS validation.
  */
 import Foundation
 import Crypto
@@ -718,7 +720,10 @@ class APIService: ObservableObject {
     /// SHA-256 hash of each certificate's SubjectPublicKeyInfo against a set of
     /// precomputed fingerprints. Storing multiple fingerprints allows the app to
     /// accept both the current and the next certificate during rotations.
-    private class PinningDelegate: NSObject, URLSessionDelegate {
+    /// Delegate enforcing server certificate pinning for all API calls. Exposed
+    /// so other modules (e.g. ``NotificationManager``) can reuse the same trust
+    /// evaluation logic and avoid duplicating pinning code.
+    final class PinningDelegate: NSObject, URLSessionDelegate {
         /// Pinned SPKI fingerprints loaded from ``server_fingerprints.txt``.
         private let validFingerprints: Set<String>
 
