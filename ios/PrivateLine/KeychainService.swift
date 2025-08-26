@@ -18,6 +18,8 @@ import LocalAuthentication
  *   becomes invalid if biometrics are re-enrolled.
  * - ``loadData`` surfaces ``LAError`` values so callers can react to biometric
  *   failures instead of receiving silent ``nil`` values.
+ * - Sensitive byte buffers are actively wiped from memory once processed to
+ *   minimise the risk of secrets lingering in RAM.
  *
  * Usage examples:
  * ``KeychainService.saveToken("abc")`` – Persist the short-lived access token.
@@ -37,6 +39,19 @@ struct KeychainService {
     private static let tokenKey = "PrivateLineToken"
     /// Keychain identifier storing the refresh token used to obtain new JWTs.
     private static let refreshTokenKey = "PrivateLineRefreshToken"
+
+    /// Overwrite the provided buffer with zeros, scrubbing sensitive material.
+    /// - Parameter data: The mutable ``Data`` buffer to clear.
+    ///
+    /// The function leverages ``withUnsafeMutableBytes`` so the underlying
+    /// memory can be filled with zero bytes in place.  This helps prevent
+    /// residual secrets from lingering in process memory after use.
+    static func wipe(_ data: inout Data) {
+        data.withUnsafeMutableBytes { rawBuffer in
+            // ``initializeMemory`` efficiently sets each byte to zero.
+            rawBuffer.initializeMemory(as: UInt8.self, repeating: 0)
+        }
+    }
 
     /// Generic helper to save arbitrary data in the keychain under ``account``.
     /// - Parameters:
@@ -96,7 +111,16 @@ struct KeychainService {
 
         switch status {
         case errSecSuccess:
-            return item as? Data
+            // ``SecItemCopyMatching`` returns the raw ``Data`` buffer containing
+            // the secret.  Copy it so we can safely wipe the original memory
+            // before handing the value back to the caller.
+            if let retrieved = item as? Data {
+                let result = Data(retrieved) // Deep copy to preserve contents.
+                var mutable = retrieved
+                wipe(&mutable) // Scrub the temporary buffer immediately.
+                return result
+            }
+            return nil
         case errSecUserCanceled:
             // User dismissed the biometric prompt
             throw LAError(.userCancel)
@@ -110,16 +134,20 @@ struct KeychainService {
 
     /// Persist the JWT access token returned by the backend in the keychain.
     static func saveToken(_ token: String) {
-        if let data = token.data(using: .utf8) {
+        if var data = token.data(using: .utf8) {
             // Store the token string as UTF-8 data guarded by biometrics
             save(tokenKey, data: data, requiresBiometry: true)
+            // Immediately erase the temporary buffer holding the token bytes.
+            wipe(&data)
         }
     }
 
     /// Persist the refresh token which authorizes issuing new access tokens.
     static func saveRefreshToken(_ token: String) {
-        if let data = token.data(using: .utf8) {
+        if var data = token.data(using: .utf8) {
             save(refreshTokenKey, data: data)
+            // Scrub the memory buffer now that it has been persisted.
+            wipe(&data)
         }
     }
 
