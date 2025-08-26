@@ -1,6 +1,13 @@
 /*
  * ChatView.swift - Main conversation UI in SwiftUI.
  * Presents message history and compose bar using ChatViewModel.
+ *
+ * Modifications:
+ * - Introduced error alert infrastructure bound to ``ChatViewModel``'s
+ *   ``lastError`` property. Any new error now triggers a SwiftUI ``Alert``
+ *   providing user feedback. The alert automatically clears the error so
+ *   subsequent failures produce additional notifications instead of being
+ *   suppressed by stale state.
  */
 import SwiftUI
 
@@ -12,6 +19,8 @@ struct ChatView: View {
     @StateObject var viewModel: ChatViewModel
     /// Tracks whether the file picker modal is visible when attaching files.
     @State private var showPicker = false
+    /// Toggles presentation of an error ``Alert`` bound to ``viewModel.lastError``.
+    @State private var showError = false
 
     var body: some View {
         VStack {
@@ -87,5 +96,16 @@ struct ChatView: View {
         .padding()
         // Animate list updates when new messages arrive
         .animation(.default, value: viewModel.messages)
+        // Present human readable errors surfaced by the view model.
+        .alert("Error", isPresented: $showError, presenting: viewModel.lastError) { _ in
+            // Reset error once dismissed so future failures display again.
+            Button("OK", role: .cancel) { viewModel.lastError = nil }
+        } message: { err in
+            Text(err)
+        }
+        // Whenever a new error arrives, toggle the alert visibility.
+        .onChange(of: viewModel.lastError) { newValue in
+            showError = newValue != nil
+        }
     }
 }
