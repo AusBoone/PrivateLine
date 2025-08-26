@@ -1,9 +1,10 @@
-// Tests verifying biometric access control enforced by `KeychainService`.
-// The suite confirms that access tokens are bound to the current biometric
-// configuration and that appropriate `LAError` codes are surfaced when
-// authentication fails. These tests provide confidence that sensitive data
-// remains protected if a user cancels the Face ID/Touch ID prompt or changes
-// their enrolled biometrics.
+// Tests verifying biometric access control enforced by `KeychainService` as
+// well as the in-memory scrubbing of sensitive byte buffers.  The suite
+// confirms that access tokens are bound to the current biometric configuration
+// and that the new `wipe` helper successfully zeros temporary buffers.
+// Authentication failure handling is also exercised to ensure tokens remain
+// protected if a user cancels the Face ID/Touch ID prompt or changes their
+// enrolled biometrics.
 
 import XCTest
 import LocalAuthentication
@@ -51,5 +52,15 @@ final class KeychainServiceTests: XCTestCase {
         }
         let token = try KeychainService.loadToken(context: context)
         XCTAssertEqual(token, "secret")
+    }
+
+    /// Verifies that the `wipe` helper overwrites buffers, preventing residual
+    /// secrets from lingering in memory after use.
+    func testWipeZeroesBuffer() {
+        // Start with non-zero bytes to prove they are cleared.
+        var buffer = Data([1, 2, 3, 4])
+        KeychainService.wipe(&buffer)
+        // All bytes should now be zero.
+        XCTAssertTrue(buffer.allSatisfy { $0 == 0 })
     }
 }
