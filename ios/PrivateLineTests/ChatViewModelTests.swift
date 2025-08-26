@@ -1,11 +1,11 @@
 // ChatViewModelTests.swift
 // Unit tests for ``ChatViewModel`` covering error propagation during message
-// sending. The API layer is mocked so tests run deterministically without
-// network access.
+// sending and contact retrieval. The API layer is mocked so tests run
+// deterministically without network access.
 //
-// These tests ensure that failures during file upload or message transmission
-// are surfaced via ``lastError`` and that no local state such as message lists
-// or input text is mutated on failure.
+// These tests ensure that failures during file upload, message transmission or
+// contact fetching are surfaced via ``lastError`` and that no local state such
+// as message lists, input text or contact arrays are mutated on failure.
 
 import XCTest
 @testable import PrivateLine
@@ -14,12 +14,13 @@ import XCTest
 /// This lets tests simulate typical failure scenarios such as connectivity
 /// issues or authentication errors.
 final class MockAPIService: APIService {
-    enum Failure: Error { case upload, send }
+    enum Failure: Error { case upload, send, contacts }
 
     /// Control flags injected by individual tests to trigger failures.
     var uploadShouldFail = false
     var directSendShouldFail = false
     var groupSendShouldFail = false
+    var contactsShouldFail = false
 
     override init(session: URLSession? = nil) {
         // Provide a secure base URL so the superclass initializer succeeds
@@ -46,6 +47,14 @@ final class MockAPIService: APIService {
     override func sendGroupMessage(_ content: String, groupId: Int, fileId: Int? = nil, expiresAt: Date? = nil) async throws {
         if groupSendShouldFail { throw Failure.send }
     }
+
+    override func fetchContacts() async throws -> [String] {
+        if contactsShouldFail { throw Failure.contacts }
+        return ["alice", "bob"]
+    }
+
+    override func fetchMessages() async throws -> [Message] { [] }
+    override func fetchGroups() async throws -> [Group] { [] }
 }
 
 /// Test suite verifying ``ChatViewModel`` surfaces errors without mutating
@@ -101,6 +110,35 @@ final class ChatViewModelTests: XCTestCase {
 
         XCTAssertNotNil(vm.lastError)
         XCTAssertTrue(vm.messages.isEmpty)
+    }
+
+    /// Contact retrieval failures should set ``lastError`` and result in an
+    /// empty ``contacts`` array so the UI does not display stale usernames.
+    func testContactFetchFailureSetsError() async {
+        let api = MockAPIService()
+        api.contactsShouldFail = true
+        let socket = try! WebSocketService(api: api,
+                                           url: URL(string: "wss://example.com")!,
+                                           session: URLSession(configuration: .ephemeral))
+        let vm = ChatViewModel(api: api, socket: socket)
+        await vm.fetchContacts()
+
+        XCTAssertNotNil(vm.lastError)
+        XCTAssertTrue(vm.contacts.isEmpty)
+    }
+
+    /// Successful contact retrieval populates the ``contacts`` list used by the
+    /// picker in ``ChatView``.
+    func testFetchContactsPopulatesList() async {
+        let api = MockAPIService()
+        let socket = try! WebSocketService(api: api,
+                                           url: URL(string: "wss://example.com")!,
+                                           session: URLSession(configuration: .ephemeral))
+        let vm = ChatViewModel(api: api, socket: socket)
+        await vm.fetchContacts()
+
+        XCTAssertEqual(vm.contacts, ["alice", "bob"])
+        XCTAssertNil(vm.lastError)
     }
 }
 
