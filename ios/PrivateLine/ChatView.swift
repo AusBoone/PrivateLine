@@ -60,19 +60,7 @@ struct ChatView: View {
                 .disabled(viewModel.isLoading)
                 // Show decrypted chat messages with read receipts and attachments.
                 List(viewModel.messages) { msg in
-                    HStack {
-                        Text(msg.content)
-                        if let read = msg.read, msg.id != 0 {
-                            Spacer()
-                            Image(systemName: read ? "checkmark.circle.fill" : "checkmark.circle")
-                                .foregroundColor(.gray)
-                        }
-                        if let fid = msg.file_id {
-                            // Download link for an optional file attachment
-                            Link("attachment", destination: URL(string: "\(viewModel.api.baseURLString)/files/\(fid)")!)
-                        }
-                    }
-                        .accessibilityLabel("Message: \(msg.content)")
+                    MessageRow(message: msg, baseURL: viewModel.api.baseURLString)
                 }
                 // Input field, optional attachment picker and send button.
                 HStack {
