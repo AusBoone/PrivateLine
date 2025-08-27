@@ -18,6 +18,12 @@
  *   switching between direct and group chats.
  * - Displays a lightweight attachment preview with a removal button above the
  *   compose field so users can verify and discard attachments before sending.
+ * - Replaced the single-line ``TextField`` with an expanding ``TextEditor``
+ *   managed by ``@FocusState`` so users can compose multi-line messages while
+ *   maintaining keyboard focus.
+ * - Wrapped the message list in ``ScrollViewReader`` and observed
+ *   ``ChatViewModel.scrollTarget`` to automatically scroll to the newest
+ *   message whenever history changes or a send completes.
  */
 import SwiftUI
 
@@ -28,6 +34,10 @@ struct ChatView: View {
     @StateObject var viewModel: ChatViewModel
     /// Tracks whether the file picker modal is visible when attaching files.
     @State private var showPicker = false
+    /// Focus binding controlling whether the compose field has keyboard focus.
+    @FocusState private var inputFocused: Bool
+    /// Dynamic height for the multi-line text editor, capped in the view.
+    @State private var editorHeight: CGFloat = 40
 
     /// Binding controlling presentation of the error ``Alert``.
     ///
@@ -74,8 +84,21 @@ struct ChatView: View {
                 .disabled(viewModel.isLoading)
 
                 // Show decrypted chat messages with read receipts and attachments.
-                List(viewModel.messages) { msg in
-                    MessageRow(message: msg, baseURL: viewModel.api.baseURLString)
+                // ``ScrollViewReader`` allows us to programmatically jump to the
+                // latest message when ``viewModel.scrollTarget`` changes.
+                ScrollViewReader { proxy in
+                    List(viewModel.messages) { msg in
+                        MessageRow(message: msg, baseURL: viewModel.api.baseURLString)
+                            .id(msg.id) // Tag each row so scrollTo can locate it
+                    }
+                    // Whenever the view model publishes a new scroll target,
+                    // animate the list to reveal the message at that identifier.
+                    .onChange(of: viewModel.scrollTarget) { target in
+                        guard let target = target else { return }
+                        withAnimation {
+                            proxy.scrollTo(target, anchor: .bottom)
+                        }
+                    }
                 }
 
                 // Preview the selected attachment, if any, so the user can confirm
@@ -100,10 +123,16 @@ struct ChatView: View {
                 }
 
                 // Input field, optional attachment picker and send button.
-                HStack {
-                    // Text field bound to the view model's input
-                    TextField("Message", text: $viewModel.input)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                HStack(alignment: .bottom) {
+                    // Multi-line editor bound to the view model's input. The
+                    // custom ``ExpandingTextEditor`` adjusts its height to fit
+                    // the content up to a reasonable maximum and uses
+                    // ``@FocusState`` so the keyboard remains active after sending.
+                    ExpandingTextEditor(text: $viewModel.input, height: $editorHeight)
+                        .frame(minHeight: editorHeight, maxHeight: editorHeight)
+                        .focused($inputFocused)
+                        .padding(4)
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary))
                     // Optional attachment picker presented modally
                     Button("Attach") {
                         showPicker = true
@@ -126,7 +155,13 @@ struct ChatView: View {
                         .font(.caption)
                     }
                     // Tapping the send icon encrypts and uploads the message
-                    Button(action: { Task { await viewModel.send() } }) {
+                    Button(action: {
+                        Task {
+                            await viewModel.send()
+                            // Restore focus so the keyboard stays visible for rapid replies.
+                            inputFocused = true
+                        }
+                    }) {
                         Image(systemName: "paperplane.fill")
                     }
                     .accessibilityLabel("Send message")
