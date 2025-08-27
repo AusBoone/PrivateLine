@@ -22,6 +22,9 @@
  * - Tracked attachment filenames and introduced ``selectAttachment``/
  *   ``removeAttachment`` helpers so ``ChatView`` can preview and discard
  *   attachments prior to sending.
+ * - Added ``scrollTarget`` published property tracking the identifier of the
+ *   most recent message so ``ChatView`` can automatically scroll to the newest
+ *   entry whenever history changes or a send completes.
  */
 import Foundation
 import Combine
@@ -61,6 +64,9 @@ final class ChatViewModel: ObservableObject {
     /// Views bind to this state to show ``ProgressView`` overlays and disable
     /// controls to prevent duplicate submissions.
     @Published var isLoading = false
+    /// Identifier of the most recent message. Views observe this to auto-scroll
+    /// to the bottom whenever a new message is added or history loads.
+    @Published var scrollTarget: Int? = nil
 
     /// Backend API wrapper used for all network operations.
     let api: APIService
@@ -173,6 +179,9 @@ final class ChatViewModel: ObservableObject {
             return exp > Date()
         }
         messages = cached
+        // Trigger an initial scroll to the latest cached message so the view
+        // resumes at the bottom even when offline.
+        scrollTarget = cached.last?.id
         // Refresh group metadata before loading messages so the conversation
         // list remains current even if message retrieval fails.
         await fetchGroups()
@@ -185,6 +194,8 @@ final class ChatViewModel: ObservableObject {
                 return exp > Date()
             }
             messages = valid
+            // Scroll to the newest fetched message so the latest history is visible.
+            scrollTarget = valid.last?.id
             // Mark unread messages as read on the server
             for msg in fetched where msg.read != true && (msg.id != 0) {
                 try? await api.markMessageRead(id: msg.id)
@@ -202,6 +213,8 @@ final class ChatViewModel: ObservableObject {
                     return exp > Date()
                 }
                 self?.messages = valid
+                // Update scroll target so the UI auto-scrolls when a message arrives.
+                self?.scrollTarget = valid.last?.id
                 MessageStore.save(valid)
             }.store(in: &cancellables)
         } catch {
@@ -273,6 +286,8 @@ final class ChatViewModel: ObservableObject {
             signature: nil
         )
         messages.append(msg)
+        // Publish the new message id so the UI can scroll to it immediately.
+        scrollTarget = msg.id
         MessageStore.save(messages)
         input = ""
     }

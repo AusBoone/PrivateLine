@@ -1,6 +1,6 @@
 // ChatViewModelTests.swift
 // Unit tests for ``ChatViewModel`` covering error propagation during message
-// sending and contact retrieval. The API layer is mocked so tests run
+// sending, contact retrieval and auto-scroll behaviour. The API layer is mocked so tests run
 // deterministically without network access.
 //
 // These tests ensure that failures during file upload, message transmission or
@@ -217,6 +217,44 @@ final class ChatViewModelTests: XCTestCase {
 
         XCTAssertNil(vm.attachment)
         XCTAssertNil(vm.attachmentFilename)
+    }
+
+    /// Sending a message should update ``scrollTarget`` so the UI can scroll
+    /// to the freshly appended entry.
+    func testScrollTargetUpdatesAfterSend() async {
+        let api = MockAPIService()
+        let socket = try! WebSocketService(api: api,
+                                           url: URL(string: "wss://example.com")!,
+                                           session: URLSession(configuration: .ephemeral))
+        let vm = ChatViewModel(api: api, socket: socket)
+        vm.input = "hello"
+        await vm.send()
+
+        // The view model should publish the id of the sent message for auto-scroll.
+        XCTAssertEqual(vm.scrollTarget, vm.messages.last?.id)
+    }
+
+    /// Incoming socket messages should also set ``scrollTarget`` so the newest
+    /// message becomes visible.
+    func testScrollTargetUpdatesOnIncomingMessage() async {
+        let api = MockAPIService()
+        let socket = try! WebSocketService(api: api,
+                                           url: URL(string: "wss://example.com")!,
+                                           session: URLSession(configuration: .ephemeral))
+        let vm = ChatViewModel(api: api, socket: socket)
+        await vm.load()
+        let incoming = Message(id: 42,
+                               content: "hi",
+                               file_id: nil,
+                               read: true,
+                               expires_at: nil,
+                               sender: nil,
+                               signature: nil)
+        socket.messages.append(incoming)
+        // Yield to allow Combine pipeline to propagate.
+        await Task.yield()
+
+        XCTAssertEqual(vm.scrollTarget, 42)
     }
 }
 
