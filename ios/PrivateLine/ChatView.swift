@@ -8,18 +8,18 @@
  *   providing user feedback. The alert automatically clears the error so
  *   subsequent failures produce additional notifications instead of being
  *   suppressed by stale state.
- * - The contact picker now sources usernames from ``ChatViewModel.contacts``
- *   which are retrieved from the backend on view load, replacing the
- *   previously hard-coded list.
  * - Displays a ``ProgressView`` overlay while ``ChatViewModel`` performs
  *   network requests and disables interactive controls to prevent duplicate
  *   actions.
+ * - Conversation selection moved to a dedicated ``ConversationListView``
+ *   pushed via navigation instead of an in-line ``Picker``. This keeps the
+ *   chat interface focused on the current thread while still allowing quick
+ *   switching between direct and group chats.
  */
 import SwiftUI
 
 /// SwiftUI view displaying conversations and allowing the user to send
 /// encrypted messages. It uses ``ChatViewModel`` for all data handling.
-
 struct ChatView: View {
     /// Object that manages message data and network calls.
     @StateObject var viewModel: ChatViewModel
@@ -28,36 +28,30 @@ struct ChatView: View {
     /// Toggles presentation of an error ``Alert`` bound to ``viewModel.lastError``.
     @State private var showError = false
 
+    /// Human readable name of the currently open conversation. Direct chats
+    /// display the recipient's username while group chats show the group's name.
+    private var conversationTitle: String {
+        if let gid = viewModel.selectedGroup {
+            return viewModel.groups.first(where: { $0.id == gid })?.name ?? "Group \(gid)"
+        }
+        return viewModel.recipient.isEmpty ? "Select Conversation" : viewModel.recipient
+    }
+
     var body: some View {
         ZStack {
             VStack {
-                // Picker allowing the user to switch between direct and group chats.
-                Picker("Conversation", selection: Binding(
-                get: { viewModel.selectedGroup == nil ? viewModel.recipient : "g\(viewModel.selectedGroup!)" },
-                set: { val in
-                    if val.hasPrefix("g") {
-                        viewModel.selectedGroup = Int(val.dropFirst())
-                    } else {
-                        viewModel.selectedGroup = nil
-                        viewModel.recipient = val
-                    }
-                    // Reload messages for the newly selected conversation.
-                    // ``load()`` first refreshes contacts then fetches the
-                    // message history so the picker always reflects current
-                    // server state.
-                    Task { await load() }
-                )) {
-                    // Dynamically retrieved direct message contacts
-                    ForEach(viewModel.contacts, id: \.self) { u in
-                        Text(u).tag(u)
-                    }
-                    // Dynamically loaded group conversations
-                    ForEach(viewModel.groups) { g in
-                        Text(g.name).tag("g\(g.id)")
+                // Navigation link displaying the active conversation. Selecting
+                // it presents ``ConversationListView`` so the user can switch
+                // threads. The label reflects the current selection.
+                NavigationLink(destination: ConversationListView(viewModel: viewModel)) {
+                    HStack {
+                        Text(conversationTitle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: "chevron.right")
                     }
                 }
-                .pickerStyle(MenuPickerStyle())
                 .disabled(viewModel.isLoading)
+
                 // Show decrypted chat messages with read receipts and attachments.
                 List(viewModel.messages) { msg in
                     MessageRow(message: msg, baseURL: viewModel.api.baseURLString)
@@ -115,8 +109,9 @@ struct ChatView: View {
     }
 
     /// Orchestrates initial data loading for the view.
-    /// Fetches contacts before requesting message history so that the picker
-    /// presents up-to-date usernames even if message loading fails.
+    /// Fetches contacts before requesting message history so that
+    /// ``ConversationListView`` presents up-to-date usernames even if message
+    /// loading fails.
     /// Errors from either step are captured within ``ChatViewModel`` via
     /// ``lastError`` and surfaced through the bound alert.
     private func load() async {

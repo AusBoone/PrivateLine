@@ -16,6 +16,9 @@
  *   placeholders.
  * - Added ``isLoading`` state toggled around network operations so the UI can
  *   present progress indicators and disable interactions during lengthy tasks.
+ * - Added ``fetchGroups()`` and ``selectConversation(...)`` helpers enabling
+ *   the new ``ConversationListView`` to update available threads and refresh
+ *   messages when the user switches chats.
  */
 import Foundation
 import Combine
@@ -96,6 +99,40 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    /// Retrieve the list of chat groups the user belongs to.
+    /// Errors are captured in ``lastError`` and the ``groups`` array is cleared
+    /// on failure so the UI does not show stale data.
+    func fetchGroups() async {
+        do {
+            // Ask the API for all group conversations available to the user.
+            groups = try await api.fetchGroups()
+        } catch {
+            // Reset groups to reflect the lack of valid information and surface
+            // the failure so the user can retry.
+            groups = []
+            lastError = "Group fetch failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Update which conversation is active and load its message history.
+    /// - Parameters:
+    ///   - recipient: Username for a direct message thread. Provide ``nil`` when
+    ///     selecting a group chat.
+    ///   - groupID: Identifier for a group conversation. Provide ``nil`` when
+    ///     selecting a direct message.
+    func selectConversation(recipient: String? = nil, groupID: Int? = nil) async {
+        if let gid = groupID {
+            // Switching to a group chat overrides any direct recipient.
+            selectedGroup = gid
+        } else if let user = recipient {
+            // Direct messages clear the group selection and set the recipient.
+            selectedGroup = nil
+            self.recipient = user
+        }
+        // Reload message history for the newly selected conversation.
+        await load()
+    }
+
     /// Fetch messages from the server and establish the WebSocket connection.
     /// Local cached messages are loaded first so the UI can display immediately
     /// while the network request is in flight.
@@ -110,10 +147,12 @@ final class ChatViewModel: ObservableObject {
             return exp > Date()
         }
         messages = cached
+        // Refresh group metadata before loading messages so the conversation
+        // list remains current even if message retrieval fails.
+        await fetchGroups()
         do {
-            // Retrieve available chat groups
-            groups = try await api.fetchGroups()
-            // Fetch either direct or group conversation history
+            // Fetch either direct or group conversation history depending on
+            // the user's current selection.
             let fetched = try await (selectedGroup != nil ? api.fetchGroupMessages(selectedGroup!) : api.fetchMessages())
             let valid = fetched.filter { msg in
                 guard let exp = msg.expires_at else { return true }
