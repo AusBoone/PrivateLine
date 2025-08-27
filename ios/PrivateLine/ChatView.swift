@@ -15,6 +15,8 @@
  *   pushed via navigation instead of an in-line ``Picker``. This keeps the
  *   chat interface focused on the current thread while still allowing quick
  *   switching between direct and group chats.
+ * - Displays a lightweight attachment preview with a removal button above the
+ *   compose field so users can verify and discard attachments before sending.
  */
 import SwiftUI
 
@@ -56,6 +58,28 @@ struct ChatView: View {
                 List(viewModel.messages) { msg in
                     MessageRow(message: msg, baseURL: viewModel.api.baseURLString)
                 }
+
+                // Preview the selected attachment, if any, so the user can confirm
+                // the file before sending. The remove button clears it from the
+                // view model to avoid accidentally uploading an unintended file.
+                if viewModel.attachment != nil {
+                    HStack {
+                        HStack {
+                            Image(systemName: "doc.fill")
+                            Text(viewModel.attachmentFilename ?? "Attachment")
+                        }
+                        .accessibilityLabel("Attachment \(viewModel.attachmentFilename ?? "file")")
+                        Spacer()
+                        Button("Remove") {
+                            viewModel.removeAttachment()
+                        }
+                        .accessibilityLabel("Remove attachment")
+                    }
+                    .padding(8)
+                    .background(Color.secondary.opacity(0.2))
+                    .cornerRadius(8)
+                }
+
                 // Input field, optional attachment picker and send button.
                 HStack {
                     // Text field bound to the view model's input
@@ -66,14 +90,21 @@ struct ChatView: View {
                         showPicker = true
                     }
                     .fileImporter(isPresented: $showPicker, allowedContentTypes: [.data]) { result in
-                        if case let .success(url) = result, let data = try? Data(contentsOf: url) {
-                            viewModel.attachment = data
+                        if case let .success(url) = result,
+                           let data = try? Data(contentsOf: url) {
+                            // Persist both data and filename so the preview above
+                            // can present meaningful context. Users can later remove it.
+                            viewModel.selectAttachment(data: data, filename: url.lastPathComponent)
                         }
                     }
                     // Choose optional expiration time for the message
                     Stepper(value: $viewModel.expiresInMinutes, in: 0...1440, step: 10) {
-                        Text(viewModel.expiresInMinutes == 0 ? "No expiry" : "Expires in \(Int(viewModel.expiresInMinutes)) min")
-                            .font(.caption)
+                        Text(
+                            viewModel.expiresInMinutes == 0
+                                ? "No expiry"
+                                : "Expires in \(Int(viewModel.expiresInMinutes)) min"
+                        )
+                        .font(.caption)
                     }
                     // Tapping the send icon encrypts and uploads the message
                     Button(action: { Task { await viewModel.send() } }) {

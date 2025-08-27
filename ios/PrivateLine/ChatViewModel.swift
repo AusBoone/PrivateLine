@@ -19,6 +19,9 @@
  * - Added ``fetchGroups()`` and ``selectConversation(...)`` helpers enabling
  *   the new ``ConversationListView`` to update available threads and refresh
  *   messages when the user switches chats.
+ * - Tracked attachment filenames and introduced ``selectAttachment``/
+ *   ``removeAttachment`` helpers so ``ChatView`` can preview and discard
+ *   attachments prior to sending.
  */
 import Foundation
 import Combine
@@ -42,8 +45,11 @@ final class ChatViewModel: ObservableObject {
     /// Identifier of the selected group chat if the user is chatting in a group.
     /// ``nil`` indicates a direct person-to-person conversation.
     @Published var selectedGroup: Int? = nil
-    /// Binary data for an optional file attachment.
+    /// Binary data for an optional file attachment chosen by the user.
     @Published var attachment: Data? = nil
+    /// Original filename for the selected attachment displayed in the preview.
+    /// ``nil`` when no attachment has been picked or the filename is unknown.
+    @Published var attachmentFilename: String? = nil
     /// Minutes after which newly sent messages should expire. ``0`` means no
     /// expiration and messages persist indefinitely.
     @Published var expiresInMinutes: Double = 0
@@ -112,6 +118,26 @@ final class ChatViewModel: ObservableObject {
             groups = []
             lastError = "Group fetch failed: \(error.localizedDescription)"
         }
+    }
+
+    /// Store a newly selected attachment so the UI can show a preview.
+    /// - Parameters:
+    ///   - data: Raw file bytes selected by the user.
+    ///   - filename: Original file name for display purposes.
+    /// - Note: The file is not uploaded until ``send()`` is invoked. Users may
+    ///   replace or remove the attachment before sending.
+    func selectAttachment(data: Data, filename: String) {
+        attachment = data
+        attachmentFilename = filename
+    }
+
+    /// Remove any currently selected attachment. Called when the user taps the
+    /// "Remove" button in ``ChatView``'s preview area. Both the binary data and
+    /// stored filename are cleared so no stale information remains if a new
+    /// attachment is chosen later.
+    func removeAttachment() {
+        attachment = nil
+        attachmentFilename = nil
     }
 
     /// Update which conversation is active and load its message history.
@@ -202,8 +228,12 @@ final class ChatViewModel: ObservableObject {
         if let data = attachment {
             do {
                 // Upload attachment first so the returned id can be included
-                fileId = try await api.uploadFile(data: data, filename: "file")
+                // in the message body. Preserve the original filename when
+                // possible so recipients see a meaningful label.
+                let name = attachmentFilename ?? "file"
+                fileId = try await api.uploadFile(data: data, filename: name)
                 attachment = nil
+                attachmentFilename = nil
             } catch {
                 // Upload can fail due to connectivity loss or server rejection.
                 // Surface the error and stop further processing so the user may retry.

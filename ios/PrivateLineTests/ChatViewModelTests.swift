@@ -188,5 +188,35 @@ final class ChatViewModelTests: XCTestCase {
         await task.value
         XCTAssertFalse(vm.isLoading)
     }
+
+    /// Selecting an attachment should store both the raw data and filename so
+    /// ``ChatView`` can present a meaningful preview to the user.
+    func testSelectingAttachmentStoresDataAndName() throws {
+        let api = MockAPIService()
+        let socket = try! WebSocketService(api: api,
+                                           url: URL(string: "wss://example.com")!,
+                                           session: URLSession(configuration: .ephemeral))
+        let vm = ChatViewModel(api: api, socket: socket)
+        let sample = Data([0x0, 0x1])
+        vm.selectAttachment(data: sample, filename: "note.txt")
+
+        XCTAssertEqual(vm.attachment, sample)
+        XCTAssertEqual(vm.attachmentFilename, "note.txt")
+    }
+
+    /// ``removeAttachment()`` should clear both the stored data and filename so
+    /// subsequent selections do not display stale previews.
+    func testRemoveAttachmentClearsState() throws {
+        let api = MockAPIService()
+        let socket = try! WebSocketService(api: api,
+                                           url: URL(string: "wss://example.com")!,
+                                           session: URLSession(configuration: .ephemeral))
+        let vm = ChatViewModel(api: api, socket: socket)
+        vm.selectAttachment(data: Data([0x2]), filename: "temp.bin")
+        vm.removeAttachment()
+
+        XCTAssertNil(vm.attachment)
+        XCTAssertNil(vm.attachmentFilename)
+    }
 }
 
