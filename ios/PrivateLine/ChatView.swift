@@ -7,7 +7,8 @@
  *   ``lastError`` property. Any new error now triggers a SwiftUI ``Alert``
  *   providing user feedback. The alert automatically clears the error so
  *   subsequent failures produce additional notifications instead of being
- *   suppressed by stale state.
+ *   suppressed by stale state. ``errorAlertBinding`` now handles this directly
+ *   without auxiliary state variables, simplifying the view logic.
  * - Displays a ``ProgressView`` overlay while ``ChatViewModel`` performs
  *   network requests and disables interactive controls to prevent duplicate
  *   actions.
@@ -27,8 +28,26 @@ struct ChatView: View {
     @StateObject var viewModel: ChatViewModel
     /// Tracks whether the file picker modal is visible when attaching files.
     @State private var showPicker = false
-    /// Toggles presentation of an error ``Alert`` bound to ``viewModel.lastError``.
-    @State private var showError = false
+
+    /// Binding controlling presentation of the error ``Alert``.
+    ///
+    /// The binding reads ``viewModel.lastError`` to decide whether the alert
+    /// should be shown. Writing ``false`` (which occurs automatically when the
+    /// user dismisses the alert) clears ``lastError`` so future failures can
+    /// trigger additional alerts. Writing ``true`` has no effect because the
+    /// view model is the single source of truth for when an error exists.
+    var errorAlertBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.lastError != nil },
+            set: { isShowing in
+                // When the alert is dismissed ``isShowing`` becomes ``false``.
+                // Reset ``lastError`` so subsequent network or send failures
+                // present new alerts instead of being suppressed by stale
+                // state.
+                if !isShowing { viewModel.lastError = nil }
+            }
+        )
+    }
 
     /// Human readable name of the currently open conversation. Direct chats
     /// display the recipient's username while group chats show the group's name.
@@ -122,15 +141,12 @@ struct ChatView: View {
             // Animate list updates when new messages arrive
             .animation(.default, value: viewModel.messages)
             // Present human readable errors surfaced by the view model.
-            .alert("Error", isPresented: $showError, presenting: viewModel.lastError) { _ in
-                // Reset error once dismissed so future failures display again.
-                Button("OK", role: .cancel) { viewModel.lastError = nil }
-            } message: { err in
-                Text(err)
-            }
-            // Whenever a new error arrives, toggle the alert visibility.
-            .onChange(of: viewModel.lastError) { newValue in
-                showError = newValue != nil
+            // ``errorAlertBinding`` drives presentation and clears the error when
+            // the alert is dismissed so subsequent failures remain visible.
+            .alert("Error", isPresented: errorAlertBinding) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(viewModel.lastError ?? "Unknown error")
             }
 
             if viewModel.isLoading {
