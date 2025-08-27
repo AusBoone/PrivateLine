@@ -21,6 +21,8 @@ final class MockAPIService: APIService {
     var directSendShouldFail = false
     var groupSendShouldFail = false
     var contactsShouldFail = false
+    /// Artificial delay inserted before returning to simulate network latency.
+    var delayNanoseconds: UInt64 = 0
 
     override init(session: URLSession? = nil) {
         // Provide a secure base URL so the superclass initializer succeeds
@@ -36,25 +38,35 @@ final class MockAPIService: APIService {
         recipient: String? = nil,
         groupId: Int? = nil
     ) async throws -> Int? {
+        if delayNanoseconds > 0 { try await Task.sleep(nanoseconds: delayNanoseconds) }
         if uploadShouldFail { throw Failure.upload }
         return 1
     }
 
     override func sendMessage(_ content: String, to recipient: String, fileId: Int? = nil, expiresAt: Date? = nil) async throws {
+        if delayNanoseconds > 0 { try await Task.sleep(nanoseconds: delayNanoseconds) }
         if directSendShouldFail { throw Failure.send }
     }
 
     override func sendGroupMessage(_ content: String, groupId: Int, fileId: Int? = nil, expiresAt: Date? = nil) async throws {
+        if delayNanoseconds > 0 { try await Task.sleep(nanoseconds: delayNanoseconds) }
         if groupSendShouldFail { throw Failure.send }
     }
 
     override func fetchContacts() async throws -> [String] {
+        if delayNanoseconds > 0 { try await Task.sleep(nanoseconds: delayNanoseconds) }
         if contactsShouldFail { throw Failure.contacts }
         return ["alice", "bob"]
     }
 
-    override func fetchMessages() async throws -> [Message] { [] }
-    override func fetchGroups() async throws -> [Group] { [] }
+    override func fetchMessages() async throws -> [Message] {
+        if delayNanoseconds > 0 { try await Task.sleep(nanoseconds: delayNanoseconds) }
+        return []
+    }
+    override func fetchGroups() async throws -> [Group] {
+        if delayNanoseconds > 0 { try await Task.sleep(nanoseconds: delayNanoseconds) }
+        return []
+    }
 }
 
 /// Test suite verifying ``ChatViewModel`` surfaces errors without mutating
@@ -77,6 +89,7 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertNotNil(vm.lastError)
         XCTAssertTrue(vm.messages.isEmpty)
         XCTAssertEqual(vm.input, "hi")
+        XCTAssertFalse(vm.isLoading)
     }
 
     /// Sending the text message should surface an error when the API rejects
@@ -93,6 +106,7 @@ final class ChatViewModelTests: XCTestCase {
 
         XCTAssertNotNil(vm.lastError)
         XCTAssertTrue(vm.messages.isEmpty)
+        XCTAssertFalse(vm.isLoading)
     }
 
     /// Group message failures should also set ``lastError`` and avoid altering
@@ -110,6 +124,7 @@ final class ChatViewModelTests: XCTestCase {
 
         XCTAssertNotNil(vm.lastError)
         XCTAssertTrue(vm.messages.isEmpty)
+        XCTAssertFalse(vm.isLoading)
     }
 
     /// Contact retrieval failures should set ``lastError`` and result in an
@@ -139,6 +154,39 @@ final class ChatViewModelTests: XCTestCase {
 
         XCTAssertEqual(vm.contacts, ["alice", "bob"])
         XCTAssertNil(vm.lastError)
+    }
+
+    /// ``send()`` should set ``isLoading`` while network calls execute and
+    /// clear it once finished so the UI hides the progress indicator.
+    func testSendTogglesLoadingState() async {
+        let api = MockAPIService()
+        api.delayNanoseconds = 50_000_000
+        let socket = try! WebSocketService(api: api,
+                                           url: URL(string: "wss://example.com")!,
+                                           session: URLSession(configuration: .ephemeral))
+        let vm = ChatViewModel(api: api, socket: socket)
+        vm.input = "loading"
+        let task = Task { await vm.send() }
+        await Task.yield()
+        XCTAssertTrue(vm.isLoading)
+        await task.value
+        XCTAssertFalse(vm.isLoading)
+    }
+
+    /// ``load()`` also toggles ``isLoading`` so the chat shows an activity
+    /// indicator while refreshing history.
+    func testLoadTogglesLoadingState() async {
+        let api = MockAPIService()
+        api.delayNanoseconds = 50_000_000
+        let socket = try! WebSocketService(api: api,
+                                           url: URL(string: "wss://example.com")!,
+                                           session: URLSession(configuration: .ephemeral))
+        let vm = ChatViewModel(api: api, socket: socket)
+        let task = Task { await vm.load() }
+        await Task.yield()
+        XCTAssertTrue(vm.isLoading)
+        await task.value
+        XCTAssertFalse(vm.isLoading)
     }
 }
 

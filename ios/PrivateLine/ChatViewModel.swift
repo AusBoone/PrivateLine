@@ -14,6 +14,8 @@
  * - Introduced ``contacts`` list and ``fetchContacts()`` helper so the user
  *   picker reflects live data from the backend instead of hard-coded
  *   placeholders.
+ * - Added ``isLoading`` state toggled around network operations so the UI can
+ *   present progress indicators and disable interactions during lengthy tasks.
  */
 import Foundation
 import Combine
@@ -46,6 +48,10 @@ final class ChatViewModel: ObservableObject {
     /// last operation succeeded. Views observe this value to surface alerts and
     /// suggest retry actions.
     @Published var lastError: String? = nil
+    /// Flag indicating whether a network operation is currently executing.
+    /// Views bind to this state to show ``ProgressView`` overlays and disable
+    /// controls to prevent duplicate submissions.
+    @Published var isLoading = false
 
     /// Backend API wrapper used for all network operations.
     let api: APIService
@@ -94,6 +100,9 @@ final class ChatViewModel: ObservableObject {
     /// Local cached messages are loaded first so the UI can display immediately
     /// while the network request is in flight.
     func load() async {
+        // Indicate loading so the view can display a spinner and disable inputs.
+        isLoading = true
+        defer { isLoading = false } // Always reset regardless of path taken
         // Load cached messages first for offline support
         // Remove locally cached messages that have already expired
         let cached = MessageStore.load().filter { msg in
@@ -144,6 +153,9 @@ final class ChatViewModel: ObservableObject {
     /// message body. On success the plaintext is appended locally so the UI
     /// feels responsive while waiting for the server.
     func send() async {
+        // Flag the send operation as loading to prevent duplicate taps.
+        isLoading = true
+        defer { isLoading = false } // Ensure the flag clears even on failure
         // Clear any previous error so the view reflects only the latest attempt.
         lastError = nil
 
